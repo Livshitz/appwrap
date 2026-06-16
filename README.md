@@ -6,6 +6,18 @@
 
 Take any PWA and ship it as a real native app — offline-bundled, with native capabilities — without giving up the web.
 
+## Wrap your PWA in one prompt
+
+You don't even have to read the docs. appwrap ships an [`AGENTS.md`](./AGENTS.md), so your coding agent (Claude Code, Cursor, …) can do the whole thing. From **your PWA repo**, hand it:
+
+> **Wrap this PWA as a native iOS app with appwrap, following https://github.com/Livshitz/appwrap/blob/main/AGENTS.md**
+
+It adds the deps, writes your `appwrap.json`, scaffolds the native project, and builds to your device — surfacing any missing prerequisites (Bun, NativeScript CLI, Xcode/CocoaPods) as it goes.
+
+Prefer to drive it yourself? → [Get started](#get-started--wrap-your-own-pwa).
+
+---
+
 - **`@livx.cc/native-kit`** — isomorphic SDK. Same import, same calls in a plain browser and inside the native shell. Every domain reports a `capability` flag (`'native' | 'web' | 'none'`); a method then either fulfils it, degrades to a benign no-op, or throws a typed `KitError('UNSUPPORTED')` when there's no honest fallback — you branch on the flag (see [Capabilities on web vs native](#capabilities-on-web-vs-native)). Zero dependencies.
 - **`@livx.cc/appwrap`** — CLI. `appwrap init` scaffolds a native wrapper around a built PWA from a single `appwrap.json`.
 - **Runtime** (`runtime/`) — the native shell template: NativeScript-based, WKWebView/WebView hosting the bundled PWA, speaking the appwrap bridge protocol v1 (JSON envelopes; real `WKScriptMessageHandler` on iOS). Bundled into the CLI — you never install it directly.
@@ -34,20 +46,6 @@ cd native && npm install && ns run ios   # or: ns run android
 
 # iterate — rebuild the PWA and re-sync (fast path, no full regen)
 bunx appwrap sync
-```
-
-### Or — let your coding agent wrap it
-
-appwrap ships an [`AGENTS.md`](./AGENTS.md) so a coding agent (Claude Code, Cursor, …) can do the wrapping for you. From **your PWA repo**, paste this to the agent:
-
-```text
-Wrap this PWA as a native iOS app with appwrap. Read the guide at
-https://github.com/Livshitz/appwrap/blob/main/AGENTS.md , then:
-  1. add @livx.cc/appwrap + @livx.cc/native-kit (dev deps),
-  2. create appwrap.json — infer id/name/version from package.json + the web manifest,
-     set pwaDist to my build output dir,
-  3. run `bunx appwrap init`, then build + deploy to my connected device.
-First tell me any prerequisites I'm missing (Bun, NativeScript CLI, Xcode/CocoaPods).
 ```
 
 Then call native capabilities straight from your web code — the same import is a no-op-safe web fallback in a plain browser:
