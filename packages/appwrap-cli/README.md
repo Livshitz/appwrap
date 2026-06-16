@@ -6,14 +6,21 @@ CLI that wraps any PWA into a native iOS/Android app with real native capabiliti
 
 ```bash
 bun add -d @livx.cc/appwrap
-bunx appwrap init     # scaffold native/ from appwrap.json
+bunx appwrap init     # scaffold native/ from your config
 bunx appwrap sync     # regenerate native/ after web or config changes
 bunx appwrap dev      # live-load your dev server in the native shell
 ```
 
-Configuration lives in `appwrap.json` (app id, name, icon, modules, permissions, signing). The CLI generates and keeps `native/` in sync from a managed runtime template — you edit the template/config, never the generated output.
+Configuration lives in a typed `appwrap.config.ts` (app id, name, icon, modules, permissions, signing) — author it with autocomplete + type-checking via `defineConfig`:
 
-**Full documentation, `appwrap.json` reference, and the managed-regeneration model:** see the [appwrap README](https://github.com/Livshitz/appwrap#readme).
+```ts
+import { defineConfig } from '@livx.cc/appwrap/config';
+export default defineConfig({ id: 'com.you.app', name: 'My App', version: '1.0.0', pwaDist: 'dist' });
+```
+
+A plain `appwrap.json` is still supported as a fallback (the CLI resolves `appwrap.config.ts` → `appwrap.config.js` → `appwrap.json`). The CLI generates and keeps `native/` in sync from a managed runtime template — you edit the template/config, never the generated output.
+
+**Full documentation, config reference, and the managed-regeneration model:** see the [appwrap README](https://github.com/Livshitz/appwrap#readme).
 
 ## License
 

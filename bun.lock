@@ -7,20 +7,32 @@
     },
     "examples/hello-pwa": {
       "name": "hello-pwa",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@livx.cc/native-kit": "workspace:*",
+      },
+      "devDependencies": {
+        "@livx.cc/appwrap": "workspace:*",
+      },
+    },
+    "packages/appwrap-cli": {
+      "name": "@livx.cc/appwrap",
+      "version": "0.19.0",
+      "bin": {
+        "appwrap": "src/cli.ts",
       },
     },
     "packages/native-kit": {
       "name": "@livx.cc/native-kit",
-      "version": "0.1.0",
+      "version": "0.16.1",
       "devDependencies": {
         "typescript": "^5.4.0",
       },
     },
   },
   "packages": {
+    "@livx.cc/appwrap": ["@livx.cc/appwrap@workspace:packages/appwrap-cli"],
+
     "@livx.cc/native-kit": ["@livx.cc/native-kit@workspace:packages/native-kit"],
 
     "hello-pwa": ["hello-pwa@workspace:examples/hello-pwa"],

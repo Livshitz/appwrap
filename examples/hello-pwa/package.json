@@ -9,5 +9,8 @@
   },
   "dependencies": {
     "@livx.cc/native-kit": "workspace:*"
+  },
+  "devDependencies": {
+    "@livx.cc/appwrap": "workspace:*"
   }
 }

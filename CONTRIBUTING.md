@@ -14,7 +14,7 @@ bun test            # run the test suite
 bun run build:kit   # build @livx.cc/native-kit
 ```
 
-The example app lives in `examples/hello-pwa`. Its generated `native/` directory is **not** committed — regenerate it locally with `bunx appwrap init` / `appwrap sync` (you'll need your own Apple Team ID in `appwrap.json` to build for a device).
+The example app lives in `examples/hello-pwa`. Its generated `native/` directory is **not** committed — regenerate it locally with `bunx appwrap init` / `appwrap sync` (you'll need your own Apple Team ID in `appwrap.config.ts` to build for a device).
 
 ## Layout
 

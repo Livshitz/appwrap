@@ -402,7 +402,7 @@ async function main() {
     })],
   ]);
 
-  // Health / steps — opt-in module (appwrap.json `modules: ["health", …]`). Live count in the
+  // Health / steps — opt-in module (appwrap.config.ts `modules: ["health", …]`). Live count in the
   // foreground; "BG+" reads steps accrued while the app was backgrounded (the OS keeps counting).
   let stepStop: (() => void) | null = null;
   tile('Steps', kit.health.capability, [

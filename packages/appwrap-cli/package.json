@@ -1,6 +1,6 @@
 {
   "name": "@livx.cc/appwrap",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "description": "Wrap any PWA into a native app with native capabilities (appwrap runtime + @livx.cc/native-kit).",
   "license": "MIT",
   "author": "Elya Livshitz",
@@ -28,7 +28,9 @@
     "appwrap": "src/cli.ts"
   },
   "exports": {
-    ".": "./src/cli.ts"
+    ".": "./src/config.ts",
+    "./config": "./src/config.ts",
+    "./cli": "./src/cli.ts"
   },
   "files": [
     "src",

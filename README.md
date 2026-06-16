@@ -12,14 +12,14 @@ You don't even have to read the docs. appwrap ships an [`AGENTS.md`](./AGENTS.md
 
 > **Wrap this PWA as a native iOS app with appwrap, following https://github.com/Livshitz/appwrap/blob/main/AGENTS.md**
 
-It adds the deps, writes your `appwrap.json`, scaffolds the native project, and builds to your device — surfacing any missing prerequisites (Bun, NativeScript CLI, Xcode/CocoaPods) as it goes.
+It adds the deps, writes your `appwrap.config.ts`, scaffolds the native project, and builds to your device — surfacing any missing prerequisites (Bun, NativeScript CLI, Xcode/CocoaPods) as it goes.
 
 Prefer to drive it yourself? → [Get started](#get-started--wrap-your-own-pwa).
 
 ---
 
 - **`@livx.cc/native-kit`** — isomorphic SDK. Same import, same calls in a plain browser and inside the native shell. Every domain reports a `capability` flag (`'native' | 'web' | 'none'`); a method then either fulfils it, degrades to a benign no-op, or throws a typed `KitError('UNSUPPORTED')` when there's no honest fallback — you branch on the flag (see [Capabilities on web vs native](#capabilities-on-web-vs-native)). Zero dependencies.
-- **`@livx.cc/appwrap`** — CLI. `appwrap init` scaffolds a native wrapper around a built PWA from a single `appwrap.json`.
+- **`@livx.cc/appwrap`** — CLI. `appwrap init` scaffolds a native wrapper around a built PWA from a single config file (`appwrap.config.ts`, or `appwrap.json`).
 - **Runtime** (`runtime/`) — the native shell template: NativeScript-based, WKWebView/WebView hosting the bundled PWA, speaking the appwrap bridge protocol v1 (JSON envelopes; real `WKScriptMessageHandler` on iOS). Bundled into the CLI — you never install it directly.
 - **`examples/hello-pwa`** — test PWA: a capability dashboard exercising every kit module in both contexts.
 
@@ -27,7 +27,7 @@ Prefer to drive it yourself? → [Get started](#get-started--wrap-your-own-pwa).
 
 - **[Bun](https://bun.sh)** — appwrap is bun-first; the `appwrap` binary runs as TypeScript via bun. (`curl -fsSL https://bun.sh/install | bash`)
 - **NativeScript CLI** — required for any simulator/device/store build (`appwrap init` / `sync` work *without* it; `ns run`/`ns build` need it): `npm i -g nativescript`, then run `ns doctor ios` / `ns doctor android` to verify the toolchain and fix anything it flags.
-- **iOS builds** — [Xcode](https://apps.apple.com/app/xcode/id497799835) + Command Line Tools (`xcode-select --install`; provides `xcodebuild` and `devicectl` for on-device installs) and **CocoaPods** (`brew install cocoapods`). A physical-device install also needs the device registered to your Apple team — set `teamId` in `appwrap.json`.
+- **iOS builds** — [Xcode](https://apps.apple.com/app/xcode/id497799835) + Command Line Tools (`xcode-select --install`; provides `xcodebuild` and `devicectl` for on-device installs) and **CocoaPods** (`brew install cocoapods`). A physical-device install also needs the device registered to your Apple team — set `teamId` in `appwrap.config.ts`.
 - **Android builds** — [Android Studio](https://developer.android.com/studio) + JDK 17, with `ANDROID_HOME` exported (e.g. `export ANDROID_HOME=$HOME/Library/Android/sdk`).
 
 ## Get started — wrap your own PWA
@@ -36,12 +36,16 @@ Prefer to drive it yourself? → [Get started](#get-started--wrap-your-own-pwa).
 # 1 · add appwrap to your existing PWA project
 bun add -d @livx.cc/appwrap @livx.cc/native-kit
 
-# 2 · describe the app in one file (minimal — see appwrap.json reference below)
-echo '{ "id": "com.you.app", "name": "My App", "version": "1.0.0", "pwaDist": "dist" }' > appwrap.json
+# 2 · describe the app in one typed file (preferred — see config reference below)
+cat > appwrap.config.ts <<'EOF'
+import { defineConfig } from '@livx.cc/appwrap/config';
+export default defineConfig({ id: 'com.you.app', name: 'My App', version: '1.0.0', pwaDist: 'dist' });
+EOF
+# (a plain appwrap.json is still supported as a fallback)
 
 # 3 · build your PWA, scaffold the native wrapper, run it
 bun run build                            # your existing build → dist/
-bunx appwrap init                        # generates native/ from appwrap.json
+bunx appwrap init                        # generates native/ from your config
 cd native && npm install && ns run ios   # or: ns run android
 
 # iterate — rebuild the PWA and re-sync (fast path, no full regen)
@@ -57,7 +61,7 @@ await kit.ready();
 if (kit.haptics.capability === 'native') await kit.haptics.impact('medium');
 ```
 
-> **Device / App Store builds:** add your Apple Team ID to `appwrap.json` (`"teamId": "XXXXXXXXXX"`) — `init` / `sync` stamp it into the Xcode project. `native/` is a disposable artifact: **gitignore it** and regenerate any time (see [Updating & extending](#updating--extending-the-wrapper)).
+> **Device / App Store builds:** add your Apple Team ID to `appwrap.config.ts` (`teamId: 'XXXXXXXXXX'`) — `init` / `sync` stamp it into the Xcode project. `native/` is a disposable artifact: **gitignore it** and regenerate any time (see [Updating & extending](#updating--extending-the-wrapper)).
 
 ## Try the example (from this repo)
 
@@ -72,7 +76,34 @@ cd native && npm install && ns run ios
 cd .. && bun run serve                           # http://localhost:5180
 ```
 
-## appwrap.json
+## Config — `appwrap.config.ts` (preferred) or `appwrap.json`
+
+A TypeScript config gives you autocomplete and type-checking via the `defineConfig` helper. The CLI
+resolves `appwrap.config.ts` → `appwrap.config.js` → `appwrap.json` (or pass `--config <path>`):
+
+```ts
+// appwrap.config.ts
+import { defineConfig } from '@livx.cc/appwrap/config';
+
+export default defineConfig({
+  id: 'cc.livx.hellowrap',
+  name: 'Hello AppWrap',
+  version: '0.2.0',
+  entry: 'index.html',
+  backgroundColor: '#0b1020',
+  statusBarStyle: 'light',
+  pwaDist: 'dist',
+  urlScheme: 'hellowrap',
+  permissions: {
+    location: 'Why this app needs location…',
+    photos: 'Why this app needs photo access…',
+    faceid: 'Why this app uses Face ID…',
+  },
+});
+```
+
+<details>
+<summary>Same config as plain <code>appwrap.json</code> (fallback)</summary>
 
 ```json
 {
@@ -91,6 +122,8 @@ cd .. && bun run serve                           # http://localhost:5180
   }
 }
 ```
+
+</details>
 
 `urlScheme` registers a deep-link scheme (`hellowrap://…` → `kit.lifecycle.onDeepLink`).
 `modules` (optional) is an opt-in capability allow-list — **present** → only the listed capabilities
@@ -238,7 +271,7 @@ Transports: iOS `webkit.messageHandlers.appwrap` (real script message handler), 
 ## Updating & extending the wrapper
 
 The generated `native/` is a **disposable build artifact** (the Expo "continuous native generation"
-model), not source you hand-edit. Everything in it is reproduced from `appwrap.json` + the PWA
+model), not source you hand-edit. Everything in it is reproduced from your appwrap config + the PWA
 manifest + your overrides — so **gitignore `native/`** and regenerate it any time:
 
 ```bash
@@ -334,7 +367,7 @@ bun test packages/                                  # kit unit tests
       Maestro flows `demo-android.yaml` + `android-parity.yaml` green on API 35 emulator
 - [ ] remote push (APNs/FCM lane)
 - [x] custom URL scheme handler (`app://local`) — unmodified ES-module PWAs load with a stable
-      origin (`loader: 'file'` kept as a debug fallback in appwrap.json)
+      origin (`loader: 'file'` kept as a debug fallback in the config)
 - [x] icon + launch-screen generation from the PWA manifest (`sips`, zero deps)
 - [x] CI/CD templates — GH Actions (PR build + tag→TestFlight) + fastlane (match, ASC API key)
 - [ ] OTA updates

@@ -7,7 +7,7 @@ Guidance for AI coding agents (Claude Code, Cursor, …) working in this repo or
 Take any PWA and ship it as a real native app — the same web app, hosted in a NativeScript WKWebView/WebView shell, with native capabilities exposed through one isomorphic SDK. Three artifacts:
 
 - **`@livx.cc/native-kit`** (`packages/native-kit`) — isomorphic JS SDK the PWA imports. The same `kit.*` API runs in a plain browser and inside the shell; every domain reports a `capability` flag (`'native' | 'web' | 'none'`) so you branch and degrade gracefully. Zero deps.
-- **`@livx.cc/appwrap`** (`packages/appwrap-cli`) — the CLI. `appwrap init` scaffolds a native wrapper from a single `appwrap.json`. The runtime shell template is bundled into the published package, so `bunx appwrap` works without cloning this repo.
+- **`@livx.cc/appwrap`** (`packages/appwrap-cli`) — the CLI. `appwrap init` scaffolds a native wrapper from a single config file (`appwrap.config.ts`, or `appwrap.json`). The runtime shell template is bundled into the published package, so `bunx appwrap` works without cloning this repo.
 - **`runtime/`** — the NativeScript shell template (the source the CLI stamps into `native/`).
 
 `native/` is a **generated, disposable artifact** — gitignore it, never hand-edit it; regenerate with `appwrap init`.
@@ -16,18 +16,27 @@ Take any PWA and ship it as a real native app — the same web app, hosted in a 
 
 - **[Bun](https://bun.sh)** — appwrap is bun-first (`curl -fsSL https://bun.sh/install | bash`).
 - **NativeScript CLI** — for any simulator/device/store build (`init`/`sync` don't need it): `npm i -g nativescript`, then `ns doctor ios` / `ns doctor android` to verify the toolchain.
-- **iOS** — Xcode + Command Line Tools (`xcode-select --install`; provides `xcodebuild` + `devicectl`) and CocoaPods (`brew install cocoapods`). A physical-device install needs the device registered to your Apple team — set `teamId` in `appwrap.json`.
+- **iOS** — Xcode + Command Line Tools (`xcode-select --install`; provides `xcodebuild` + `devicectl`) and CocoaPods (`brew install cocoapods`). A physical-device install needs the device registered to your Apple team — set `teamId` in `appwrap.config.ts`.
 - **Android** — Android Studio + JDK 17, with `ANDROID_HOME` exported.
 
 ## Quick start (wrap your own PWA)
 
 ```bash
 bun add -d @livx.cc/appwrap @livx.cc/native-kit
-echo '{ "id": "com.you.app", "name": "My App", "version": "1.0.0", "pwaDist": "dist" }' > appwrap.json
 bun run build                 # your build → dist/
 bunx appwrap init             # generate native/ (gitignore it)
 cd native && npm install && ns run ios     # or: ns run android
 ```
+
+Describe the app in a typed config (preferred — autocomplete + type-checking via `defineConfig`):
+
+```ts
+// appwrap.config.ts
+import { defineConfig } from '@livx.cc/appwrap/config';
+export default defineConfig({ id: 'com.you.app', name: 'My App', version: '1.0.0', pwaDist: 'dist' });
+```
+
+A plain `appwrap.json` is still supported as a fallback. The CLI probes `appwrap.config.ts` → `appwrap.config.js` → `appwrap.json` (or pass `--config <path>`).
 
 ```ts
 import { kit } from '@livx.cc/native-kit';
@@ -37,14 +46,16 @@ if (kit.haptics.capability === 'native') await kit.haptics.impact('medium');
 
 ## CLI
 
-- **`appwrap init`** — generate `native/` from `appwrap.json` (+ first-time scaffold + `.gitignore`). Idempotent; won't clobber a `native/` it didn't generate without `--force`. Run after a framework upgrade or a fresh clone.
+- **`appwrap init`** — generate `native/` from the config (+ first-time scaffold + `.gitignore`). Idempotent; won't clobber a `native/` it didn't generate without `--force`. Run after a framework upgrade or a fresh clone.
 - **`appwrap sync`** — refresh `native/` from source (re-stamp config + re-copy built PWA + shell). Routine iteration.
 - **`appwrap dev [--url <url>]`** — point the shell at a live dev server (loader `server`); reverts on the next `sync`. Dev server must bind `0.0.0.0` so a device can reach it.
-- **`appwrap build ios|android [--release] [--aab]`** — release builds. Android signing from env (`APPWRAP_ANDROID_KEYSTORE` + password/alias — never in `appwrap.json`).
+- **`appwrap build ios|android [--release] [--aab]`** — release builds. Android signing from env (`APPWRAP_ANDROID_KEYSTORE` + password/alias — never in the config).
 - **`appwrap deploy ios`** — build + install + launch on a connected device via `devicectl` (`ns run`/`ns deploy` can't see a physical device). `--device`, `--no-launch`.
 - **`appwrap logs ios`** — stream the WebView console (forwarded to a file, since NativeScript native `console.log` doesn't reach `devicectl`/`idevicesyslog`). `--once`, `--native`.
 
-## `appwrap.json`
+## Config (`appwrap.config.ts` / `appwrap.json`)
+
+TS preferred (typed via `defineConfig` from `@livx.cc/appwrap/config`); JSON still works as a fallback. The full shape + per-field docs live in `packages/appwrap-cli/src/config.ts`.
 
 Required: `id`, `name`, `version`, `pwaDist`. Common optional: `entry`, `backgroundColor`, `statusBarStyle`, `urlScheme`, `icon`, `loader` (`app` bundled | `server` remote-load), `serverUrl`, `teamId`, `modules[]`, `permissions{}`, `buildNumber`, `storekitConfig`, `overrides`.
 
@@ -67,7 +78,7 @@ The handshake capability map + optional-handler barrel are generated into `nativ
 
 ## Gotchas
 
-1. **`native/` is disposable** — gitignore it, never hand-edit; fix the source (`runtime/`, `appwrap.json`, `overrides/`) and regenerate.
+1. **`native/` is disposable** — gitignore it, never hand-edit; fix the source (`runtime/`, the config, `overrides/`) and regenerate.
 2. **`.ipa` ≠ the intermediate `.app`** — inspect the signed app in the `.ipa` Payload, not `platforms/ios/build/.../*.app`.
 3. **"signal 15" is not a crash** — it's SIGTERM (your `timeout`/console-detach). Real crashes are SIGABRT/SIGSEGV.
 4. **Stale-bundle trap** — a build can report SUCCEEDED while shipping an old bundle if webpack/TS failed upstream. Verify a `SHELL_BUILD` marker, not just the exit code.

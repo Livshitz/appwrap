@@ -2,115 +2,24 @@
 /**
  * appwrap CLI v0 — scaffold a native wrapper around a built PWA.
  *
- *   appwrap init [--config appwrap.json] [--out native]   # from the PWA project dir
- *   appwrap sync [--config appwrap.json] [--out native]   # re-copy PWA dist into the wrapper
+ *   appwrap init [--config <path>] [--out native]   # from the PWA project dir
+ *   appwrap sync [--config <path>] [--out native]   # re-copy PWA dist into the wrapper
  *
- * appwrap.json: { id, name, version, entry?, backgroundColor?, statusBarStyle?, pwaDist }
+ * Config (TS preferred, JSON fallback) — probed in order: appwrap.config.ts → .js → appwrap.json.
+ * Shape: { id, name, version, entry?, backgroundColor?, statusBarStyle?, pwaDist }. See config.ts.
  */
 import { execFileSync } from 'child_process';
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { networkInterfaces, tmpdir } from 'os';
 import { dirname, join, resolve } from 'path';
+import { pathToFileURL } from 'url';
 // PURE-DATA capability manifest (no NativeScript globals) — type-only import (erased at runtime);
 // the VALUES are loaded dynamically below from the resolved runtime so the CLI works both in the
 // monorepo and from a published tarball (where runtime/ is bundled at the package root).
 import type * as CapManifest from '../../../runtime/app/shell/capabilities.manifest';
-
-interface AppwrapConfig {
-  id: string;
-  name: string;
-  version: string;
-  entry?: string;
-  backgroundColor?: string;
-  statusBarStyle?: 'light' | 'dark';
-  /** Android only (experimental). When true, the WebView draws genuinely edge-to-edge UNDER the
-   * transparent system bars (NS `androidOverflowEdge='dont-apply'`) and the real safe-area insets
-   * are injected as `--saie-*` CSS vars + native `env(safe-area-inset-*)`, so a multi-theme PWA
-   * paints the bar regions itself. Default false = bars show the page `backgroundColor` (works, but
-   * can't match a multi-theme app). iOS is always genuinely edge-to-edge. */
-  edgeToEdge?: boolean;
-  pwaDist: string;
-  /** Custom URL scheme for deep links (e.g. "hellowrap" → hellowrap://...). */
-  urlScheme?: string;
-  /** App icon source (≥512px square png). Defaults to the largest icon in the PWA manifest. */
-  icon?: string;
-  /** Loader: 'app' (default — app:// scheme, ES modules OK), 'file' (debug fallback), or 'server'
-   * (load `serverUrl` live — dev HMR over LAN or a deployed URL). `appwrap dev` sets this. */
-  loader?: 'app' | 'file' | 'server';
-  /** Live URL loaded when loader === 'server'. Set via appwrap.json or `appwrap dev --url <url>`. */
-  serverUrl?: string;
-  /** Absolute backend origin for an offline (loader:'app') PWA whose API/WebSocket calls were
-   * originally same-origin (e.g. "https://api.example.com"). Injected to the page as
-   * `window.__APPWRAP_BACKEND_ORIGIN__`; a same-origin PWA reads it to make its calls absolute.
-   * Empty/unset = same-origin (browser default), so the same web build is unaffected. */
-  backendOrigin?: string;
-  /** Backend-served STATIC assets the PWA loads via a *relative, hardcoded* URL (e.g. an SDK
-   * `<script src="/_vendor/sdk.js">` that can't be made absolute without breaking script order).
-   * Fetched from `backendOrigin` at build time and bundled into www/, so they resolve offline at
-   * app://. The asset is pinned to the build (correct for a no-OTA native app). Needs `backendOrigin`. */
-  vendorPaths?: string[];
-  /** Debug/dev mode: keeps the screen awake (no auto-lock while foreground) + makes the WebView
-   * inspectable (Safari Web Inspector / chrome://inspect) for continuous troubleshooting. `appwrap
-   * deploy` forces this on; `appwrap build` leaves it off. NEVER ship a store build with debug on. */
-  debug?: boolean;
-  /** In debug mode, the value written to `localStorage.DEBUG` at startup so the PWA's logger goes
-   * verbose (common convention — `'*'` = all, or comma-separated module names). Default `'*'`. */
-  debugLog?: string;
-  /** Apple Development Team ID for device builds (Xcode → Settings → Accounts). */
-  teamId?: string;
-  /** Path (relative to the PWA project) to a StoreKit configuration file for LOCAL IAP
-   * testing — products resolve without App Store Connect. Only applies when launched from
-   * Xcode (simulator or device-from-Xcode), not a standalone devicectl sideload. */
-  storekitConfig?: string;
-  /** Permission usage strings, keyed by domain. Only listed ones are stamped
-   * (iOS: Info.plist usage string; Android: <uses-permission>). 'contacts' has no
-   * iOS key (CNContactPicker needs none) — it only stamps Android READ_CONTACTS. */
-  permissions?: Partial<
-    Record<'location' | 'photos' | 'camera' | 'microphone' | 'faceid' | 'calendar' | 'contacts' | 'motion', string>
-  >;
-  /** Monotonic build identifier. Stores reject a re-upload unless this is HIGHER than the last:
-   * iOS `CFBundleVersion`, Android `versionCode` (the marketing `version` stays the user-facing
-   * string). Default: an integer derived from `version` (0.2.1 → 201). Set explicitly from a CI
-   * run number for fleet builds of the same marketing version. */
-  buildNumber?: string | number;
-  /** iOS export-compliance. `ITSAppUsesNonExemptEncryption` — stamped `false` by default (skips the
-   * per-upload prompt). Set `true` only if the app uses non-exempt encryption. */
-  usesNonExemptEncryption?: boolean;
-  /** Pure-native escape hatch: a directory (relative to the PWA project) whose contents are copied
-   * OVER the generated wrapper after stamping — for legacy/custom native code the declarative config
-   * can't express. Default `'appwrap.overrides'`; applied only if it exists. */
-  overrides?: string;
-  /** Reserved — appwrap plugins (npm packages contributing a kit module + native handlers + config).
-   * Parsed today; full native composition lands with the plugin contract (see framework-extensibility). */
-  plugins?: string[];
-  /** Opt-in capability allow-list (built-in modules — see capabilities.manifest.ts). When PRESENT,
-   * only the listed capabilities (plus always-on core) are advertised, permissioned, and — for
-   * modules that own their handler file (e.g. health) — compiled into the shell. Their permissions,
-   * background modes and native deps are collected from each module's self-contained manifest entry
-   * (the per-app `permissions{}` map only OVERRIDES the default usage copy). When ABSENT, every
-   * capability is active and permissions come solely from `permissions{}` (pre-modules behavior). */
-  modules?: string[];
-  /** Remote push (APNs/FCM). Off unless set — gating matters: an `aps-environment` entitlement on a
-   * team that can't hold the Push capability (e.g. a personal team) BREAKS code signing, and the
-   * handshake should honestly report `push: 'none'` on an un-provisioned build. The kit returns a raw
-   * token; SENDING is your backend's job (provider-agnostic). */
-  push?: {
-    /** Master switch for the push lane. */
-    enabled?: boolean;
-    /** Per-platform gates (default true when `enabled`). Split because the two platforms have
-     * independent prerequisites: iOS needs the `aps-environment` entitlement (a PAID Apple team —
-     * a personal team can't hold it, and stamping it would break signing), Android needs FCM +
-     * google-services.json. e.g. `{ enabled:true, ios:false, android:true }` ships Android push
-     * while keeping a personal-team iOS build signable. */
-    ios?: boolean;
-    android?: boolean;
-    /** iOS APNs environment in the entitlement: 'development' (debug/TestFlight builds) or
-     * 'production' (App Store). Default 'development'. */
-    apsEnvironment?: 'development' | 'production';
-    /** Path (relative to the PWA project) to the Firebase `google-services.json` for Android FCM. */
-    googleServicesJson?: string;
-  };
-}
+// Config shape lives in its own import-safe module so a `appwrap.config.ts` file can import the
+// type + `defineConfig` helper without pulling in (and running) the CLI dispatch.
+import type { AppwrapConfig } from './config';
 
 /** Marketing version → a monotonic integer build (0.2.1 → 201; 1.4.12 → 10412). Stable & increasing
  * across semver bumps so store re-uploads are always accepted without a manual bump. */
@@ -253,7 +162,7 @@ function generateModuleArtifacts(outDir: string, req: NativeReqs): void {
   const shell = join(outDir, 'app/shell');
   writeFileSync(
     join(shell, 'active-modules.generated.ts'),
-    `/** Generated by \`appwrap\` from appwrap.json \`modules\`. Do not edit. */\n` +
+    `/** Generated by \`appwrap\` from the appwrap config \`modules\`. Do not edit. */\n` +
       `export const ACTIVE_MODULE_NAMES: string[] = ${JSON.stringify(req.activeOptIn)};\n`
   );
 
@@ -370,15 +279,39 @@ function loadManifest(cwd: string, cfg: AppwrapConfig): Record<string, any> | nu
   return null;
 }
 
-function loadConfig(cwd: string, flags: Record<string, string>): AppwrapConfig {
-  const configPath = resolve(cwd, flags.config ?? 'appwrap.json');
-  if (!existsSync(configPath)) {
-    console.error(`✖ Config not found: ${configPath}`);
+/** Config filenames probed (in order) when `--config` is not passed. TS is preferred (typed,
+ * autocomplete via `defineConfig`); `.js` then `.json` are supported as fallbacks. */
+const CONFIG_CANDIDATES = ['appwrap.config.ts', 'appwrap.config.js', 'appwrap.json'] as const;
+
+/** Load a `.ts`/`.js`/`.json` config. TS/JS are imported (Bun runs them natively — no transpile
+ * step) and may `export default` (or a named `config`); JSON is parsed. Returns the raw object. */
+async function readConfigFile(configPath: string): Promise<AppwrapConfig> {
+  if (configPath.endsWith('.json')) {
+    return JSON.parse(readFileSync(configPath, 'utf8')) as AppwrapConfig;
+  }
+  // .ts / .js — dynamic import (Bun runs it natively). Each CLI command is its own process, so the
+  // ESM module cache never outlives a single run.
+  const mod = await import(pathToFileURL(configPath).href);
+  const cfg = mod.default ?? mod.config;
+  if (!cfg || typeof cfg !== 'object') {
+    console.error(`✖ ${configPath} must \`export default\` (or export \`config\`) an appwrap config object.`);
     process.exit(1);
   }
-  const cfg = JSON.parse(readFileSync(configPath, 'utf8')) as AppwrapConfig;
+  return cfg as AppwrapConfig;
+}
 
-  // Manifest as source: appwrap.json wins, the PWA manifest fills the gaps, template default last.
+async function loadConfig(cwd: string, flags: Record<string, string>): Promise<AppwrapConfig> {
+  // Explicit --config wins; otherwise probe ts → js → json (TS preferred).
+  const configPath = flags.config
+    ? resolve(cwd, flags.config)
+    : (CONFIG_CANDIDATES.map((f) => resolve(cwd, f)).find(existsSync) ?? resolve(cwd, CONFIG_CANDIDATES[0]));
+  if (!existsSync(configPath)) {
+    console.error(`✖ Config not found — looked for ${CONFIG_CANDIDATES.join(' / ')} in ${cwd}`);
+    process.exit(1);
+  }
+  const cfg = await readConfigFile(configPath);
+
+  // Manifest as source: the appwrap config wins, the PWA manifest fills the gaps, template default last.
   // (DRY single-source — devs don't re-type identity already declared in the manifest.)
   if (cfg.pwaDist) {
     const mf = loadManifest(cwd, cfg);
@@ -390,7 +323,7 @@ function loadConfig(cwd: string, flags: Record<string, string>): AppwrapConfig {
 
   for (const key of ['id', 'name', 'version', 'pwaDist'] as const) {
     if (!cfg[key]) {
-      console.error(`✖ appwrap.json missing required field: ${key}` + (key === 'name' ? ' (and no name/short_name in the PWA manifest)' : ''));
+      console.error(`✖ config missing required field: ${key}` + (key === 'name' ? ' (and no name/short_name in the PWA manifest)' : ''));
       process.exit(1);
     }
   }
@@ -399,7 +332,7 @@ function loadConfig(cwd: string, flags: Record<string, string>): AppwrapConfig {
 
 function stampShellConfig(outDir: string, cfg: AppwrapConfig): void {
   const content = `/**
- * Shell config — stamped by \`appwrap init\`/\`sync\` from appwrap.json. Do not edit.
+ * Shell config — stamped by \`appwrap init\`/\`sync\` from the appwrap config. Do not edit.
  */
 export const SHELL_CONFIG = {
   appId: ${JSON.stringify(cfg.id)},
@@ -499,7 +432,7 @@ function stampStoreKit(cwd: string, outDir: string, cfg: AppwrapConfig): void {
   if (!cfg.storekitConfig) return;
   const source = resolve(cwd, cfg.storekitConfig);
   if (!existsSync(source)) {
-    console.warn(`⚠ appwrap.json.storekitConfig not found: ${source} — skipping StoreKit wiring`);
+    console.warn(`⚠ config \`storekitConfig\` not found: ${source} — skipping StoreKit wiring`);
     return;
   }
   const base = source.split('/').pop()!;
@@ -572,7 +505,7 @@ function stampPush(cwd: string, outDir: string, cfg: AppwrapConfig): void {
       if (fcmVals) console.log(`  push ← Android FCM wired (firebase resources for ${fcmVals.project_id}, no plugin)`);
       else console.warn(`⚠ Could not parse ${src} — skipping Android FCM`);
     } else {
-      console.warn(`⚠ appwrap.json.push.googleServicesJson not found: ${src} — skipping Android FCM`);
+      console.warn(`⚠ config \`push.googleServicesJson\` not found: ${src} — skipping Android FCM`);
     }
   }
   stampAndroidFcm(outDir, fcmVals);
@@ -694,7 +627,7 @@ function findIconSource(cwd: string, cfg: AppwrapConfig): string | null {
   if (cfg.icon) {
     const p = resolve(cwd, cfg.icon);
     if (existsSync(p)) return p;
-    console.warn(`⚠ appwrap.json.icon not found: ${p}`);
+    console.warn(`⚠ config \`icon\` not found: ${p}`);
     return null;
   }
   const dist = resolve(cwd, cfg.pwaDist);
@@ -732,7 +665,7 @@ function findMaskableSource(cwd: string, cfg: AppwrapConfig): string | null {
 function generateIcons(cwd: string, outDir: string, cfg: AppwrapConfig): void {
   const source = findIconSource(cwd, cfg);
   if (!source) {
-    console.warn('⚠ No app icon source found (manifest icons or appwrap.json.icon) — keeping template icons');
+    console.warn('⚠ No app icon source found (manifest icons or config `icon`) — keeping template icons');
     return;
   }
   const probe = (prop: string) =>
@@ -862,7 +795,7 @@ function copyPwa(cwd: string, outDir: string, cfg: AppwrapConfig): void {
 function vendorBackendAssets(www: string, cfg: AppwrapConfig): void {
   if (!cfg.vendorPaths?.length) return;
   if (!cfg.backendOrigin) {
-    console.error('✖ vendorPaths requires backendOrigin in appwrap.json');
+    console.error('✖ vendorPaths requires backendOrigin in the appwrap config');
     process.exit(1);
   }
   const origin = cfg.backendOrigin.replace(/\/+$/, '');
@@ -938,7 +871,7 @@ function copyCiTemplates(cwd: string, outDir: string): void {
 function regenerateCore(cwd: string, outDir: string, cfg: AppwrapConfig, opts: { firstRun?: boolean } = {}): void {
   const req = nativeReqs(cfg);
   if (opts.firstRun && !req.explicit) {
-    console.log('  ℹ no `modules` in appwrap.json → all capabilities active. Declare `modules` to shrink the store build (strip unused handlers/perms).');
+    console.log('  ℹ no `modules` in the appwrap config → all capabilities active. Declare `modules` to shrink the store build (strip unused handlers/perms).');
   }
   cpSync(TEMPLATE_DIR, outDir, {
     recursive: true,
@@ -966,8 +899,8 @@ function regenerateCore(cwd: string, outDir: string, cfg: AppwrapConfig, opts: {
   copyPwa(cwd, outDir, cfg);
 }
 
-function init(cwd: string, flags: Record<string, string>): void {
-  const cfg = loadConfig(cwd, flags);
+async function init(cwd: string, flags: Record<string, string>): Promise<void> {
+  const cfg = await loadConfig(cwd, flags);
   const outDir = resolve(cwd, flags.out ?? 'native');
 
   if (!existsSync(TEMPLATE_DIR)) {
@@ -1002,8 +935,8 @@ function init(cwd: string, flags: Record<string, string>): void {
 // `sync` = the same regenerate as `init`, minus the first-time guard/scaffold. It is a TRUE refresh from
 // source (shell + config + PWA), so runtime/config edits never silently lag behind. `native/` is
 // disposable; re-copying the shell costs ~ms (the real cost is the later `ns build`, which both share).
-function sync(cwd: string, flags: Record<string, string>): void {
-  const cfg = loadConfig(cwd, flags);
+async function sync(cwd: string, flags: Record<string, string>): Promise<void> {
+  const cfg = await loadConfig(cwd, flags);
   const outDir = resolve(cwd, flags.out ?? 'native');
   if (!existsSync(outDir)) {
     console.error(`✖ Wrapper not found at ${outDir} — run \`appwrap init\` first`);
@@ -1028,8 +961,8 @@ function lanIp(): string | null {
 /** `appwrap dev` — point the existing wrapper at a LIVE url (loader 'server') instead of bundled www.
  * Dev runs their own web server (vite host:true) or a deployed URL; this just stamps the shell config.
  * `--url <url>` explicit; else http://<lan-ip>:<port> (default 5173). Re-run `appwrap sync`/`init` to revert. */
-function dev(cwd: string, flags: Record<string, string>): void {
-  const cfg = loadConfig(cwd, flags);
+async function dev(cwd: string, flags: Record<string, string>): Promise<void> {
+  const cfg = await loadConfig(cwd, flags);
   const outDir = resolve(cwd, flags.out ?? 'native');
   if (!existsSync(outDir)) {
     console.error(`✖ Wrapper not found at ${outDir} — run \`appwrap init\` first`);
@@ -1060,12 +993,12 @@ function dev(cwd: string, flags: Record<string, string>): void {
 /** `appwrap build <ios|android> [--release] [--aab]` — store-readiness build path. Re-stamps config,
  * re-copies the PWA, then delegates the actual compile to NativeScript with the right flags. Release
  * Android signing comes from env (APPWRAP_ANDROID_KEYSTORE[_PASSWORD|_ALIAS|_ALIAS_PASSWORD]) — secrets
- * never live in appwrap.json. iOS distribution signing/upload is the fastlane release lane's job (the
+ * never live in the appwrap config. iOS distribution signing/upload is the fastlane release lane's job (the
  * cicd templates); `--release` here just builds the Release config for the device. */
-function build(cwd: string, flags: Record<string, string>, positionals: string[]): void {
+async function build(cwd: string, flags: Record<string, string>, positionals: string[]): Promise<void> {
   const platform = positionals[0];
   if (platform !== 'ios' && platform !== 'android') {
-    console.error('Usage: appwrap build <ios|android> [--release] [--aab] [--config appwrap.json] [--out native]');
+    console.error('Usage: appwrap build <ios|android> [--release] [--aab] [--config <path>] [--out native]');
     process.exit(1);
   }
   const outDir = resolve(cwd, flags.out ?? 'native');
@@ -1073,8 +1006,8 @@ function build(cwd: string, flags: Record<string, string>, positionals: string[]
     console.error(`✖ Wrapper not found at ${outDir} — run \`appwrap init\` first`);
     process.exit(1);
   }
-  // Make sure the wrapper reflects the latest config + PWA before compiling (also validates appwrap.json).
-  sync(cwd, flags);
+  // Make sure the wrapper reflects the latest config + PWA before compiling (also validates the config).
+  await sync(cwd, flags);
 
   const release = 'release' in flags;
   const args = ['build', platform];
@@ -1160,13 +1093,13 @@ function pickDevice(devices: DeviceInfo[], explicitId?: string): DeviceInfo {
 /** `appwrap deploy ios [--device <id|name>] [--no-launch]` — build for device, auto-pick the
  * connected phone (USB or network; prompts if several), install + launch. Debug build (no
  * distribution signing) — for testing on your own device. Run the PWA build first (or via the script). */
-function deploy(cwd: string, flags: Record<string, string>, positionals: string[]): void {
+async function deploy(cwd: string, flags: Record<string, string>, positionals: string[]): Promise<void> {
   const platform = positionals[0];
   if (platform !== 'ios') {
     console.error('Usage: appwrap deploy ios [--device <id|name>] [--no-launch]  (android: use `ns run android`)');
     process.exit(1);
   }
-  const cfg = loadConfig(cwd, flags);
+  const cfg = await loadConfig(cwd, flags);
   const outDir = resolve(cwd, flags.out ?? 'native');
   if (!existsSync(outDir)) {
     console.error(`✖ Wrapper not found at ${outDir} — run \`appwrap init\` first`);
@@ -1175,9 +1108,9 @@ function deploy(cwd: string, flags: Record<string, string>, positionals: string[
   // Pick the device up front so we fail fast before a long build if nothing's connected.
   const device = pickDevice(listIosDevices(), flags.device || undefined);
 
-  sync(cwd, flags); // re-stamp config + copy latest PWA dist (+ vendor backend assets)
+  await sync(cwd, flags); // re-stamp config + copy latest PWA dist (+ vendor backend assets)
   // Dev deploy → debug mode: keep-awake + WebView inspector for continuous troubleshooting.
-  stampShellConfig(outDir, { ...loadConfig(cwd, flags), debug: true });
+  stampShellConfig(outDir, { ...cfg, debug: true });
   console.log('▶ ns build ios --for-device  (debug: keep-awake + inspector on)');
   execFileSync('ns', ['build', 'ios', '--for-device'], { cwd: outDir, stdio: 'inherit' });
 
@@ -1243,13 +1176,13 @@ function libimobiledeviceUdid(): { udid: string; network: boolean } | null {
  * `devicectl device copy`. DEFAULT: watch (poll the file ~every 3s, print new lines). `--once`:
  * one snapshot. `--native`: the OS-level app syslog firehose via idevicesyslog (native crashes; USB).
  * Headless-friendly: redirect to a file and read it. */
-function logs(cwd: string, flags: Record<string, string>, positionals: string[]): void {
+async function logs(cwd: string, flags: Record<string, string>, positionals: string[]): Promise<void> {
   const platform = positionals[0] ?? 'ios';
   if (platform !== 'ios') {
     console.error('Usage: appwrap logs ios [--once] [--native] [--device <id|name>]');
     process.exit(1);
   }
-  const cfg = loadConfig(cwd, flags);
+  const cfg = await loadConfig(cwd, flags);
 
   if ('native' in flags) {
     const li = libimobiledeviceUdid();
@@ -1298,31 +1231,40 @@ function logs(cwd: string, flags: Record<string, string>, positionals: string[])
   }
 }
 
-const { command, flags, positionals } = parseArgs(process.argv.slice(2));
-const cwd = process.cwd();
+/** CLI dispatch. Guarded by `import.meta.main` so importing this module (e.g. for the `AppwrapConfig`
+ * type via the package entry) doesn't run a command. */
+async function main(): Promise<void> {
+  const { command, flags, positionals } = parseArgs(process.argv.slice(2));
+  const cwd = process.cwd();
 
-switch (command) {
-  case 'init':
-    init(cwd, flags);
-    break;
-  case 'sync':
-    sync(cwd, flags);
-    break;
-  case 'dev':
-    dev(cwd, flags);
-    break;
-  case 'build':
-    build(cwd, flags, positionals);
-    break;
-  case 'deploy':
-    deploy(cwd, flags, positionals);
-    break;
-  case 'logs':
-    logs(cwd, flags, positionals);
-    break;
-  default:
-    console.log('Usage: appwrap <init|sync|dev|build|deploy|logs> [--config appwrap.json] [--out native]\n' +
-      '  build <ios|android> [--release] [--aab]   deploy ios [--device <id|name>] [--no-launch]\n' +
-      '  logs ios [--once] [--native]   dev [--url <url> | --port <p>]');
-    process.exit(command ? 1 : 0);
+  switch (command) {
+    case 'init':
+      await init(cwd, flags);
+      break;
+    case 'sync':
+      await sync(cwd, flags);
+      break;
+    case 'dev':
+      await dev(cwd, flags);
+      break;
+    case 'build':
+      await build(cwd, flags, positionals);
+      break;
+    case 'deploy':
+      await deploy(cwd, flags, positionals);
+      break;
+    case 'logs':
+      await logs(cwd, flags, positionals);
+      break;
+    default:
+      console.log('Usage: appwrap <init|sync|dev|build|deploy|logs> [--config <path>] [--out native]\n' +
+        '  config: appwrap.config.ts (preferred) → .js → appwrap.json\n' +
+        '  build <ios|android> [--release] [--aab]   deploy ios [--device <id|name>] [--no-launch]\n' +
+        '  logs ios [--once] [--native]   dev [--url <url> | --port <p>]');
+      process.exit(command ? 1 : 0);
+  }
+}
+
+if (import.meta.main) {
+  main();
 }
