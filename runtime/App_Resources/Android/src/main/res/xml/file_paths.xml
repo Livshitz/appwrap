@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Paths FileProvider may expose. kit.share.files writes into cacheDir/shared. -->
+<paths>
+    <cache-path name="shared" path="shared/" />
+</paths>

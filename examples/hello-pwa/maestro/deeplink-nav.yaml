@@ -1,0 +1,47 @@
+# Deep-link → in-app navigation: internal routing + deep-linking straight into a page.
+appId: cc.livx.hellowrap
+---
+- launchApp:
+    clearState: true
+- runFlow:
+    when:
+      visible: "Cancel"
+    commands:
+      - tapOn: "Cancel"
+- extendedWaitUntil:
+    visible: ".*NATIVE.*"
+    timeout: 40000
+
+# ── internal navigation via the nav bar ──────────────────────────────
+- tapOn: "Profile"
+- assertVisible: "👤 Profile"
+- tapOn: "Settings"
+- assertVisible: "⚙️ Settings"
+- tapOn: "Home"
+- assertVisible: ".*Haptics.*"
+- takeScreenshot: dl-01-internal-nav
+
+# ── deep-link straight into a parameterised page (OS → shell → router) ──
+- openLink: "hellowrap://item/7"
+- runFlow:
+    when:
+      visible: "Open"
+    commands:
+      - tapOn: "Open"
+- extendedWaitUntil:
+    visible: ".*Item 7.*"
+    timeout: 10000
+- assertVisible: ".*event deeplink hellowrap.*"
+- takeScreenshot: dl-02-deeplink-item
+
+# ── deep-link into another page ──────────────────────────────────────
+- openLink: "hellowrap://profile"
+- runFlow:
+    when:
+      visible: "Open"
+    commands:
+      - tapOn: "Open"
+- extendedWaitUntil:
+    visible: "👤 Profile"
+    timeout: 10000
+- takeScreenshot: dl-03-deeplink-profile

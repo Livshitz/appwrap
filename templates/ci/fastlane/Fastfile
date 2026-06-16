@@ -1,0 +1,43 @@
+# appwrap fastlane — emitted by `appwrap init` into native/fastlane/.
+# Auth is App Store Connect API key only (headless-safe; no interactive Apple ID).
+
+default_platform(:ios)
+
+platform :ios do
+  desc 'Build the NativeScript wrapper and upload to TestFlight'
+  lane :beta do
+    api_key = app_store_connect_api_key(
+      key_id: ENV['ASC_KEY_ID'],
+      issuer_id: ENV['ASC_ISSUER_ID'],
+      key_content: ENV['ASC_KEY_P8'],
+      is_key_content_base64: true
+    )
+
+    match(type: 'appstore', readonly: true, git_url: ENV['MATCH_GIT_URL'], api_key: api_key)
+
+    sh('cd .. && ns prepare ios --release')
+
+    build_app(
+      workspace: 'platforms/ios/native.xcworkspace',
+      scheme: 'native',
+      export_method: 'app-store'
+    )
+
+    upload_to_testflight(api_key: api_key, skip_waiting_for_build_processing: true)
+  end
+end
+
+platform :android do
+  desc 'Upload the appwrap-built AAB to Play (internal track). Build it first with `appwrap build android --release --aab`.'
+  lane :beta do
+    upload_to_play_store(
+      track: 'internal',
+      aab: 'platforms/android/app/build/outputs/bundle/release/app-release.aab',
+      json_key_data: ENV['PLAY_SERVICE_ACCOUNT_JSON'],
+      # Binary-only upload: listing/screenshots are managed in the Play Console, not CI.
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+  end
+end

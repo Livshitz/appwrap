@@ -1,0 +1,246 @@
+appId: cc.livx.hellowrap
+---
+- launchApp:
+    clearState: true
+- runFlow:
+    when:
+      visible: "Cancel"
+    commands:
+      - tapOn: "Cancel"
+- extendedWaitUntil:
+    visible: "Hello AppWrap"
+    timeout: 40000
+
+# ── Handshake ────────────────────────────────────────────────────────
+- extendedWaitUntil:
+    visible: "NATIVE"
+    timeout: 15000
+- extendedWaitUntil:
+    visible: ".*platform: ios.*"
+    timeout: 15000
+- takeScreenshot: full-01-handshake
+
+# ── Band 1: Haptics / Storage / Toast / Status bar / Device / Clipboard / Secure store ──
+- tapOn: { text: "light", index: 0 }
+- tapOn: "medium"
+- tapOn: "heavy"
+- tapOn: "success"
+- tapOn: "error"
+- assertVisible: ".*Haptics/error OK.*"
+
+- tapOn: { text: "set", index: 0 }
+- tapOn: { text: "get", index: 0 }
+- assertVisible: ".*Storage/get OK 1.*"
+- tapOn: { text: "remove", index: 0 }
+- tapOn: "kv-clear"
+- assertVisible: ".*kv-clear OK.*"
+
+- tapOn: "short"
+- assertVisible: "Hello from the kit 👋"
+
+- tapOn: "dark"
+- tapOn: { text: "light", index: 1 }
+- assertVisible: ".*Status bar/light OK.*"
+
+- tapOn: "info"
+- extendedWaitUntil:
+    visible: ".*Device/info OK.*"
+    timeout: 8000
+
+- tapOn: "copy"
+- tapOn: "read"
+- extendedWaitUntil:
+    visible: ".*Clipboard/read OK.*"
+    timeout: 8000
+
+- tapOn: "lock-set"
+- tapOn: "lock-get"
+- extendedWaitUntil:
+    visible: ".*lock-get OK.*"
+    timeout: 8000
+- tapOn: "lock-del"
+- takeScreenshot: full-02-band1
+
+# ── Band 2: Notifications / Biometrics / Location / Network / Screen / Dialogs / Reviews ──
+- swipe:
+    start: "50%, 70%"
+    end: "50%, 30%"
+
+- tapOn: "permission"
+- runFlow:
+    when:
+      visible: "Allow"
+    commands:
+      - tapOn: "Allow"
+- extendedWaitUntil:
+    visible: ".*permission OK.*"
+    timeout: 8000
+- tapOn: "schedule 2s"
+- tapOn: "pending"
+- extendedWaitUntil:
+    visible: ".*Notifications/pending OK.*"
+    timeout: 8000
+- tapOn: "badge 3"
+- assertVisible: ".*badge 3 OK.*"
+- tapOn: { text: "clear", index: 0 }
+
+- tapOn: "available"
+- extendedWaitUntil:
+    visible: ".*Biometrics/available OK.*"
+    timeout: 8000
+
+- tapOn: "current"
+- runFlow:
+    when:
+      visible: "Allow While Using App"
+    commands:
+      - tapOn: "Allow While Using App"
+- extendedWaitUntil:
+    visible: ".*Location/current OK.*"
+    timeout: 15000
+- tapOn: "geo-watch"
+- extendedWaitUntil:
+    visible: ".*geo-watch OK.*"
+    timeout: 20000
+- takeScreenshot: full-03-location
+
+- tapOn: "status"
+- extendedWaitUntil:
+    visible: ".*Network/status OK.*"
+    timeout: 8000
+
+- tapOn: "safe area"
+- extendedWaitUntil:
+    visible: ".*safe area OK.*"
+    timeout: 8000
+- tapOn: "dim"
+- tapOn: "bright"
+- tapOn: "awake on"
+- assertVisible: ".*awake on OK.*"
+- tapOn: "awake off"
+
+# ── Dialogs (native UIAlertController via NS Dialogs) ────────────────
+- tapOn: "alert"
+- extendedWaitUntil:
+    visible: "Native alert via the kit"
+    timeout: 8000
+- tapOn: "OK"
+- extendedWaitUntil:
+    visible: ".*Dialogs/alert OK.*"
+    timeout: 8000
+- tapOn: "confirm"
+- extendedWaitUntil:
+    visible: "Proceed with the demo?"
+    timeout: 8000
+- tapOn: "OK"
+- assertVisible: ".*confirm OK true.*"
+- tapOn: "sheet"
+- extendedWaitUntil:
+    visible: "Banana"
+    timeout: 8000
+- tapOn: "Banana"
+- assertVisible: ".*sheet OK 1.*"
+- takeScreenshot: full-04-dialogs
+
+# ── Reviews (SKStoreReviewController — OS decides whether to show) ───
+- tapOn: "rate us"
+- extendedWaitUntil:
+    visible: "Not Now"
+    timeout: 8000
+- takeScreenshot: full-04b-review-prompt
+- tapOn: "Not Now"
+- extendedWaitUntil:
+    visible: ".*rate us OK.*"
+    timeout: 8000
+
+# ── Band 3: Theme / Motion / Contacts / Calendar / Camera ────────────
+- swipe:
+    start: "50%, 70%"
+    end: "50%, 30%"
+- swipe:
+    start: "50%, 70%"
+    end: "50%, 40%"
+
+- tapOn: "indigo"
+- assertVisible: ".*indigo OK.*"
+- takeScreenshot: full-05-theme
+
+# ── Motion (graceful UNSUPPORTED on simulator) ───────────────────────
+- tapOn: "sample"
+- extendedWaitUntil:
+    visible: ".*Motion/sample ERR.*"
+    timeout: 8000
+
+# ── Contacts (CNContactPicker — sim ships demo contacts) ─────────────
+- tapOn: "pick contact"
+- extendedWaitUntil:
+    visible: "Kate Bell"
+    timeout: 10000
+- tapOn: "Kate Bell"
+- extendedWaitUntil:
+    visible: ".*pick contact OK.*"
+    timeout: 8000
+- takeScreenshot: full-06-contacts
+
+# ── Calendar (EventKit + permission dialog) ──────────────────────────
+- tapOn: "add event"
+- runFlow:
+    when:
+      visible: "Allow Full Access"
+    commands:
+      - tapOn: "Allow Full Access"
+- extendedWaitUntil:
+    visible: ".*add event OK.*"
+    timeout: 10000
+
+# ── Camera (iOS 26 sim has a synthetic camera; UNSUPPORTED is the no-camera path) ──
+- tapOn: "capture"
+- runFlow:
+    when:
+      visible: "Don't Allow"
+    commands:
+      - tapOn: "Allow"
+# Sim's synthetic camera renders no frames, so the shutter is inert — the demo
+# proves the native camera UI presents, then cancels ({picked:false} = graceful).
+- runFlow:
+    when:
+      visible: "PHOTO"
+    commands:
+      - takeScreenshot: full-07a-camera
+      - tapOn: "Dismiss"
+- extendedWaitUntil:
+    visible: ".*Camera/capture (OK|ERR).*"
+    timeout: 10000
+- takeScreenshot: full-07-parity
+
+# ── Deep link (custom URL scheme through the OS) ─────────────────────
+- openLink: "hellowrap://demo/path?from=maestro"
+- runFlow:
+    when:
+      visible: "Open"
+    commands:
+      - tapOn: "Open"
+- extendedWaitUntil:
+    visible: ".*event deeplink hellowrap.*"
+    timeout: 10000
+- takeScreenshot: full-08-deeplink
+
+# ── Share (native sheet, last — leaves overlay) ──────────────────────
+- swipe:
+    start: "50%, 30%"
+    end: "50%, 80%"
+- swipe:
+    start: "50%, 30%"
+    end: "50%, 80%"
+- swipe:
+    start: "50%, 30%"
+    end: "50%, 80%"
+- tapOn: "share link"
+- extendedWaitUntil:
+    visible: ".*livx.cc.*"
+    timeout: 8000
+- takeScreenshot: full-09-share
+- tapOn:
+    point: "50%,15%"
+- assertVisible: "Hello AppWrap"
+- takeScreenshot: full-10-final

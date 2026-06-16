@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "module": "esnext",
+    "target": "es2020",
+    "moduleResolution": "bundler",
+    "lib": ["es2021", "dom"],
+    "experimentalDecorators": true,
+    "removeComments": false,
+    "noEmitHelpers": true,
+    "noEmitOnError": true,
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "~/*": ["app/*"]
+    }
+  },
+  "include": ["app/**/*.ts", "references.d.ts"],
+  "exclude": ["node_modules", "platforms", "app/www"]
+}

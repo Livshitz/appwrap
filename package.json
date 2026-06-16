@@ -1,0 +1,11 @@
+{
+  "name": "appwrap-monorepo",
+  "private": true,
+  "workspaces": ["packages/*", "examples/*"],
+  "scripts": {
+    "build:kit": "bun run --cwd packages/native-kit build",
+    "build:hello": "bun run --cwd examples/hello-pwa build",
+    "serve:hello": "bun run --cwd examples/hello-pwa serve",
+    "test": "bun test packages/"
+  }
+}

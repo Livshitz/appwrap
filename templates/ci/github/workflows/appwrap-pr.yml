@@ -1,0 +1,28 @@
+# appwrap PR checks — emitted by `appwrap init`. Adjust build commands to your project.
+name: PR
+on:
+  pull_request:
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - run: bun test || echo "no tests"
+      - run: bun run build.ts # → dist/ (the PWA bundle the wrapper ships)
+
+  ios-build:
+    runs-on: macos-15
+    needs: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: bun install && bun run build.ts
+      - run: npm i -g nativescript
+      - run: bunx appwrap init # native/ is generated (gitignored) — regenerate it fresh in CI
+      - working-directory: native
+        run: npm install && ns build ios --emulator

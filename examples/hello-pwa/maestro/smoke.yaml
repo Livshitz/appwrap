@@ -1,0 +1,17 @@
+appId: cc.livx.hellowrap
+---
+- launchApp
+- extendedWaitUntil:
+    visible: "Hello AppWrap"
+    timeout: 15000
+# Handshake resolved native context (would say WEB or "handshake failed" otherwise)
+- assertVisible: "NATIVE"
+- assertVisible: ".*Haptics.*"
+- assertVisible: ".*Storage.*"
+# Storage round-trip through the native bridge
+- tapOn: "set"
+- tapOn: "get"
+- assertVisible: ".*Storage/get OK.*"
+# Toast through the native bridge
+- tapOn: "short"
+- takeScreenshot: smoke-final

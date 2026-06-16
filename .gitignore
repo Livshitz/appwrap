@@ -1,0 +1,19 @@
+node_modules/
+dist/
+platforms/
+hooks/
+.DS_Store
+examples/hello-pwa/native/
+.tmp/
+examples/hello-pwa/*.png
+!examples/hello-pwa/public/**
+.agent/
+.mcp-ios/
+.claude/
+# staged into the CLI tarball at prepack (tarball-only, never committed)
+packages/appwrap-cli/runtime/
+packages/appwrap-cli/templates/
+# npm pack artifacts
+*.tgz
+# private internal ops skill (personal device/team/app context — not for publish)
+.claude/skills/appwrap-ops/

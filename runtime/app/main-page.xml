@@ -1,0 +1,10 @@
+<Page
+  xmlns="http://schemas.nativescript.org/tns.xsd"
+  xmlns:shell="shell/custom-webview"
+  actionBarHidden="true"
+  loaded="onPageLoaded"
+  backgroundColor="{{ backgroundColor }}">
+  <GridLayout rows="*">
+    <shell:CustomWebView id="webview" row="0" />
+  </GridLayout>
+</Page>

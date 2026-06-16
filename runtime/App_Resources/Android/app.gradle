@@ -1,0 +1,34 @@
+// You can add your native dependencies here
+dependencies {
+  implementation 'androidx.biometric:biometric:1.1.0' // BiometricPrompt
+  implementation 'androidx.webkit:webkit:1.16.0'      // addDocumentStartJavaScript (transport shim)
+  implementation 'androidx.browser:browser:1.8.0'     // Chrome Custom Tabs (browser.open)
+}
+
+android {
+  // compileSdk 36: required by Health Connect connect-client (rc01+). Independent of targetSdk —
+  // bumping it only lets newer APIs compile, it doesn't change runtime behavior. Needs platform 36.
+  compileSdkVersion 36
+  buildToolsVersion "35"
+  // ndkVersion ""
+
+  defaultConfig {
+    minSdkVersion 26 // Android 8.0 — Health Connect's floor (~99% of devices); was 24
+    targetSdkVersion 35
+
+    // Version Information
+    versionCode 2
+    versionName "1.0.3"
+    
+    generatedDensities = []
+  }
+
+  aaptOptions {
+    additionalParameters "--no-version-vectors"
+    // Android's default asset-ignore pattern drops directories whose name starts with "_" (the
+    // `<dir>_*` token), which SILENTLY strips vendored assets like www/_vendor/sdk.js from the apk
+    // → the in-app SDK never loads. Override with the default pattern MINUS `<dir>_*` so underscore
+    // vendor dirs ship; dotfiles and VCS junk stay ignored. (iOS is unaffected — no aapt.)
+    ignoreAssetsPattern "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~"
+  }
+}

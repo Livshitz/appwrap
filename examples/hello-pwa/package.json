@@ -1,0 +1,13 @@
+{
+  "name": "hello-pwa",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun run build.ts",
+    "serve": "bun run serve.ts"
+  },
+  "dependencies": {
+    "@livx.cc/native-kit": "workspace:*"
+  }
+}

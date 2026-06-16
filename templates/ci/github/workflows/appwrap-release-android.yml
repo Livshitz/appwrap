@@ -1,0 +1,51 @@
+# appwrap Android release — tag push (v*) → Play internal track.
+# Build is the appwrap CLI (`appwrap build android --release --aab` → signed AAB);
+# upload is fastlane supply. Secrets contract (repo settings → Actions secrets):
+#   ANDROID_KEYSTORE_BASE64        upload keystore, base64-encoded
+#   ANDROID_KEYSTORE_PASSWORD      keystore store password
+#   ANDROID_KEY_ALIAS              key alias
+#   ANDROID_KEY_ALIAS_PASSWORD     key (alias) password
+#   PLAY_SERVICE_ACCOUNT_JSON      Play Developer API service-account JSON (the app must already
+#                                  exist on Play with one prior manual upload before supply works)
+name: Release Android
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  play:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: android-actions/setup-android@v3
+      - run: bun install && bun run build.ts        # → dist/ (the PWA bundle the wrapper ships)
+      - run: npm i -g nativescript
+      - run: bunx appwrap init                      # native/ is generated (gitignored) — regenerate fresh in CI
+      - working-directory: native
+        run: npm install
+      - name: Decode upload keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/upload.keystore"
+      - name: Build signed AAB
+        env:
+          APPWRAP_ANDROID_KEYSTORE: ${{ runner.temp }}/upload.keystore
+          APPWRAP_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          APPWRAP_ANDROID_KEYSTORE_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          APPWRAP_ANDROID_KEYSTORE_ALIAS_PASSWORD: ${{ secrets.ANDROID_KEY_ALIAS_PASSWORD }}
+        run: bunx appwrap build android --release --aab
+      - uses: actions/upload-artifact@v4            # keep the AAB even if Play upload is skipped
+        with:
+          name: app-release-aab
+          path: native/platforms/android/app/build/outputs/bundle/release/app-release.aab
+      - uses: ruby/setup-ruby@v1
+        with: { ruby-version: '3.3', bundler-cache: false }
+      - run: gem install fastlane
+      - name: Upload to Play (internal)
+        working-directory: native
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: fastlane android beta

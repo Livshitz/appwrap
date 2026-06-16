@@ -1,0 +1,27 @@
+# Billing bridge — asserts kit.billing is reachable & degrades gracefully on a sim
+# WITHOUT a StoreKit config. A real purchase needs Xcode-run + Products.storekit, or
+# App Store Connect sandbox products — neither is headless-verifiable.
+#
+# We exercise products() only: it returns gracefully (empty, no prompt) on a bare sim.
+# We deliberately do NOT tap buy/restore/entitlements here — with the default
+# ClientTrustedValidator those run a StoreKit-1 restore/purchase, which pops a native
+# "Sign in to Apple Account" dialog that blocks and obscures the webview. That path is
+# verified by an Xcode-run with Products.storekit, or a server validator (see board).
+appId: cc.livx.hellowrap
+---
+- launchApp
+- extendedWaitUntil: { visible: "Hello AppWrap", timeout: 20000 }
+# iOS a11y exposes the bold <b>NATIVE</b> as its own node, so assert that substring
+# alone (smoke.yaml pattern) — a line-spanning regex won't match on iOS.
+- extendedWaitUntil: { visible: "NATIVE", timeout: 20000 }
+
+# scroll to the Billing tile near the bottom
+- swipe: { start: "50%, 85%", end: "50%, 15%", duration: 800 }
+- swipe: { start: "50%, 85%", end: "50%, 15%", duration: 800 }
+- swipe: { start: "50%, 85%", end: "50%, 15%", duration: 800 }
+- swipe: { start: "50%, 85%", end: "50%, 15%", duration: 800 }
+
+# products() runs and returns gracefully (empty when no StoreKit config / ASC products)
+- tapOn: "products"
+- extendedWaitUntil: { visible: ".*Billing/products (OK|ERR).*", timeout: 20000 }
+- takeScreenshot: /tmp/billing-products
