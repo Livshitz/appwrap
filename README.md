@@ -36,6 +36,20 @@ cd native && npm install && ns run ios   # or: ns run android
 bunx appwrap sync
 ```
 
+### Or — let your coding agent wrap it
+
+appwrap ships an [`AGENTS.md`](./AGENTS.md) so a coding agent (Claude Code, Cursor, …) can do the wrapping for you. From **your PWA repo**, paste this to the agent:
+
+```text
+Wrap this PWA as a native iOS app with appwrap. Read the guide at
+https://github.com/Livshitz/appwrap/blob/main/AGENTS.md , then:
+  1. add @livx.cc/appwrap + @livx.cc/native-kit (dev deps),
+  2. create appwrap.json — infer id/name/version from package.json + the web manifest,
+     set pwaDist to my build output dir,
+  3. run `bunx appwrap init`, then build + deploy to my connected device.
+First tell me any prerequisites I'm missing (Bun, NativeScript CLI, Xcode/CocoaPods).
+```
+
 Then call native capabilities straight from your web code — the same import is a no-op-safe web fallback in a plain browser:
 
 ```ts
