@@ -845,7 +845,7 @@ function gitRoot(start: string): string {
 }
 
 /** Emit CI scaffolding (GH Actions → git repo root, fastlane → native/). Never overwrites. */
-function copyCiTemplates(cwd: string, outDir: string): void {
+function copyCiTemplates(cwd: string, outDir: string, cfg: AppwrapConfig): void {
   if (!existsSync(CI_TEMPLATE_DIR)) return;
   // GitHub only reads `.github/workflows` at the REPO ROOT — in a monorepo, writing it under the
   // package cwd (e.g. packages/app/.github) is dead config and regenerates a stray workflow each init.
@@ -857,7 +857,18 @@ function copyCiTemplates(cwd: string, outDir: string): void {
     mkdirSync(to, { recursive: true });
     cpSync(from, to, { recursive: true, force: false, errorOnExist: false });
   }
-  console.log('  ci   ← GH Actions (.github/workflows) + fastlane (native/fastlane) — see secrets contract in workflow headers');
+  // Stamp the app id + team into the emitted fastlane (signing needs them; the templates ship
+  // `__APP_ID__`/`__TEAM_ID__` placeholders). Idempotent: re-init finds no placeholders → no-op.
+  const fastlaneDir = join(outDir, 'fastlane');
+  for (const file of ['Fastfile', 'Matchfile']) {
+    const p = join(fastlaneDir, file);
+    if (!existsSync(p)) continue;
+    const stamped = readFileSync(p, 'utf8')
+      .replaceAll('__APP_ID__', cfg.id)
+      .replaceAll('__TEAM_ID__', cfg.teamId ?? '');
+    writeFileSync(p, stamped);
+  }
+  console.log('  ci   ← GH Actions (.github/workflows) + fastlane (native/fastlane, signing stamped) — see secrets contract in workflow headers');
 }
 
 /**
@@ -925,7 +936,7 @@ async function init(cwd: string, flags: Record<string, string>): Promise<void> {
   console.log(`🎁 appwrap init → ${outDir}`);
   mkdirSync(outDir, { recursive: true });
   regenerateCore(cwd, outDir, cfg, { firstRun: true });
-  copyCiTemplates(cwd, outDir); // first-time scaffold (never overwrites)
+  copyCiTemplates(cwd, outDir, cfg); // first-time scaffold (never overwrites)
   writeFileSync(join(outDir, '.gitignore'), 'node_modules/\nplatforms/\nhooks/\n');
   applyOverrides(cwd, outDir, cfg); // escape hatch — last, so custom native code wins
   stampVersionManifest(outDir, cfg); // provenance — also marks the dir appwrap-managed

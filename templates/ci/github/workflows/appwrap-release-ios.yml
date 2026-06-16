@@ -1,13 +1,16 @@
-# appwrap iOS release — tag push (v*) → TestFlight via fastlane.
+# appwrap iOS → TestFlight via fastlane. On-demand (workflow_dispatch) or tag push (v*).
 # Secrets contract (repo settings → Actions secrets):
-#   MATCH_GIT_URL        private repo holding signing certs (fastlane match)
+#   MATCH_GIT_URL        private repo holding signing certs (fastlane match) — SSH form for the deploy key
+#   MATCH_DEPLOY_KEY     read-only SSH deploy key on that certs repo (so CI can clone it)
 #   MATCH_PASSWORD       match encryption passphrase
 #   ASC_KEY_ID           App Store Connect API key id
 #   ASC_ISSUER_ID        App Store Connect issuer id
 #   ASC_KEY_P8           App Store Connect .p8 key contents (base64)
-# No interactive Apple ID — API-key auth only (headless-safe).
+# No interactive Apple ID — API-key auth only (headless-safe). Certs/profiles must be seeded once
+# locally via `fastlane match appstore` before CI runs.
 name: Release iOS
 on:
+  workflow_dispatch:
   push:
     tags: ['v*']
 
@@ -16,17 +19,27 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      # Apple requires the iOS 26 SDK (Xcode 26+) for uploads — runners may default to older Xcode.
+      - uses: maxim-lobanov/setup-xcode@v1
+        with: { xcode-version: latest-stable }
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - run: bun install && bun run build.ts
       - run: npm i -g nativescript
-      - run: bunx appwrap init # native/ is generated (gitignored) — regenerate it fresh in CI
+      - run: bunx @livx.cc/appwrap init # native/ is generated (gitignored) — regenerate it fresh in CI
       - working-directory: native
         run: npm install
       - uses: ruby/setup-ruby@v1
         with: { ruby-version: '3.3', bundler-cache: false }
       - run: gem install fastlane
+      - name: Set up match deploy key (read-only SSH on the certs repo)
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.MATCH_DEPLOY_KEY }}" > ~/.ssh/match_deploy_key
+          chmod 600 ~/.ssh/match_deploy_key
+          printf 'Host github.com\n  IdentityFile ~/.ssh/match_deploy_key\n  IdentitiesOnly yes\n' >> ~/.ssh/config
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
       - name: Build & upload to TestFlight
         working-directory: native
         env:
@@ -37,5 +50,4 @@ jobs:
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
         run: fastlane ios beta
 
-  # Production promotion is a manual gate: re-run with the `production`
-  # environment approved, or promote the TestFlight build in App Store Connect.
+  # Production promotion is a manual gate: promote the TestFlight build in App Store Connect.

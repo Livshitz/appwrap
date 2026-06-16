@@ -25,7 +25,7 @@ jobs:
       - uses: android-actions/setup-android@v3
       - run: bun install && bun run build.ts        # → dist/ (the PWA bundle the wrapper ships)
       - run: npm i -g nativescript
-      - run: bunx appwrap init                      # native/ is generated (gitignored) — regenerate fresh in CI
+      - run: bunx @livx.cc/appwrap init                      # native/ is generated (gitignored) — regenerate fresh in CI
       - working-directory: native
         run: npm install
       - name: Decode upload keystore
@@ -36,7 +36,7 @@ jobs:
           APPWRAP_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           APPWRAP_ANDROID_KEYSTORE_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           APPWRAP_ANDROID_KEYSTORE_ALIAS_PASSWORD: ${{ secrets.ANDROID_KEY_ALIAS_PASSWORD }}
-        run: bunx appwrap build android --release --aab
+        run: bunx @livx.cc/appwrap build android --release --aab
       - uses: actions/upload-artifact@v4            # keep the AAB even if Play upload is skipped
         with:
           name: app-release-aab

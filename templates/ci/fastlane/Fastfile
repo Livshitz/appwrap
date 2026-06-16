@@ -1,11 +1,16 @@
-# appwrap fastlane — emitted by `appwrap init` into native/fastlane/.
-# Auth is App Store Connect API key only (headless-safe; no interactive Apple ID).
+# appwrap fastlane — emitted by `appwrap init` into native/fastlane/. App id + team are stamped
+# from the appwrap config. Auth is App Store Connect API key only (headless-safe; no interactive Apple ID).
 
 default_platform(:ios)
+
+APP_ID = '__APP_ID__'.freeze
+TEAM_ID = '__TEAM_ID__'.freeze
 
 platform :ios do
   desc 'Build the NativeScript wrapper and upload to TestFlight'
   lane :beta do
+    setup_ci # on CI: provisions a temporary unlocked keychain so codesign can use the match cert
+
     api_key = app_store_connect_api_key(
       key_id: ENV['ASC_KEY_ID'],
       issuer_id: ENV['ASC_ISSUER_ID'],
@@ -13,14 +18,30 @@ platform :ios do
       is_key_content_base64: true
     )
 
-    match(type: 'appstore', readonly: true, git_url: ENV['MATCH_GIT_URL'], api_key: api_key)
+    # readonly: certs/profiles must be seeded once via `fastlane match appstore` (see workflow header).
+    match(type: 'appstore', readonly: true, app_identifier: APP_ID,
+          git_url: ENV['MATCH_GIT_URL'], api_key: api_key)
 
-    sh('cd .. && ns prepare ios --release')
+    # NativeScript prepares the Xcode project inside the wrapper dir (native/ = parent of fastlane/).
+    sh("cd '#{File.expand_path('..', __dir__)}' && ns prepare ios --release")
+
+    # NS defaults the project to automatic signing → archive can't find a profile. Pin manual signing
+    # to the match-provided App Store profile (name exported by match into ENV).
+    profile = ENV["sigh_#{APP_ID}_appstore_profile-name"] || "match AppStore #{APP_ID}"
+    update_code_signing_settings(
+      use_automatic_signing: false,
+      path: 'platforms/ios/native.xcodeproj',
+      team_id: TEAM_ID,
+      bundle_identifier: APP_ID,
+      code_sign_identity: 'Apple Distribution',
+      profile_name: profile
+    )
 
     build_app(
       workspace: 'platforms/ios/native.xcworkspace',
       scheme: 'native',
-      export_method: 'app-store'
+      export_method: 'app-store',
+      export_options: { provisioningProfiles: { APP_ID => profile } }
     )
 
     upload_to_testflight(api_key: api_key, skip_waiting_for_build_processing: true)

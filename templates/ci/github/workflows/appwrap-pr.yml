@@ -23,6 +23,6 @@ jobs:
         with: { node-version: 22 }
       - run: bun install && bun run build.ts
       - run: npm i -g nativescript
-      - run: bunx appwrap init # native/ is generated (gitignored) — regenerate it fresh in CI
+      - run: bunx @livx.cc/appwrap init # native/ is generated (gitignored) — regenerate it fresh in CI
       - working-directory: native
         run: npm install && ns build ios --emulator
