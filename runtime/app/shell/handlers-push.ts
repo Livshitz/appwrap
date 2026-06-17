@@ -93,6 +93,29 @@ export function registerPushHandlers(): void {
     throw unsupported();
   });
 
+  bridge.register('push.permissionStatus', () => {
+    if (isIOS) {
+      return new Promise<string>((resolve) => {
+        UNUserNotificationCenter.currentNotificationCenter().getNotificationSettingsWithCompletionHandler(
+          (settings) => {
+            switch (settings.authorizationStatus) {
+              case UNAuthorizationStatus.Authorized:
+              case UNAuthorizationStatus.Provisional:
+              case UNAuthorizationStatus.Ephemeral:
+                return resolve('granted');
+              case UNAuthorizationStatus.Denied:
+                return resolve('denied');
+              default:
+                return resolve('notDetermined');
+            }
+          }
+        );
+      });
+    }
+    if (isAndroid) return androidPermissionStatus();
+    throw unsupported();
+  });
+
   bridge.register('push.register', () => {
     if (isIOS) {
       return new Promise<PushToken>((resolve, reject) => {
@@ -162,6 +185,19 @@ function androidRequestPermission(): Promise<string> {
       resolve('denied');
     }
   });
+}
+
+function androidPermissionStatus(): string {
+  // No "not-determined" concept on Android — report the effective on/off state.
+  // < API 33 has no runtime perm, but the user can still disable notifications in Settings.
+  try {
+    const ctx = Utils.android.getApplicationContext();
+    const enabled = androidx.core.app.NotificationManagerCompat.from(ctx).areNotificationsEnabled();
+    return enabled ? 'granted' : 'denied';
+  } catch (e) {
+    console.warn('AppWrap: push.permissionStatus failed', e);
+    return 'notDetermined';
+  }
 }
 
 function androidGetToken(): Promise<PushToken> {

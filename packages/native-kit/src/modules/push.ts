@@ -49,6 +49,12 @@ export class PushModule {
     return this.kit.invoke('push.requestPermission', undefined, { timeoutMs: 60_000 });
   }
 
+  /** Current authorization WITHOUT prompting — for opt-in funnel analytics.
+   * 'notDetermined' means the user hasn't been asked yet. */
+  permissionStatus(): Promise<'granted' | 'denied' | 'notDetermined'> {
+    return this.kit.invoke('push.permissionStatus');
+  }
+
   /** Register with APNs/FCM and resolve the device token. Call after permission is granted. */
   register(): Promise<PushToken> {
     return this.kit.invoke('push.register', undefined, { timeoutMs: 30_000 });

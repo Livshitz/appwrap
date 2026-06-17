@@ -322,6 +322,17 @@ export class WebAdapter implements NativeKitAdapter {
       case 'app.openSettings':
         throw new KitError('UNSUPPORTED', 'No app settings page on web');
 
+      case 'app.environment':
+        // On web there's no install — report the honest 'web' source. is_emulator is native-only.
+        return { source: 'web', isEmulator: false } as T;
+
+      case 'push.permissionStatus': {
+        // Best-effort via the Notification API (web push ≠ native push, but the perm signal is useful).
+        if (!('Notification' in window)) return 'notDetermined' as T;
+        const perm = Notification.permission; // 'granted' | 'denied' | 'default'
+        return (perm === 'default' ? 'notDetermined' : perm) as T;
+      }
+
       case 'billing.products':
       case 'billing.purchase':
       case 'billing.restore':

@@ -302,6 +302,12 @@ async function main() {
     }],
   ]);
 
+  tile('Analytics ctx', kit.app.capability, [
+    // The flat super-property bag you'd spread into mixpanel.register(...).
+    ['kit.context()', async () => JSON.stringify(await kit.context())],
+    ['app.environment()', async () => JSON.stringify(await kit.app.environment())],
+  ]);
+
   tile('Clipboard', kit.clipboard.capability, [
     ['copy', () => kit.clipboard.copy('appwrap-was-here')],
     ['read', () => kit.clipboard.read()],

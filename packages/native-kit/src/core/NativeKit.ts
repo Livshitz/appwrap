@@ -33,6 +33,38 @@ export class NativeKitOptions {
   handshakeTimeoutMs = 3000;
 }
 
+/**
+ * Flat, vendor-neutral analytics bag — spread straight into your analytics provider's
+ * super-properties (e.g. `mixpanel.register(await kit.context())`). Native-only fields
+ * degrade gracefully (omitted/undefined) on web and on older shells. snake_case keys
+ * match common analytics conventions.
+ */
+export interface KitContext {
+  /** Coarse runtime taxonomy: 'native-ios' | 'native-android' | 'web'. */
+  client: string;
+  is_native: boolean;
+  platform: Platform;
+  app_id?: string;
+  app_name?: string;
+  app_version?: string;
+  app_build?: string;
+  /** App Store / TestFlight / sideload / simulator / web. */
+  install_source?: string;
+  /** Stable per-install id (iOS IDFV / Android UUID) — first-party, non-tracking. */
+  install_id?: string;
+  first_install_at?: number;
+  last_update_at?: number;
+  is_emulator?: boolean;
+  device_model?: string;
+  device_os?: string;
+  device_os_version?: string;
+  device_manufacturer?: string;
+  device_language?: string;
+  device_region?: string;
+  push_permission?: string;
+  network_type?: string;
+}
+
 export class NativeKit {
   public readonly haptics = new HapticsModule(this);
   public readonly share = new ShareModule(this);
@@ -64,6 +96,7 @@ export class NativeKit {
   public options: NativeKitOptions;
   private adapter: NativeKitAdapter | null = null;
   private readyPromise: Promise<Handshake> | null = null;
+  private contextPromise: Promise<KitContext> | null = null;
 
   constructor(options?: Partial<NativeKitOptions>) {
     this.options = { ...new NativeKitOptions(), ...options };
@@ -92,6 +125,57 @@ export class NativeKit {
       })();
     }
     return this.readyPromise;
+  }
+
+  /**
+   * One flat analytics bag (handshake + device + install env + push perm + network),
+   * ready to spread into super-properties. Resilient: each native probe degrades to
+   * omitted on failure, so this never rejects once {@link ready} resolves. Cached.
+   */
+  context(): Promise<KitContext> {
+    if (!this.contextPromise) {
+      this.contextPromise = (async () => {
+        await this.ready();
+        const hs = this.handshakeInfo!;
+        const client = this.is.native ? `native-${hs.platform}` : 'web';
+        const ctx: KitContext = {
+          client,
+          is_native: this.is.native,
+          platform: hs.platform,
+          app_id: hs.app?.id,
+          app_name: hs.app?.name,
+          app_version: hs.app?.version,
+          app_build: hs.app?.build,
+        };
+        // Probe in parallel; a failing/absent capability simply leaves its fields unset.
+        const safe = <T>(p: Promise<T>): Promise<T | null> => p.catch(() => null);
+        const [env, device, push, net] = await Promise.all([
+          safe(this.app.environment()),
+          safe(this.device.info()),
+          this.push.capability === 'native' ? safe(this.push.permissionStatus()) : Promise.resolve(null),
+          safe(this.network.status()),
+        ]);
+        if (env) {
+          ctx.install_source = env.source;
+          ctx.install_id = env.installId;
+          ctx.first_install_at = env.firstInstallAt;
+          ctx.last_update_at = env.lastUpdateAt;
+          ctx.is_emulator = env.isEmulator;
+        }
+        if (device) {
+          ctx.device_model = device.model;
+          ctx.device_os = device.os;
+          ctx.device_os_version = device.osVersion;
+          ctx.device_manufacturer = device.manufacturer;
+          ctx.device_language = device.language;
+          ctx.device_region = device.region;
+        }
+        if (push) ctx.push_permission = push;
+        if (net) ctx.network_type = net.type;
+        return ctx;
+      })();
+    }
+    return this.contextPromise;
   }
 
   get is() {
