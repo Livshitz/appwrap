@@ -6,9 +6,9 @@ CLI that wraps any PWA into a native iOS/Android app with real native capabiliti
 
 ```bash
 bun add -d @livx.cc/appwrap
-bunx appwrap init     # scaffold native/ from your config
-bunx appwrap sync     # regenerate native/ after web or config changes
-bunx appwrap dev      # live-load your dev server in the native shell
+bunx @livx.cc/appwrap init     # scaffold native/ from your config
+bunx @livx.cc/appwrap sync     # regenerate native/ after web or config changes
+bunx @livx.cc/appwrap dev      # live-load your dev server in the native shell
 ```
 
 Configuration lives in a typed `appwrap.config.ts` (app id, name, icon, modules, permissions, signing) — author it with autocomplete + type-checking via `defineConfig`:

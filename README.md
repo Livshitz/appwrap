@@ -45,11 +45,11 @@ EOF
 
 # 3 · build your PWA, scaffold the native wrapper, run it
 bun run build                            # your existing build → dist/
-bunx appwrap init                        # generates native/ from your config
+bunx @livx.cc/appwrap init                        # generates native/ from your config
 cd native && npm install && ns run ios   # or: ns run android
 
 # iterate — rebuild the PWA and re-sync (fast path, no full regen)
-bunx appwrap sync
+bunx @livx.cc/appwrap sync
 ```
 
 Then call native capabilities straight from your web code — the same import is a no-op-safe web fallback in a plain browser:
