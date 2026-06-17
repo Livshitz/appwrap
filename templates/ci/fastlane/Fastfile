@@ -44,7 +44,9 @@ platform :ios do
       export_options: { provisioningProfiles: { APP_ID => profile } }
     )
 
-    upload_to_testflight(api_key: api_key, skip_waiting_for_build_processing: true)
+    # Wait for App Store Connect to finish processing and FAIL if it doesn't — Apple can accept the
+    # upload yet silently drop the build (e.g. an out-of-range CFBundleVersion). skip:true hides that.
+    upload_to_testflight(api_key: api_key, skip_waiting_for_build_processing: false, wait_processing_timeout_duration: 1800)
   end
 end
 
