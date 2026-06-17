@@ -17,6 +17,14 @@ import { appwrapNativeLog } from './native-log';
 // Forwarded WebView console/errors → the shared native-log sink (Documents/appwrap-web.log).
 const appendWebLog = appwrapNativeLog;
 
+/** Parse a #rrggbb config color into a UIColor (for the WebView background). */
+function uiColorFromHex(hex?: string): any {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec((hex ?? '').trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return UIColor.colorWithRedGreenBlueAlpha(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, 1);
+}
+
 export class CustomWebView extends WebView {
   /** Set by the bridge before load; receives raw envelope JSON. */
   onAppwrapMessage: ((json: string) => void) | null = null;
@@ -104,6 +112,12 @@ export class CustomWebView extends WebView {
     // and the auto content-inset (the page owns safe areas via env()).
     webView.scrollView.bounces = false;
     webView.scrollView.contentInsetAdjustmentBehavior = 2; // .never
+
+    // No white flash before the page paints: make the WebView transparent so the (themed) NS page
+    // backgroundColor shows through during load — critical for loader:'server' (network) startups.
+    const bg = uiColorFromHex(SHELL_CONFIG.backgroundColor);
+    webView.opaque = false;
+    if (bg) { webView.backgroundColor = bg; webView.scrollView.backgroundColor = bg; }
     webView.allowsLinkPreview = false;
     // Edge-swipe to go back/forward in WebView history — the iOS native gesture
     // users expect. SPAs that own their own history still get it for free.
