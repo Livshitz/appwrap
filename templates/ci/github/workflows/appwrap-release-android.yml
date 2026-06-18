@@ -9,8 +9,14 @@
 #                                  exist on Play with one prior manual upload before supply works)
 name: Release Android
 on:
+  workflow_dispatch:
   push:
     tags: ['v*']
+
+# Monotonic store build number (Android versionCode). appwrap CLI reads APPWRAP_BUILD_NUMBER over the
+# constant derived default — Play rejects a versionCode it has already seen. run_number is increasing.
+env:
+  APPWRAP_BUILD_NUMBER: ${{ github.run_number + 100 }}
 
 jobs:
   play:

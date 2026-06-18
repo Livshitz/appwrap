@@ -14,6 +14,12 @@ on:
   push:
     tags: ['v*']
 
+# Monotonic store build number (CFBundleVersion). The appwrap CLI reads APPWRAP_BUILD_NUMBER and it wins
+# over the (constant-per-version) derived default — without this, repeat uploads of the same marketing
+# version 409 ("build already exists"). run_number is strictly increasing; +100 clears low derived values.
+env:
+  APPWRAP_BUILD_NUMBER: ${{ github.run_number + 100 }}
+
 jobs:
   testflight:
     runs-on: macos-15
