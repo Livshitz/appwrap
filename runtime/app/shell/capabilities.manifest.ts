@@ -156,7 +156,14 @@ export const MODULES: ModuleManifest[] = [
     // string + the healthkit entitlement, both module-owned. No background execution — HealthKit
     // already has the steps the OS recorded while the app was killed.
     ios: {
-      permissions: [{ key: 'NSHealthShareUsageDescription', domain: 'health', defaultUsage: 'Read your step count from the Health app.' }],
+      // App Store validation REQUIRES both Share AND Update purpose strings whenever the HealthKit
+      // entitlement is present — even for a read-only app (else upload fails 409 "Missing purpose
+      // string … NSHealthUpdateUsageDescription"). Device debug builds don't validate this; only the
+      // App Store upload does.
+      permissions: [
+        { key: 'NSHealthShareUsageDescription', domain: 'health', defaultUsage: 'Read your step count from the Health app.' },
+        { key: 'NSHealthUpdateUsageDescription', domain: 'health', defaultUsage: 'Read your step count from the Health app.' },
+      ],
       entitlements: { 'com.apple.developer.healthkit': true },
     },
     // Android primary = Health Connect (system store, Wear-inclusive, survives kill — matches iOS).
