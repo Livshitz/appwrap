@@ -29,7 +29,7 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
       - uses: android-actions/setup-android@v3
-      - run: bun install && bun run build.ts        # → dist/ (the PWA bundle the wrapper ships)
+      - run: bun install && bun run build        # → dist/ (the PWA bundle the wrapper ships)
       # Pin global tools — unpinned installs can grab a breaking release mid-flight. Bump deliberately.
       - run: npm i -g nativescript@9.0.6
       - run: bunx @livx.cc/appwrap init                      # native/ is generated (gitignored) — regenerate fresh in CI

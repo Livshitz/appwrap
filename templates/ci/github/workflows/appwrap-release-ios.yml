@@ -31,7 +31,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
-      - run: bun install && bun run build.ts
+      - run: bun install && bun run build
       # Pin global tools — unpinned installs can grab a breaking release mid-flight. Bump deliberately.
       - run: npm i -g nativescript@9.0.6
       - run: bunx @livx.cc/appwrap init # native/ is generated (gitignored) — regenerate it fresh in CI
