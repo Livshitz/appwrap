@@ -24,6 +24,16 @@ export interface AppwrapConfig {
   entry?: string;
   backgroundColor?: string;
   statusBarStyle?: 'light' | 'dark';
+  /** Boot-time native chrome color (status bar / safe areas behind the page). Falls back to the PWA
+   * manifest's `theme_color` when absent. The shell tints the native root with it at launch (the
+   * same surface `kit.ui.syncThemeColor()` keeps in sync with `<meta name="theme-color">` at runtime)
+   * — distinct from `backgroundColor`, which paints the page/splash. CSS color string (e.g. `#0b1020`). */
+  themeColor?: string;
+  /** Supported device orientation. Falls back to the PWA manifest's `orientation` when absent
+   * (`*-primary`/`*-secondary` variants normalize to the axis). `portrait` / `landscape` lock the
+   * axis; `any` (default) leaves rotation free (sans upside-down on iOS). Stamped into iOS
+   * `UISupportedInterfaceOrientations` (+ `~ipad`) and Android `android:screenOrientation`. */
+  orientation?: 'portrait' | 'landscape' | 'any';
   /** Android only (experimental). When true, the WebView draws genuinely edge-to-edge UNDER the
    * transparent system bars (NS `androidOverflowEdge='dont-apply'`) and the real safe-area insets
    * are injected as `--saie-*` CSS vars + native `env(safe-area-inset-*)`, so a multi-theme PWA

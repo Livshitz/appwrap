@@ -9,6 +9,10 @@ export const SHELL_CONFIG = {
   entry: 'index.html',
   /** Page + status bar background while the WebView boots. */
   backgroundColor: '#0b1020',
+  /** Boot-time native chrome color (status bar / safe areas), from `appwrap.json.themeColor` or the
+   * PWA manifest `theme_color`. Empty = leave the root un-tinted (page backgroundColor shows through).
+   * Applied at boot via the same root-view tint `kit.ui.syncThemeColor()` uses at runtime. */
+  themeColor: '',
   /** 'light' = white status bar icons. */
   statusBarStyle: 'light' as 'light' | 'dark',
   /** Android only (experimental). true = WebView draws edge-to-edge under transparent bars +

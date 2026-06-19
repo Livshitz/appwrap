@@ -108,6 +108,27 @@ export function bindStatusBarPage(page: Page): void {
   currentPage = page;
 }
 
+/**
+ * Tint the native root (the chrome behind the page — status bar / safe areas) to a CSS color. This is
+ * the SAME surface the `ui.setBackgroundColor` handler / `kit.ui.syncThemeColor()` drive at runtime; we
+ * apply the manifest/config `themeColor` through it at boot so the chrome is themed before the WebView
+ * paints (no white flash, no un-themed safe areas). No-op for an empty color (leave the page bg).
+ */
+export function applyThemeColor(color: string): void {
+  if (!color) return;
+  const root = Application.getRootView();
+  if (!root) return;
+  // `color` is a PWA-manifest `theme_color` (or appwrap.json) — dev free-text, NOT validated upstream.
+  // `new Color()` THROWS on a value it can't parse, and this runs at boot (onPageLoaded), so an
+  // unsupported/malformed color (e.g. an unrecognized CSS form) would abort the rest of shell init.
+  // Degrade gracefully: log + leave the default page background rather than crash the launch.
+  try {
+    root.backgroundColor = new Color(String(color));
+  } catch (e) {
+    console.warn('[appwrap] invalid themeColor, leaving default:', color, (e as Error)?.message ?? e);
+  }
+}
+
 /** 'light' = white icons/text (for dark backgrounds), 'dark' = black. */
 export function setStatusBarStyle(style: 'light' | 'dark'): void {
   if (isIOS) {

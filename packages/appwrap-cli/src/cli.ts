@@ -20,6 +20,13 @@ import type * as CapManifest from '../../../runtime/app/shell/capabilities.manif
 // Config shape lives in its own import-safe module so a `appwrap.config.ts` file can import the
 // type + `defineConfig` helper without pulling in (and running) the CLI dispatch.
 import type { AppwrapConfig } from './config';
+import {
+  androidScreenOrientation,
+  iosOrientations,
+  mergeManifest,
+  stampAndroidOrientation,
+  stampPlistOrientations,
+} from './derive';
 
 /** Marketing version → a monotonic integer build (0.2.1 → 201; 1.4.12 → 10412). Stable & increasing
  * across semver bumps so store re-uploads are always accepted without a manual bump. */
@@ -323,14 +330,8 @@ async function loadConfig(cwd: string, flags: Record<string, string>): Promise<A
   const cfg = await readConfigFile(configPath);
 
   // Manifest as source: the appwrap config wins, the PWA manifest fills the gaps, template default last.
-  // (DRY single-source — devs don't re-type identity already declared in the manifest.)
-  if (cfg.pwaDist) {
-    const mf = loadManifest(cwd, cfg);
-    if (mf) {
-      cfg.name ??= mf.name || mf.short_name;
-      cfg.backgroundColor ??= mf.background_color;
-    }
-  }
+  // (DRY single-source — devs don't re-type identity already declared in the manifest.) See mergeManifest.
+  if (cfg.pwaDist) mergeManifest(cfg, loadManifest(cwd, cfg));
 
   for (const key of ['id', 'name', 'version', 'pwaDist'] as const) {
     if (!cfg[key]) {
@@ -351,6 +352,7 @@ export const SHELL_CONFIG = {
   version: ${JSON.stringify(cfg.version)},
   entry: ${JSON.stringify(cfg.entry ?? 'index.html')},
   backgroundColor: ${JSON.stringify(cfg.backgroundColor ?? '#ffffff')},
+  themeColor: ${JSON.stringify(cfg.themeColor ?? '')},
   statusBarStyle: ${JSON.stringify(cfg.statusBarStyle ?? 'dark')} as 'light' | 'dark',
   edgeToEdge: ${JSON.stringify(cfg.edgeToEdge ?? false)},
   loader: ${JSON.stringify(cfg.loader ?? 'app')} as 'app' | 'file' | 'server',
@@ -385,6 +387,10 @@ function stampIOSDisplayName(outDir: string, cfg: AppwrapConfig, req: NativeReqs
   stamp('CFBundleName', cfg.name);
   stamp('CFBundleShortVersionString', cfg.version); // marketing version (user-facing)
   stamp('CFBundleVersion', String(buildNumberOf(cfg))); // monotonic build — store re-uploads need it higher
+
+  // Supported orientation (config > manifest) — rewrites both UISupportedInterfaceOrientations
+  // arrays (iPhone + ~ipad). Skipped when unset → keep the template's free-rotation default.
+  if (cfg.orientation) src = stampPlistOrientations(src, iosOrientations(cfg.orientation));
 
   // Permission usage strings + URL scheme + export-compliance — idempotent: strip stamped block, re-add
   src = src.replace(/\s*<!-- appwrap:begin -->[\s\S]*?<!-- appwrap:end -->/g, '');
@@ -610,6 +616,9 @@ function stampAndroidAppName(outDir: string, cfg: AppwrapConfig, req: NativeReqs
   if (existsSync(manifest)) {
     let src = readFileSync(manifest, 'utf8');
     if (cfg.urlScheme) src = src.replace(/android:scheme="[^"]*"/, `android:scheme="${cfg.urlScheme}"`);
+    // Supported orientation (config > manifest) on the main <activity>. Skipped when unset → keep
+    // the template default (free); 'any' removes the attribute, so re-sync stays idempotent.
+    if (cfg.orientation) src = stampAndroidOrientation(src, androidScreenOrientation(cfg.orientation));
     // Permissions — idempotent: rewrite the marker block from the active modules (deduped).
     const perms = req.androidPerms.map((p) => `\t<uses-permission android:name="${p}"/>`);
     src = src.replace(

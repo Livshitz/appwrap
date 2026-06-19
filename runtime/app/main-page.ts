@@ -13,7 +13,7 @@ import './shell/fcm-bootstrap.generated'; // side-effect: registers the FCM serv
 import { startEventForwarding } from './shell/events';
 import { startDevMenu } from './shell/devmenu';
 import { SHELL_CONFIG } from './shell/config';
-import { bindStatusBarPage, setStatusBarStyle, enableAndroidEdgeToEdge, wireAndroidSafeArea } from './shell/status-bar';
+import { bindStatusBarPage, setStatusBarStyle, applyThemeColor, enableAndroidEdgeToEdge, wireAndroidSafeArea } from './shell/status-bar';
 import { CustomWebView } from './shell/custom-webview';
 
 let initialized = false;
@@ -23,6 +23,7 @@ export function onPageLoaded(args: EventData): void {
   page.bindingContext = { backgroundColor: SHELL_CONFIG.backgroundColor };
   bindStatusBarPage(page);
   if (isAndroid) enableAndroidEdgeToEdge();
+  applyThemeColor(SHELL_CONFIG.themeColor); // manifest/config theme_color → native chrome at boot
   setStatusBarStyle(SHELL_CONFIG.statusBarStyle);
 
   if (initialized) return;

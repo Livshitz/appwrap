@@ -125,6 +125,12 @@ export default defineConfig({
 
 </details>
 
+`orientation` (`portrait` | `landscape` | `any`) locks the supported device orientation — stamped into
+iOS `UISupportedInterfaceOrientations` (+ the `~ipad` variant) and Android `android:screenOrientation`;
+`any` (default) leaves rotation free. `themeColor` (CSS color) tints the native chrome (status bar /
+safe areas) at boot — distinct from `backgroundColor`, which paints the page/splash. **Both fall back to
+the PWA `manifest.json`** (`orientation` — `*-primary`/`*-secondary` normalize to the axis — and
+`theme_color`) when absent (config > manifest > default).
 `urlScheme` registers a deep-link scheme (`hellowrap://…` → `kit.lifecycle.onDeepLink`).
 `modules` (optional) is an opt-in capability allow-list — **present** → only the listed capabilities
 (plus always-on core) are advertised, permissioned, and compiled into the shell, so an app that
@@ -412,7 +418,7 @@ bun test packages/                                  # kit unit tests
 - [x] CLI `init` / `sync` — stamps id, name, version, iOS permissions, URL scheme, Android permissions
 - [x] managed model (Expo-CNG-style) — `native/` is generated & disposable: idempotent guarded `init`,
       `.appwrap-version` provenance stamp, `kit.ready()` protocol assertion (loud version skew),
-      `overrides/` pure-native escape hatch, manifest→config fallback (name/background), CI regenerates
+      `overrides/` pure-native escape hatch, manifest→config fallback (name/background/theme/orientation), CI regenerates
       `native/` with `init` (not `sync`) on a fresh checkout
 - [x] store-readiness emitters — `PrivacyInfo.xcprivacy` (May-2024 hard-reject gap),
       `ITSAppUsesNonExemptEncryption`, monotonic build number (`CFBundleVersion`/`versionCode` split
