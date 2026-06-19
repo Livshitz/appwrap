@@ -163,6 +163,9 @@ export const MODULES: ModuleManifest[] = [
       permissions: [
         { key: 'NSHealthShareUsageDescription', domain: 'health', defaultUsage: 'Read your step count from the Health app.' },
         { key: 'NSHealthUpdateUsageDescription', domain: 'health', defaultUsage: 'Read your step count from the Health app.' },
+        // Live step stream (health.liveSteps) uses CMPedometer (CoreMotion) → iOS terminates the app
+        // on access without this Motion & Fitness usage string. Required for the real-time count.
+        { key: 'NSMotionUsageDescription', domain: 'motion', defaultUsage: 'Count your steps live as you walk.' },
       ],
       entitlements: { 'com.apple.developer.healthkit': true },
     },
