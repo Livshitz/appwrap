@@ -4,6 +4,8 @@
  * `screen.orientation.*` handlers. Raw UIInterfaceOrientationMask bit values
  * (1 << UIInterfaceOrientation) so no ambient UIKit types are needed.
  */
+import { SHELL_CONFIG } from './config';
+
 export const ORIENTATION_MASK = {
   portrait: 1 << 1, // 2
   portraitUpsideDown: 1 << 2, // 4
@@ -13,7 +15,11 @@ export const ORIENTATION_MASK = {
   allButUpsideDown: (1 << 1) | (1 << 3) | (1 << 4), // 26 — default, free rotation sans upside-down
 };
 
-let iosMask = ORIENTATION_MASK.allButUpsideDown;
+// Init from the configured/manifest orientation (config > manifest → stamped into SHELL_CONFIG). The
+// AppDelegate's `supportedInterfaceOrientationsForWindow` returns this mask and OVERRIDES the static
+// Info.plist `UISupportedInterfaceOrientations` at runtime — so locking orientation requires setting
+// the mask here, not just stamping the plist. `kit.screen.orientation.lock()` still overrides at runtime.
+let iosMask = maskForLock((SHELL_CONFIG as { orientation?: string }).orientation || 'any');
 
 /** The mask the AppDelegate reports to UIKit. */
 export function iosOrientationMask(): number {

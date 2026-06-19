@@ -354,6 +354,7 @@ export const SHELL_CONFIG = {
   backgroundColor: ${JSON.stringify(cfg.backgroundColor ?? '#ffffff')},
   themeColor: ${JSON.stringify(cfg.themeColor ?? '')},
   statusBarStyle: ${JSON.stringify(cfg.statusBarStyle ?? 'dark')} as 'light' | 'dark',
+  orientation: ${JSON.stringify(cfg.orientation ?? '')} as '' | 'portrait' | 'landscape' | 'any',
   edgeToEdge: ${JSON.stringify(cfg.edgeToEdge ?? false)},
   loader: ${JSON.stringify(cfg.loader ?? 'app')} as 'app' | 'file' | 'server',
   serverUrl: ${JSON.stringify(cfg.serverUrl ?? '')},

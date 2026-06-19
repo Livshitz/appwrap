@@ -15,6 +15,9 @@ export const SHELL_CONFIG = {
   themeColor: '',
   /** 'light' = white status bar icons. */
   statusBarStyle: 'light' as 'light' | 'dark',
+  /** Supported orientation (config > manifest). Drives the iOS AppDelegate orientation mask at boot
+   * (which overrides Info.plist) + is stamped to Android `screenOrientation`. '' = free rotation. */
+  orientation: '' as '' | 'portrait' | 'landscape' | 'any',
   /** Android only (experimental). true = WebView draws edge-to-edge under transparent bars +
    * safe-area insets injected as `--saie-*` CSS vars; false = bars show the page backgroundColor. */
   edgeToEdge: false,
