@@ -73,18 +73,30 @@ function registerIos(): void {
   // Emits `health.liveStep` { steps } (today's pedometer total since local midnight). iPhone-only
   // (no Watch), which is fine: it's the live driver; HealthKit re-anchors the authoritative total.
   let pedometer: any = null;
-  bridge.register('health.liveSteps.start', () => {
-    if (typeof CMPedometer === 'undefined' || !CMPedometer.isStepCountingAvailable())
-      throw err('UNSUPPORTED', 'Pedometer (live step counting) unavailable on this device');
-    if (pedometer) return; // already streaming
-    pedometer = CMPedometer.new();
-    // Stream from local midnight; the handler fires off-main, so emit on the main thread (the
-    // WKWebView evaluateJavaScript delivery must be main-thread, like health.count above).
+  let anchorDay = -1; // local day-of-month the current stream is anchored to (for midnight re-anchor)
+  const localDay = () => new Date().getDate();
+  const startStream = () => {
+    anchorDay = localDay();
     pedometer.startPedometerUpdatesFromDateWithHandler(startOfToday(), (data: any, e: any) => {
       if (e || !data) return;
+      // Midnight self-heal: CMPedometer counts since the FIXED anchor date, so after local midnight
+      // numberOfSteps still includes yesterday. When the day rolls over, restart from the new
+      // midnight (re-anchors to 0) so the live count stays "today only".
+      if (localDay() !== anchorDay) { Utils.dispatchToMainThread(() => { pedometer.stopPedometerUpdates(); startStream(); bridge.emit('health.liveStep', { steps: 0 }); }); return; }
       const steps = Math.round(num(data.numberOfSteps));
       Utils.dispatchToMainThread(() => bridge.emit('health.liveStep', { steps }));
     });
+  };
+  bridge.register('health.liveSteps.start', () => {
+    if (typeof CMPedometer === 'undefined' || !CMPedometer.isStepCountingAvailable())
+      throw err('UNSUPPORTED', 'Pedometer (live step counting) unavailable on this device');
+    // Motion & Fitness denied/restricted → surface it so the caller can fall back to HealthKit instead
+    // of silently receiving no events. (2 = denied, 1 = restricted per CMAuthorizationStatus.)
+    const auth = typeof CMPedometer.authorizationStatus === 'function' ? CMPedometer.authorizationStatus() : 0;
+    if (auth === 2 || auth === 1) throw err('DENIED', 'Motion & Fitness access is off for live step counting');
+    if (pedometer) return; // already streaming
+    pedometer = CMPedometer.new();
+    startStream();
   });
   bridge.register('health.liveSteps.stop', () => {
     pedometer?.stopPedometerUpdates();

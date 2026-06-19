@@ -1146,8 +1146,11 @@ async function deploy(cwd: string, flags: Record<string, string>, positionals: s
   try {
     // Capture (not inherit) so we can recognize specific failures; echo it for visibility.
     // Wrapped so a LOCKED device waits-and-retries instead of hard-failing (the common annoyance).
+    // --timeout: devicectl has no first-class "wait for unlock", but its overall-timeout lets a single
+    // attempt tolerate a brief locked/unavailable window before erroring; the outer retry covers the
+    // fail-fast case + the unlock prompt. (Verified against `devicectl --help`; community wraps it too.)
     const out = withUnlockRetry('Install', () =>
-      execFileSync('xcrun', ['devicectl', 'device', 'install', 'app', '--device', device.id, ipaPath], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'pipe'] })
+      execFileSync('xcrun', ['devicectl', 'device', 'install', 'app', '--timeout', '25', '--device', device.id, ipaPath], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'pipe'] })
     );
     process.stdout.write(out);
   } catch (e: any) {
@@ -1177,7 +1180,7 @@ async function deploy(cwd: string, flags: Record<string, string>, positionals: s
     console.log(`▶ launching ${cfg.id}`);
     try {
       withUnlockRetry('Launch', () =>
-        execFileSync('xcrun', ['devicectl', 'device', 'process', 'launch', '--device', device.id, cfg.id], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'pipe'] })
+        execFileSync('xcrun', ['devicectl', 'device', 'process', 'launch', '--timeout', '25', '--device', device.id, cfg.id], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'pipe'] })
       );
     } catch {
       console.error('⚠ Launch failed (still locked after waiting). The app is installed — unlock and tap it, or re-run.');
