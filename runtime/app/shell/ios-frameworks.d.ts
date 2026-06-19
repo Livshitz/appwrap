@@ -30,6 +30,14 @@ declare const HKStatisticsOptions: any;
 declare const HKUnit: any;
 declare const CNContactPickerViewController: any;
 declare const CNContactPickerDelegate: any;
+// Contacts framework (contacts.getAll bulk read — CNContactStore, vs the ContactsUI picker above)
+declare const CNContactStore: any;
+declare const CNEntityType: any;
+declare const CNContactFetchRequest: any;
+declare const CNContactGivenNameKey: any;
+declare const CNContactFamilyNameKey: any;
+declare const CNContactPhoneNumbersKey: any;
+declare const CNContactEmailAddressesKey: any;
 declare const EKEventStore: any;
 declare const EKEvent: any;
 declare const EKSpan: any;
