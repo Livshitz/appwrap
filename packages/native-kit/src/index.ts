@@ -31,6 +31,7 @@ export type { AudioMode, MediaDeviceLite } from './modules/media';
 export type { NetworkStatus } from './modules/network';
 export type { ActionOptions, AlertOptions, ConfirmOptions, SafeAreaInsets } from './modules/ui';
 export type { MotionSample } from './modules/motion';
+export type { UpdateStatus, UpdatesOptions } from './modules/updates';
 export type { PickedContact } from './modules/contacts';
 export type { CalendarEventOptions } from './modules/calendar';
 export type { BrowserOptions } from './modules/browser';

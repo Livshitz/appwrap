@@ -68,7 +68,7 @@ export const MODULES: ModuleManifest[] = [
   { name: 'haptics', core: true, group: 'core', capabilities: { haptics: 'native' } },
   { name: 'share', core: true, group: 'core', capabilities: { share: 'native', shareFiles: 'native' } },
   { name: 'storage', core: true, group: 'core', capabilities: { storage: 'native', secureStorage: 'native' } },
-  { name: 'toast', core: true, group: 'core', capabilities: { toast: 'native' } },
+  { name: 'toast', core: true, group: 'core', capabilities: { toast: 'native', banner: 'native', updates: 'native' } },
   { name: 'statusBar', core: true, group: 'core', capabilities: { statusBar: 'native', themeColor: 'native' } },
   { name: 'device', core: true, group: 'extended', capabilities: { device: 'native' } },
   { name: 'clipboard', core: true, group: 'extended', capabilities: { clipboard: 'native' } },

@@ -358,6 +358,7 @@ export const SHELL_CONFIG = {
   backendOrigin: ${JSON.stringify(cfg.backendOrigin ?? '')},
   debug: ${JSON.stringify(cfg.debug ?? false)},
   debugLog: ${JSON.stringify(cfg.debugLog ?? '*')},
+  devMenu: ${JSON.stringify(cfg.devMenu ?? true)},
   pushIos: ${JSON.stringify(!!cfg.push?.enabled && cfg.push?.ios !== false)},
   pushAndroid: ${JSON.stringify(!!cfg.push?.enabled && cfg.push?.android !== false)},
 };

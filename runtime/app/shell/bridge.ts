@@ -39,6 +39,11 @@ export class Bridge {
     this.webView = null;
   }
 
+  /** The attached WebView (for handlers that drive it directly, e.g. app.reload). */
+  getWebView(): CustomWebView | null {
+    return this.webView;
+  }
+
   emit(event: string, payload?: unknown): void {
     this.deliver(JSON.stringify({ v: 1, kind: 'event', event, payload }));
   }
@@ -75,7 +80,8 @@ export class Bridge {
     this.evalJs(js).catch((e) => console.error('Bridge: deliver failed', e));
   }
 
-  private evalJs(script: string): Promise<any> {
+  /** Evaluate JS in the WebView and resolve its value (used by deliver + the dev-menu version probe). */
+  evalJs(script: string): Promise<any> {
     const wv = this.webView;
     return new Promise((resolve, reject) => {
       if (!wv) return reject(new Error('no webview'));

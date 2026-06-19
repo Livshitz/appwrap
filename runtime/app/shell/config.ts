@@ -27,6 +27,8 @@ export const SHELL_CONFIG = {
   debug: false,
   /** Value written to `localStorage.DEBUG` in debug mode so the PWA logger goes verbose ('*' = all). */
   debugLog: '*',
+  /** Shake-to-open developer menu (App Info / Reload). On by default, including store builds. */
+  devMenu: true,
   /** Remote push configured, per platform (iOS aps-environment entitlement / Android FCM). Drives the
    * `push` capability flag at runtime by platform — off unless `appwrap.json.push` enables it, so an
    * un-provisioned build honestly reports 'none' (and a personal-team iOS build keeps `pushIos:false`). */

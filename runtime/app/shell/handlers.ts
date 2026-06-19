@@ -3,12 +3,13 @@ import { bridge } from './bridge';
 import { SHELL_CONFIG } from './config';
 import { onPwaHandshake } from './events';
 import { showToast } from './toast';
+import { showBanner, dismissBanner } from './banner';
 import { setStatusBarStyle } from './status-bar';
 import { buildCapabilityMap } from './capabilities.manifest';
 import { ACTIVE_MODULE_NAMES } from './active-modules.generated';
 
 /** Build identifier for the native shell bundle — bump per deploy to spot stale bundles. */
-export const SHELL_BUILD = 'oauth-media-speaker-1';
+export const SHELL_BUILD = 'updates-devmenu-2';
 
 /** Register all protocol-v1 handlers. */
 export function registerHandlers(): void {
@@ -23,7 +24,7 @@ export function registerHandlers(): void {
     return {
       protocol: 1,
       platform: isIOS ? 'ios' : 'android',
-      app: { id: SHELL_CONFIG.appId, name: SHELL_CONFIG.name, version: SHELL_CONFIG.version, build: SHELL_BUILD },
+      app: { id: SHELL_CONFIG.appId, name: SHELL_CONFIG.name, version: SHELL_CONFIG.version, build: SHELL_BUILD, loader: SHELL_CONFIG.loader },
       debug: { lastNotifTap: safeJson(ApplicationSettings.getString('kit:__notifTap', '')) },
       capabilities,
     };
@@ -127,9 +128,34 @@ export function registerHandlers(): void {
     showToast(String(message ?? ''), duration ?? 'short')
   );
 
+  // Persistent, tappable banner (e.g. the remote-update "tap to reload" prompt). Tap emits
+  // `toast.action` { id } back to the web side.
+  bridge.register('toast.banner', ({ id, message }: { id: string; message: string }) =>
+    showBanner({ id: String(id ?? 'banner'), message: String(message ?? '') })
+  );
+  bridge.register('toast.dismissBanner', () => dismissBanner());
+
+  // Hard reload the WebView, bypassing cache — used by the update banner + dev menu.
+  bridge.register('app.reload', () => reloadWebView());
+
   bridge.register('ui.statusBar.setStyle', ({ style }: { style: 'light' | 'dark' }) =>
     setStatusBarStyle(style)
   );
+}
+
+/** Reload the attached WebView from origin, bypassing the HTTP cache (iOS `reloadFromOrigin`,
+ * Android `clearCache` + `reload`). No-op if no WebView is attached yet. */
+export function reloadWebView(): void {
+  const wv = bridge.getWebView();
+  if (!wv) return;
+  Utils.dispatchToMainThread(() => {
+    if (isIOS && wv.ios) {
+      (wv.ios as WKWebView).reloadFromOrigin();
+    } else if (isAndroid && wv.android) {
+      wv.android.clearCache(true);
+      wv.android.reload();
+    }
+  });
 }
 
 /** Parse a stored JSON breadcrumb; null if absent/unparseable (diagnostic, never throws). */

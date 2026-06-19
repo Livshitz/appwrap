@@ -138,6 +138,9 @@ the CLI collects+dedups them across the active set.
 `storekitConfig` (optional) points at a `.storekit` file (relative to the project) and wires it into
 the iOS scheme so `kit.billing` resolves products locally — no App Store Connect needed. Applies only
 when launched from Xcode (sim or device-from-Xcode), not a standalone `devicectl` sideload.
+`devMenu` (default `true`) enables the shake-to-open developer menu (App Info / Reload) — on in store
+builds too, since it only surfaces non-sensitive diagnostics; set `false` to disable. See
+[Remote updates & the shake dev-menu](#remote-updates--the-shake-dev-menu).
 
 ## Using the kit in your PWA
 
@@ -205,6 +208,14 @@ kit.billing.capability // 'native' (store shell) · 'web' (provider wired) · 'n
 kit.lifecycle.onResume(() => {});
 kit.lifecycle.onDeepLink((url) => {});
 kit.network.onChange((s) => {});
+
+// Remote-update detection (loader:'server') — auto-runs, zero config: polls a version manifest
+// and prompts a persistent native "tap to reload" banner when the deployed build moves ahead of
+// the running bundle. Override or drive it manually:
+kit.updates.onAvailable((s) => {});               // { current, latest, build, updateAvailable }
+await kit.updates.check();                         // force a check now
+await kit.updates.reload();                        // hard reload, bypassing cache
+kit.updates.start({ manifestUrl: '/version.json', pollIntervalMs: 60_000, autoPrompt: true });
 ```
 
 ## Capabilities on web vs native
@@ -313,9 +324,47 @@ stronger native lanes: offline app-shell is already served by the shell; **push 
 backend proxy. The shell no-ops SW registration in native so you don't have to gate it per app (this also
 disables the web-push path, since web-push needs a SW).
 
+**Exception — `loader:'server'`:** a server-loaded app runs under its **real `https://` deploy origin**, so
+its own service worker registers and persists normally (the WebView keeps a persistent data store). That's
+the supported way to get **offline + cache-then-network** for a wrapped remote app: ship a cache-first SW in
+the deployed app itself (appwrap can't inject one cross-origin). It pairs with `kit.updates` below — cached
+boot is instant, the version poll spots a new deploy, and `kit.updates.reload()` pulls the fresh SW/assets:
+
+```js
+// sw.js — cache-first app shell, revalidate in the background. skipWaiting so a Reload applies at once.
+const C = 'app-shell-v1';
+self.addEventListener('install', (e) => { self.skipWaiting(); e.waitUntil(caches.open(C)); });
+self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', (e) => {
+  if (e.request.method !== 'GET') return;                       // never cache POST/auth
+  if (new URL(e.request.url).pathname.endsWith('/version.json')) return; // let kit.updates see live deploys
+  e.respondWith(caches.open(C).then(async (cache) => {
+    const hit = await cache.match(e.request);
+    const net = fetch(e.request).then((res) => { if (res.ok) cache.put(e.request, res.clone()); return res; })
+                                .catch(() => hit); // offline → serve cache
+    return hit || net;                              // cache-first, refresh in background
+  }));
+});
+```
+
 **Designing a PWA for appwrap:** treat SW / web-push as web-only progressive enhancements behind one
 `kit.is.native` check, and **parameterize your backend origin** (`injected ?? location.origin`) rather than
 assuming same-origin — that makes the native wrap nearly free.
+
+## Remote updates & the shake dev-menu
+
+**Update detection** (`kit.updates`, auto-on for `loader:'server'`): the kit polls a version manifest —
+`GET ${origin}/version.json` → `{ "version": "1.2.3", "build": 45 }` — and compares it to the version the
+running bundle **booted with** (`window.__APP_VERSION__`, or a `<meta name="app-version">`). When the deploy
+moves ahead, it raises a persistent native **"tap to reload"** banner; the tap hard-reloads past the cache.
+It compares against the *embedded* boot version, not a previous manifest read — so a deploy that bumps the
+manifest but ships a stale bundle can't trigger a phantom "update available". No manifest deployed → it
+degrades silently (no prompt). Expose `window.__APP_VERSION__` at build time to enable it.
+
+**Shake dev-menu** (`devMenu`, default **on — store builds too**): shake the device to raise a native menu
+→ **App Info** shows non-sensitive diagnostics (app id, shell version/build, loader, remote **host** only,
+device OS) **plus the running webapp version vs. the latest deployed** — so you can confirm a device actually
+received the update — and **Reload**. Only exposes data the page already has; set `devMenu: false` to disable.
 
 ## Tests
 

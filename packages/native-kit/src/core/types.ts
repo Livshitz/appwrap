@@ -14,6 +14,9 @@ export interface AppInfo {
   name: string;
   version: string;
   build?: string;
+  /** How the shell loads content: 'app'/'file' (bundled) or 'server' (remote URL). Drives
+   * remote-update detection (only meaningful for 'server'). Absent on web/older shells. */
+  loader?: 'app' | 'file' | 'server';
 }
 
 export interface Handshake {

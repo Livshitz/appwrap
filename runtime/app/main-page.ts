@@ -11,6 +11,7 @@ import { registerAndroidHandlers } from './shell/handlers-android';
 import { registerOptionalHandlers } from './shell/optional-handlers.generated';
 import './shell/fcm-bootstrap.generated'; // side-effect: registers the FCM service when push is wired
 import { startEventForwarding } from './shell/events';
+import { startDevMenu } from './shell/devmenu';
 import { SHELL_CONFIG } from './shell/config';
 import { bindStatusBarPage, setStatusBarStyle, enableAndroidEdgeToEdge, wireAndroidSafeArea } from './shell/status-bar';
 import { CustomWebView } from './shell/custom-webview';
@@ -44,6 +45,8 @@ export function onPageLoaded(args: EventData): void {
   if (isAndroid) registerAndroidHandlers();
   // Opt-in modules that own their own handler file (health, …) — generated to only the active set.
   registerOptionalHandlers();
+  // Shake-to-open developer menu (App Info / Reload). On by default, incl. prod.
+  if (SHELL_CONFIG.devMenu) startDevMenu();
 
   const webView = page.getViewById<CustomWebView>('webview');
   bridge.attach(webView);

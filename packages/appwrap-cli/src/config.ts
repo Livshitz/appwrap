@@ -57,6 +57,10 @@ export interface AppwrapConfig {
   /** In debug mode, the value written to `localStorage.DEBUG` at startup so the PWA's logger goes
    * verbose (common convention — `'*'` = all, or comma-separated module names). Default `'*'`. */
   debugLog?: string;
+  /** Shake-to-open developer menu (App Info / Reload). Default `true` — ON in store builds too, since
+   * it only exposes non-sensitive diagnostics (ids, versions, loader, remote host). Set `false` to
+   * disable. Remote-update detection (native-kit `kit.updates`) is independent of this flag. */
+  devMenu?: boolean;
   /** Apple Development Team ID for device builds (Xcode → Settings → Accounts). */
   teamId?: string;
   /** Path (relative to the PWA project) to a StoreKit configuration file for LOCAL IAP

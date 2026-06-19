@@ -26,6 +26,7 @@ import { ShareModule } from '../modules/share';
 import { StorageModule } from '../modules/storage';
 import { ToastModule } from '../modules/toast';
 import { UiModule } from '../modules/ui';
+import { UpdatesModule } from '../modules/updates';
 
 export class NativeKitOptions {
   /** Priority order; first adapter whose detect() passes wins. */
@@ -91,6 +92,7 @@ export class NativeKit {
   public readonly browser = new BrowserModule(this);
   public readonly oauth = new OAuthModule(this);
   public readonly billing = new BillingModule(this);
+  public readonly updates = new UpdatesModule(this);
 
   public handshakeInfo: Handshake | null = null;
   public options: NativeKitOptions;
@@ -121,6 +123,8 @@ export class NativeKit {
           );
         }
         this.handshakeInfo = handshake;
+        // Zero-config: a native server-loader app begins polling for remote updates.
+        this.updates.__autostart();
         return this.handshakeInfo;
       })();
     }
