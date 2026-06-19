@@ -4,6 +4,7 @@ import { requestPermissions, startActivityForResult } from './android-helpers';
 
 declare const android: any;
 declare const cc: any; // generated from the HealthConnectBridge.kt shim (overrides/)
+declare const CMPedometer: any; // CoreMotion (already linked via CMMotionManager in handlers-parity)
 
 const err = (code: string, message: string) => Object.assign(new Error(message), { code });
 
@@ -66,6 +67,29 @@ function registerIos(): void {
       store.executeQuery(q);
     })
   );
+
+  // ── Live steps (CMPedometer) — low-latency "as you walk" count, distinct from the laggy HealthKit
+  // aggregate. Caller uses HealthKit as the periodic source-of-truth and these live deltas in between.
+  // Emits `health.liveStep` { steps } (today's pedometer total since local midnight). iPhone-only
+  // (no Watch), which is fine: it's the live driver; HealthKit re-anchors the authoritative total.
+  let pedometer: any = null;
+  bridge.register('health.liveSteps.start', () => {
+    if (typeof CMPedometer === 'undefined' || !CMPedometer.isStepCountingAvailable())
+      throw err('UNSUPPORTED', 'Pedometer (live step counting) unavailable on this device');
+    if (pedometer) return; // already streaming
+    pedometer = CMPedometer.new();
+    // Stream from local midnight; the handler fires off-main, so emit on the main thread (the
+    // WKWebView evaluateJavaScript delivery must be main-thread, like health.count above).
+    pedometer.startPedometerUpdatesFromDateWithHandler(startOfToday(), (data: any, e: any) => {
+      if (e || !data) return;
+      const steps = Math.round(num(data.numberOfSteps));
+      Utils.dispatchToMainThread(() => bridge.emit('health.liveStep', { steps }));
+    });
+  });
+  bridge.register('health.liveSteps.stop', () => {
+    pedometer?.stopPedometerUpdates();
+    pedometer = null;
+  });
 }
 
 function registerAndroid(): void {
