@@ -1,23 +1,18 @@
 import { Device, Dialogs, Utils, isAndroid, isIOS } from '@nativescript/core';
 import { bridge } from './bridge';
 import { SHELL_CONFIG } from './config';
-import { SHELL_BUILD, reloadWebView } from './handlers';
+import { SHELL_BUILD, reloadWebView, getReportedWebVersion } from './handlers';
 
 /**
  * Shake-to-open developer menu (enabled in prod too, gated by `SHELL_CONFIG.devMenu`).
  * A shake raises a native action sheet → "App Info" shows non-sensitive diagnostics
  * (ids, versions, loader, remote host) including the running webapp's version vs. the
  * latest deployed — so you can tell at a glance whether the device got the update.
+ * The web version status is reported via the always-on `app.reportWebVersion` handler
+ * (in handlers.ts) — independent of this menu — and read here when the menu is shown.
  */
 
-/** Last version info the web side reported (native-kit's updates module). */
-let webInfo: { current?: string; latest?: string; build?: string | number; updateAvailable?: boolean } = {};
-
 export function startDevMenu(): void {
-  // The web side (native-kit updates) pushes its version + the latest-deployed version here.
-  bridge.register('app.reportWebVersion', (p: any) => {
-    webInfo = p || {};
-  });
   if (isIOS) startIOSShake();
   else if (isAndroid) startAndroidShake();
 }
@@ -104,6 +99,7 @@ async function showInfo(): Promise<void> {
   // Running web version: prefer what kit.updates reported, else read the page's embedded global
   // directly — so the line shows for any server-loader app exposing __APP_VERSION__, even if its
   // native-kit is too old to ship the updates module.
+  const webInfo = getReportedWebVersion();
   const current = webInfo.current || (await readPageVersion());
   const lines = [
     `App: ${SHELL_CONFIG.name}`,

@@ -44,6 +44,9 @@ export class UpdatesModule {
   private timer: ReturnType<typeof setInterval> | null = null;
   private unsubs: Unsubscribe[] = [];
   private listeners = new Set<(s: UpdateStatus) => void>();
+  /** The auto banner is shown at most once per JS session — so a dismissed prompt doesn't nag on
+   * every poll. A reload (the intended response) boots a fresh bundle/context and resets this; until
+   * then, {@link onAvailable} listeners still fire each check so an app can re-surface it itself. */
   private prompted = false;
 
   constructor(private kit: NativeKit) {}
@@ -110,7 +113,7 @@ export class UpdatesModule {
       this.stop(/* keepStarted */ true);
     }
     this.started = true;
-    // A reload picks up the new bundle → allow a fresh prompt next time.
+    // Re-check whenever the app returns to the foreground (catches a deploy made while backgrounded).
     this.unsubs.push(this.kit.on('app.resume', () => void this.check()));
     // Banner tap (or any 'appwrap.update' action) → reload.
     this.unsubs.push(

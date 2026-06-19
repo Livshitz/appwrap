@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { NativeKit } from '../src/core/NativeKit';
 import { AppwrapAdapter } from '../src/core/appwrap-adapter';
 import { KitError, type Handshake, type NativeKitAdapter, type RequestEnvelope } from '../src/core/types';
@@ -345,6 +345,79 @@ describe('share.files + screen.orientation', () => {
     listener!('landscape');
     listener!('portrait');
     expect(seen).toEqual(['landscape', 'portrait']);
+  });
+});
+
+describe('Updates — remote-update detection (anti-phantom invariant)', () => {
+  function updatesKit() {
+    const calls: Array<[string, unknown]> = [];
+    const kit = new NativeKit({
+      adapters: [fakeAdapter({ invoke: async <T,>(m: string, p?: unknown) => { calls.push([m, p]); return undefined as T; } })],
+    });
+    return { kit, calls };
+  }
+  const okFetch = (body: any) => ((async () => ({ ok: true, json: async () => body })) as unknown as typeof fetch);
+  const throwFetch = (() => { throw new Error('offline'); }) as unknown as typeof fetch;
+
+  const origFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = origFetch; });
+
+  // Drives ONE explicit check() in isolation (start()'s own auto-check is drained + discarded first),
+  // returning the deterministic status + the invokes that the explicit check made.
+  async function checkOnce(opts: { current: string; fetch: typeof fetch; autoPrompt?: boolean }) {
+    const { kit, calls } = updatesKit();
+    await kit.ready();
+    globalThis.fetch = opts.fetch;
+    kit.updates.start({ currentVersion: opts.current, manifestUrl: 'http://x/version.json', pollIntervalMs: 0, autoPrompt: opts.autoPrompt ?? false });
+    await Bun.sleep(5);     // drain start()'s fire-and-forget auto-check
+    calls.length = 0;       // isolate the explicit check below
+    const status = await kit.updates.check();
+    kit.updates.stop();
+    return { status, calls };
+  }
+
+  test('updateAvailable is true ONLY when both versions are known AND differ', async () => {
+    expect((await checkOnce({ current: '1.0.0', fetch: okFetch({ version: '1.1.0' }) })).status.updateAvailable).toBe(true);
+    expect((await checkOnce({ current: '1.0.0', fetch: okFetch({ version: '1.0.0' }) })).status.updateAvailable).toBe(false);
+    // unknown current (embedded __APP_VERSION__ absent) → never a phantom prompt, even if manifest differs
+    expect((await checkOnce({ current: '', fetch: okFetch({ version: '1.1.0' }) })).status.updateAvailable).toBe(false);
+  });
+
+  test('a failed manifest fetch reports latest="" and no update (offline is not "behind")', async () => {
+    const { status } = await checkOnce({ current: '1.0.0', fetch: throwFetch });
+    expect(status).toMatchObject({ current: '1.0.0', latest: '', updateAvailable: false });
+  });
+
+  test('every check reports the version status to native (App-Info screen), incl. the build id', async () => {
+    const { status, calls } = await checkOnce({ current: '1.0.0', fetch: okFetch({ version: '1.1.0', build: 42 }) });
+    expect(status.build).toBe(42);
+    expect(calls.find(([m]) => m === 'app.reportWebVersion')?.[1]).toMatchObject({ current: '1.0.0', latest: '1.1.0', build: 42, updateAvailable: true });
+  });
+
+  test('autoPrompt shows the native banner on an update; equal versions never prompt', async () => {
+    const up = updatesKit(); await up.kit.ready();
+    globalThis.fetch = okFetch({ version: '1.1.0' });
+    up.kit.updates.start({ currentVersion: '1.0.0', manifestUrl: 'http://x/version.json', pollIntervalMs: 0, autoPrompt: true });
+    await Bun.sleep(5); up.kit.updates.stop();
+    expect(up.calls.find(([m]) => m === 'toast.banner')?.[1]).toMatchObject({ id: 'appwrap.update' });
+
+    const same = updatesKit(); await same.kit.ready();
+    globalThis.fetch = okFetch({ version: '1.0.0' });
+    same.kit.updates.start({ currentVersion: '1.0.0', manifestUrl: 'http://x/version.json', pollIntervalMs: 0, autoPrompt: true });
+    await Bun.sleep(5); same.kit.updates.stop();
+    expect(same.calls.some(([m]) => m === 'toast.banner')).toBe(false);
+  });
+
+  test('the banner is shown at most once per session (no nagging on every poll)', async () => {
+    const { kit, calls } = updatesKit();
+    await kit.ready();
+    globalThis.fetch = okFetch({ version: '1.1.0' });
+    kit.updates.start({ currentVersion: '1.0.0', manifestUrl: 'http://x/version.json', pollIntervalMs: 0, autoPrompt: true });
+    await Bun.sleep(5);
+    await kit.updates.check();   // poll again — still behind
+    await kit.updates.check();
+    kit.updates.stop();
+    expect(calls.filter(([m]) => m === 'toast.banner').length).toBe(1);
   });
 });
 

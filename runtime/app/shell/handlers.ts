@@ -9,7 +9,13 @@ import { buildCapabilityMap } from './capabilities.manifest';
 import { ACTIVE_MODULE_NAMES } from './active-modules.generated';
 
 /** Build identifier for the native shell bundle — bump per deploy to spot stale bundles. */
-export const SHELL_BUILD = 'updates-devmenu-2';
+export const SHELL_BUILD = 'updates-devmenu-3';
+
+/** Version status the web side (native-kit `kit.updates`) reports via `app.reportWebVersion`. */
+export interface WebVersionInfo { current?: string; latest?: string; build?: string | number; updateAvailable?: boolean; }
+let lastWebVersion: WebVersionInfo = {};
+/** Latest version status the web reported — read by the dev-menu App Info screen. */
+export function getReportedWebVersion(): WebVersionInfo { return lastWebVersion; }
 
 /** Register all protocol-v1 handlers. */
 export function registerHandlers(): void {
@@ -137,6 +143,11 @@ export function registerHandlers(): void {
 
   // Hard reload the WebView, bypassing cache — used by the update banner + dev menu.
   bridge.register('app.reload', () => reloadWebView());
+
+  // Web → native version report (native-kit `kit.updates`). Registered ALWAYS — independent of
+  // `devMenu` — so server-loader update polling never invokes an UNSUPPORTED handler (which would
+  // warn every poll) when the dev menu is off. The dev-menu App Info screen reads it when shown.
+  bridge.register('app.reportWebVersion', (p: WebVersionInfo) => { lastWebVersion = p || {}; });
 
   bridge.register('ui.statusBar.setStyle', ({ style }: { style: 'light' | 'dark' }) =>
     setStatusBarStyle(style)
