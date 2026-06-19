@@ -79,6 +79,26 @@ export class BillingModule {
     return out;
   }
 
+  /**
+   * Confirm entitlements **silently** from the on-device App Store receipt — no Apple-ID
+   * prompt and no `restore()` round-trip (unlike {@link restore}/{@link entitlements} on
+   * StoreKit 1). For an in-place update of the SAME bundle id the receipt already holds the
+   * user's active/grandfathered subscriptions, so this is the zero-user-action path for
+   * migrating existing subscribers into a new build.
+   *
+   * Native iOS only, and only meaningful with a **server validator** (the bare receipt has no
+   * product id — a client-trusted validator can't interpret it). Resolves `[]` on the web,
+   * on Android (no StoreKit-1 receipt), or when no receipt is present (e.g. a dev build).
+   */
+  async entitlementsFromReceipt(): Promise<Entitlement[]> {
+    await this.kit.ready();
+    if (this.capability !== 'native') return []; // web, or a shell with no native store handler (Android today)
+    if (this.validator instanceof ClientTrustedValidator) return []; // bare receipt has no product id → would grant a bogus active entitlement; needs a server validator
+    const receipt = await this.kit.invoke<PurchaseReceipt>('billing.appReceipt');
+    if (!receipt?.appReceipt) return [];
+    return this.validator.validate(receipt); // server-of-record turns the receipt into entitlements
+  }
+
   /** Current entitlements from the configured server-of-record (web provider or validator). */
   async entitlements(): Promise<Entitlement[]> {
     await this.kit.ready();

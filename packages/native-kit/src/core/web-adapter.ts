@@ -337,6 +337,7 @@ export class WebAdapter implements NativeKitAdapter {
       case 'billing.purchase':
       case 'billing.restore':
       case 'billing.entitlements':
+      case 'billing.appReceipt':
       case 'billing.manageSubscriptions':
         throw new KitError('UNSUPPORTED', 'No in-app purchases on web — use a web checkout');
 

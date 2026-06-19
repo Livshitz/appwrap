@@ -167,6 +167,14 @@ export function registerBillingHandlers(): void {
 
   bridge.register('billing.restore', () => restoreTransactions());
 
+  // The bundle's App Store receipt, read straight from disk — NO Apple-ID prompt and no
+  // store round-trip (unlike restore). For an in-place app update it already holds the
+  // user's active/grandfathered subscriptions, so a server validator can confirm
+  // entitlements silently. This is the zero-user-action path for migrating existing
+  // subscribers into a new build of the SAME bundle id. Empty string if absent (e.g. a
+  // dev build with no receipt) — the caller falls back to restore().
+  bridge.register('billing.appReceipt', async () => ({ platform: 'ios', appReceipt: appReceipt() }));
+
   // Client-trusted entitlements: StoreKit 1 has no on-device entitlement list, so we
   // derive non-consumed/active products from a restore. Real apps plug in a server
   // validator (see kit.billing.configure) instead of trusting this.

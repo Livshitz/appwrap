@@ -75,6 +75,7 @@ describe('Billing — swappable validator seam', () => {
             calls.push([m, p]);
             if (m === 'billing.purchase') return { platform: 'ios', productId: (p as any).productId, appReceipt: 'rcpt', raw: {} } as T;
             if (m === 'billing.restore') return [{ platform: 'ios', productId: 'pro_monthly', raw: {} }] as T;
+            if (m === 'billing.appReceipt') return { platform: 'ios', appReceipt: 'rcpt', raw: {} } as T;
             if (m === 'billing.entitlements') return NATIVE_ENTS as T;
             return undefined as T;
           },
@@ -112,6 +113,28 @@ describe('Billing — swappable validator seam', () => {
     expect(res.entitlements[0].expiresAt).toBe(999); // server truth, not device
     expect(calls.some((c) => c[0] === 'billing.entitlements')).toBe(false); // device read skipped
     expect(await kit.billing.entitlements()).toEqual([{ productId: 'srv', active: true }]);
+  });
+
+  test('entitlementsFromReceipt: default ClientTrustedValidator returns [] (a bare receipt has no product id → no bogus grant, no bridge read)', async () => {
+    const { kit, calls } = billingKit();
+    await kit.ready();
+    expect(await kit.billing.entitlementsFromReceipt()).toEqual([]);
+    expect(calls.some((c) => c[0] === 'billing.appReceipt')).toBe(false); // guarded before invoking
+  });
+
+  test('entitlementsFromReceipt: with a server validator, reads the receipt silently and returns server entitlements (no restore)', async () => {
+    const { kit, calls } = billingKit();
+    await kit.ready();
+    let seenReceipt = '';
+    kit.billing.configure({
+      validator: {
+        validate: async (r) => { seenReceipt = r.appReceipt ?? ''; return [{ productId: 'grandfathered', active: true }]; },
+        entitlements: async () => [],
+      },
+    });
+    expect(await kit.billing.entitlementsFromReceipt()).toEqual([{ productId: 'grandfathered', active: true }]);
+    expect(seenReceipt).toBe('rcpt');
+    expect(calls.some((c) => c[0] === 'billing.restore')).toBe(false); // silent — no Apple-ID prompt
   });
 
   test('HttpValidator POSTs the receipt and maps the response', async () => {

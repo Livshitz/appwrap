@@ -199,6 +199,7 @@ await kit.billing.products(['pro_monthly']);       // localized title + price
 await kit.billing.purchase('pro_monthly');         // Stripe on web · StoreKit/Play on mobile
 await kit.billing.restore();
 await kit.billing.entitlements();                  // from the configured server-of-record
+await kit.billing.entitlementsFromReceipt();       // iOS: silent receipt check (no Apple-ID prompt) — migrate existing subscribers; needs a server validator
 await kit.billing.manageSubscriptions();           // OS surface / Stripe Billing Portal
 kit.billing.onTransaction((receipt) => {});        // renewals / out-of-band buys (native)
 // configure once, platform-agnostic — the module picks the right path per platform:
