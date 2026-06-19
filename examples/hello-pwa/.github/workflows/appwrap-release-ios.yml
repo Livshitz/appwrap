@@ -20,13 +20,14 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - run: bun install && bun run build.ts
-      - run: npm i -g nativescript
+      # Pin global tools — unpinned installs can grab a breaking release mid-flight. Bump deliberately.
+      - run: npm i -g nativescript@9.0.6
       - run: bunx appwrap init # native/ is generated (gitignored) — regenerate it fresh in CI
       - working-directory: native
         run: npm install
       - uses: ruby/setup-ruby@v1
         with: { ruby-version: '3.3', bundler-cache: false }
-      - run: gem install fastlane
+      - run: gem install fastlane -v 2.236.1
       - name: Build & upload to TestFlight
         working-directory: native
         env:
