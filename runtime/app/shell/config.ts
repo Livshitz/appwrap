@@ -29,6 +29,10 @@ export const SHELL_CONFIG = {
   debugLog: '*',
   /** Shake-to-open developer menu (App Info / Reload). On by default, including store builds. */
   devMenu: true,
+  /** Neutralize `navigator.serviceWorker.register` in the native shell (a SW serves stale caches and
+   * fights the app:// handler / remote-update detection). On by default; set false to opt out and keep
+   * the SW (e.g. for in-WebView web-push). See `serviceWorkerGuardJs`. */
+  neutralizeServiceWorker: true,
   /** Remote push configured, per platform (iOS aps-environment entitlement / Android FCM). Drives the
    * `push` capability flag at runtime by platform — off unless `appwrap.json.push` enables it, so an
    * un-provisioned build honestly reports 'none' (and a personal-team iOS build keeps `pushIos:false`). */

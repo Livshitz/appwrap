@@ -72,6 +72,54 @@ export function mediaCaptureGuardJs(camera: boolean, microphone: boolean): strin
 }
 
 /**
+ * Neutralize `navigator.serviceWorker.register` inside the native shell at document-start, so a
+ * consumer PWA doesn't have to hand-gate its own SW. Inside the shell a service worker is at best
+ * useless and at worst HARMFUL: a cache-first SW serves a stale bundle and fights the native app://
+ * scheme handler / loader:'server' remote-update detection.
+ *
+ * SEMANTICS (and why):
+ *  - We patch ONLY `register` — leave `navigator.serviceWorker` (and its `.ready`/`.controller`/event
+ *    surface) in place. Removing `serviceWorker` entirely would lie to feature-detection: `if
+ *    ('serviceWorker' in navigator)` stays true (the SW *API* exists; this WebView genuinely supports
+ *    it), but no SW ever activates because every `register` is a no-op. Well-written PWAs treat
+ *    register() as best-effort.
+ *  - `register()` returns a PROMISE THAT NEVER RESOLVES (and never rejects). This is the gentlest of
+ *    the three options: resolving with a fake registration would hand back a lying object whose
+ *    `.update()`/`.unregister()`/`.active` consumers might call; rejecting fires `.catch()` paths that
+ *    many apps log as an error or retry in a loop. A pending promise means `.then(...)` simply never
+ *    runs (no controller, no stale cache — the desired end state) and `.catch(...)` never fires (no
+ *    uncaught error, no error spam). `navigator.serviceWorker.ready` is likewise a never-settling
+ *    promise per spec until a SW is ready, so leaving it pending matches normal "no SW yet" behavior.
+ *  - We ALSO best-effort `getRegistrations().then(rs => rs.forEach(r => r.unregister()))` to tear down
+ *    any SW a PREVIOUS web/PWA session already installed for this origin (otherwise a pre-existing
+ *    cache-first SW keeps serving stale content even though we now block new registrations).
+ *  - Touches `navigator.serviceWorker` ONLY. `Worker` / `SharedWorker` are deliberately untouched —
+ *    compute-offload workers legitimately run in a WebView.
+ *
+ * NOTE: neutralizing the SW also disables WEB push (web push needs a SW). That's expected and fine —
+ * native push is the `remote-push` lane (APNs/FCM), and the push-prompt UI already gates on
+ * `kit.is.native`. No push code needs to change.
+ *
+ * `enabled` = the resolved neutralize flag (SHELL_CONFIG.neutralizeServiceWorker, default true in
+ * native; set false via appwrap config to opt out and leave the SW fully intact). Idempotent via a
+ * window guard so double-injection (e.g. Android's onPageStarted fallback) is a no-op.
+ */
+export function serviceWorkerGuardJs(enabled: boolean): string {
+  if (!enabled) return '';
+  return `(function(){
+  var sw = navigator.serviceWorker;
+  if (!sw || !sw.register || window.__appwrapSwGuard) return;
+  window.__appwrapSwGuard = true;
+  // Tear down any SW a prior web session installed for this origin (stops it serving a stale cache).
+  try { sw.getRegistrations && sw.getRegistrations().then(function(rs){ rs.forEach(function(r){ try { r.unregister(); } catch (e) {} }); }).catch(function(){}); } catch (e) {}
+  // register() → a promise that never settles: .then() never runs (no SW activates) and .catch()
+  // never fires (no error spam / retry loops). Feature-detection ('serviceWorker' in navigator) and
+  // .ready stay truthful — the API exists, nothing ever becomes ready.
+  sw.register = function(){ return new Promise(function(){}); };
+})();`;
+}
+
+/**
  * Native-feel injection shared by both CustomWebViews. Suppresses the "it's a
  * web page" tells: pinch / double-tap zoom, long-press callout & selection,
  * overscroll glow/bounce, and iOS text auto-resizing. Injected at document

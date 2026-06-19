@@ -1,7 +1,7 @@
 import { WebView, knownFolders, path as nsPath, File } from '@nativescript/core';
 import { SHELL_CONFIG } from './config';
 import { mimeFor } from './mime';
-import { APPWRAP_GLOBALS_JS, NATIVE_FEEL_JS, mediaCaptureGuardJs } from './web-quirks';
+import { APPWRAP_GLOBALS_JS, NATIVE_FEEL_JS, mediaCaptureGuardJs, serviceWorkerGuardJs } from './web-quirks';
 import { envGlobalsJs } from './env';
 import { createUiDelegate } from './ios-ui-delegate';
 import { appwrapNativeLog } from './native-log';
@@ -55,7 +55,8 @@ export class CustomWebView extends WebView {
     // __APPWRAP__ / __APPWRAP_BACKEND_ORIGIN__.
     const hasPlistKey = (k: string) => !!NSBundle.mainBundle.objectForInfoDictionaryKey(k);
     const mediaGuard = mediaCaptureGuardJs(hasPlistKey('NSCameraUsageDescription'), hasPlistKey('NSMicrophoneUsageDescription'));
-    for (const src of [envGlobalsJs(), APPWRAP_GLOBALS_JS, mediaGuard, NATIVE_FEEL_JS]) {
+    const swGuard = serviceWorkerGuardJs(SHELL_CONFIG.neutralizeServiceWorker);
+    for (const src of [envGlobalsJs(), APPWRAP_GLOBALS_JS, mediaGuard, swGuard, NATIVE_FEEL_JS]) {
       const script = WKUserScript.alloc().initWithSourceInjectionTimeForMainFrameOnly(
         src,
         WKUserScriptInjectionTime.AtDocumentStart,

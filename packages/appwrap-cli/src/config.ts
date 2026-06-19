@@ -61,6 +61,14 @@ export interface AppwrapConfig {
    * it only exposes non-sensitive diagnostics (ids, versions, loader, remote host). Set `false` to
    * disable. Remote-update detection (native-kit `kit.updates`) is independent of this flag. */
   devMenu?: boolean;
+  /** Neutralize `navigator.serviceWorker.register` in the native shell so the consumer PWA doesn't
+   * have to gate its own SW. Inside the shell a service worker is useless-to-harmful: a cache-first SW
+   * serves a stale bundle and fights the native app:// scheme handler / loader:'server' remote-update
+   * detection. Default `true` (only affects the native build — the same web build is untouched).
+   * Set `false` to opt out and leave the SW fully intact — e.g. if the PWA intentionally wants its SW
+   * for in-WebView web-push as a fallback. NOTE: keeping the SW is the only way to get web push; native
+   * push is the separate `push` lane (APNs/FCM) and does NOT need a SW. */
+  neutralizeServiceWorker?: boolean;
   /** Apple Development Team ID for device builds (Xcode → Settings → Accounts). */
   teamId?: string;
   /** Path (relative to the PWA project) to a StoreKit configuration file for LOCAL IAP

@@ -317,17 +317,27 @@ cd native && npm install && ns run ios
 **Web Workers keep working** — `new Worker(...)` / SharedWorker / AudioWorklet run normally in the
 native shell, so offloading compute to a thread needs no changes.
 
-**Service workers don't** — `navigator.serviceWorker` can't register under the shell's `app://` origin
-(a WKWebView platform limit, same as every webview wrapper). That's fine, because a SW's jobs move to
-stronger native lanes: offline app-shell is already served by the shell; **push → `kit.push`** (APNs/FCM);
-**background sync → a native task lane** (BGTaskScheduler / WorkManager); API caching → in-app + the shell
-backend proxy. The shell no-ops SW registration in native so you don't have to gate it per app (this also
-disables the web-push path, since web-push needs a SW).
+**Service workers don't** — the native shell **deliberately neutralizes `navigator.serviceWorker.register`**
+(document-start injection, iOS + Android) so you don't have to hand-gate your own SW. Under the shell a SW is
+useless-to-harmful: a cache-first SW serves a **stale bundle** and fights the native `app://` scheme handler /
+`loader:'server'` remote-update detection. `register()` returns a promise that never settles, so `.then(...)`
+never runs (no SW activates, no controller) and `.catch(...)` never fires (no error spam / retry loops);
+feature-detection (`'serviceWorker' in navigator`, `.ready`) stays truthful, so well-written PWAs degrade
+cleanly. Only `navigator.serviceWorker` is touched — `Worker` / `SharedWorker` are left fully intact. A SW's
+jobs move to stronger native lanes: offline app-shell is already served by the shell; **push → `kit.push`**
+(APNs/FCM); **background sync → a native task lane** (BGTaskScheduler / WorkManager); API caching → in-app +
+the shell backend proxy. This also disables the **web-push** path (web-push needs a SW) — expected; native
+push is the separate `push` lane and the push-prompt UI already gates on `kit.is.native`.
 
-**Exception — `loader:'server'`:** a server-loaded app runs under its **real `https://` deploy origin**, so
-its own service worker registers and persists normally (the WebView keeps a persistent data store). That's
-the supported way to get **offline + cache-then-network** for a wrapped remote app: ship a cache-first SW in
-the deployed app itself (appwrap can't inject one cross-origin). It pairs with `kit.updates` below — cached
+**Opt out** with `neutralizeServiceWorker: false` (default `true`) if the PWA intentionally wants its SW —
+e.g. for in-WebView web-push as a fallback. Only affects the native build; the same web build is untouched.
+
+**Exception — `loader:'server'` + opt out:** a server-loaded app runs under its **real `https://` deploy
+origin**, where a service worker would register and persist normally (the WebView keeps a persistent data
+store). If you want that — the supported way to get **offline + cache-then-network** for a wrapped remote app
+— set **`neutralizeServiceWorker: false`** (the default still neutralizes it in every loader) and ship a
+cache-first SW in the deployed app itself (appwrap can't inject one cross-origin). It pairs with `kit.updates`
+below — cached
 boot is instant, the version poll spots a new deploy, and `kit.updates.reload()` pulls the fresh SW/assets:
 
 ```js

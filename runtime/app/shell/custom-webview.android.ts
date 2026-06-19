@@ -1,7 +1,7 @@
 import { WebView, Utils, knownFolders, path as nsPath, File } from '@nativescript/core';
 import { SHELL_CONFIG } from './config';
 import { mimeFor } from './mime';
-import { APPWRAP_GLOBALS_JS, NATIVE_FEEL_JS } from './web-quirks';
+import { APPWRAP_GLOBALS_JS, NATIVE_FEEL_JS, serviceWorkerGuardJs } from './web-quirks';
 import { envGlobalsJs } from './env';
 import { requestPermissions } from './android-helpers';
 
@@ -27,7 +27,7 @@ const PROMPT_PREFIX = '__appwrap__:';
  * native-feel. Globals first so the page can read __APPWRAP__ / __APPWRAP_BACKEND_ORIGIN__ before its
  * own scripts run. Built lazily (not a const) so envGlobalsJs() detects against a live activity context. */
 function buildBootstrapJs(): string {
-  return `${envGlobalsJs()}\n${APPWRAP_GLOBALS_JS}\n${TRANSPORT_SHIM}\n${NATIVE_FEEL_JS}`;
+  return `${envGlobalsJs()}\n${APPWRAP_GLOBALS_JS}\n${TRANSPORT_SHIM}\n${serviceWorkerGuardJs(SHELL_CONFIG.neutralizeServiceWorker)}\n${NATIVE_FEEL_JS}`;
 }
 
 /**
