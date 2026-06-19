@@ -297,6 +297,9 @@ export class WebAdapter implements NativeKitAdapter {
         return { picked: true, name: c.name?.[0], phones: c.tel, emails: c.email } as T;
       }
 
+      case 'contacts.getAll':
+        throw new KitError('UNSUPPORTED', 'No bulk contacts read on web — use contacts.pick');
+
       case 'calendar.createEvent':
         throw new KitError('UNSUPPORTED', 'No calendar access on web');
 

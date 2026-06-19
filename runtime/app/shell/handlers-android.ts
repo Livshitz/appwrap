@@ -320,6 +320,49 @@ export function registerAndroidHandlers(): void {
     };
   });
 
+  // ── contacts bulk read (ContactsContract query over all contacts) ──
+  bridge.register('contacts.getAll', async () => {
+    if (!(await requestPermissions(['android.permission.READ_CONTACTS']))) {
+      throw err('DENIED', 'contacts permission denied');
+    }
+    const CC = android.provider.ContactsContract;
+    const cr = context().getContentResolver();
+    const column = (uri: any, col: string, sel: string | null, args: string[] | null): string[] => {
+      const out: string[] = [];
+      const cursor = cr.query(uri, [col], sel, args, null);
+      if (cursor) {
+        const idx = cursor.getColumnIndex(col);
+        while (cursor.moveToNext()) out.push(String(cursor.getString(idx)));
+        cursor.close();
+      }
+      return out;
+    };
+
+    const contacts: Array<{ name: string; phones: string[]; emails: string[] }> = [];
+    const cursor = cr.query(
+      CC.Contacts.CONTENT_URI,
+      [CC.Contacts._ID, CC.Contacts.DISPLAY_NAME],
+      null, null, null
+    );
+    if (cursor) {
+      const idIdx = cursor.getColumnIndex(CC.Contacts._ID);
+      const nameIdx = cursor.getColumnIndex(CC.Contacts.DISPLAY_NAME);
+      while (cursor.moveToNext()) {
+        const contactId = String(cursor.getString(idIdx));
+        const name = cursor.getString(nameIdx) ?? '';
+        contacts.push({
+          name,
+          phones: column(CC.CommonDataKinds.Phone.CONTENT_URI, CC.CommonDataKinds.Phone.NUMBER,
+            CC.CommonDataKinds.Phone.CONTACT_ID + ' = ?', [contactId]),
+          emails: column(CC.CommonDataKinds.Email.CONTENT_URI, CC.CommonDataKinds.Email.ADDRESS,
+            CC.CommonDataKinds.Email.CONTACT_ID + ' = ?', [contactId]),
+        });
+      }
+      cursor.close();
+    }
+    return { contacts };
+  });
+
   // ── calendar (CalendarContract direct insert) ──────────────────────
   bridge.register('calendar.createEvent', async ({ title, start, durationMin, notes }: any) => {
     if (!(await requestPermissions(['android.permission.WRITE_CALENDAR', 'android.permission.READ_CALENDAR']))) {

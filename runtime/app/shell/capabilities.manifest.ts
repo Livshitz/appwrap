@@ -118,6 +118,7 @@ export const MODULES: ModuleManifest[] = [
   {
     name: 'contacts', group: 'parity',
     capabilities: { contacts: 'native' },
+    ios: { permissions: [{ key: 'NSContactsUsageDescription', domain: 'contacts', defaultUsage: 'Find which of your contacts already play, and invite the rest.' }] },
     android: { permissions: ['android.permission.READ_CONTACTS'] },
   },
   {

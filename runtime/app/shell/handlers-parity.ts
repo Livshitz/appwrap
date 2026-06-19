@@ -184,6 +184,44 @@ export function registerParityHandlers(): void {
     });
   });
 
+  // ── contacts bulk read (CNContactStore — requires permission) ──────
+  bridge.register('contacts.getAll', () => {
+    if (!isIOS) throw iosOnly();
+    const store = CNContactStore.new();
+    return new Promise((resolve, reject) => {
+      store.requestAccessForEntityTypeCompletionHandler(CNEntityType.Contacts, (granted: boolean, error: NSError | null) => {
+        if (!granted) {
+          return reject(err('DENIED', error?.localizedDescription ?? 'contacts access denied'));
+        }
+        try {
+          const collect = (labeled: NSArray<any>, map: (v: any) => string) => {
+            const out: string[] = [];
+            for (let i = 0; i < labeled.count; i++) out.push(map(labeled.objectAtIndex(i).value));
+            return out;
+          };
+          const keys = NSArray.arrayWithArray([
+            CNContactGivenNameKey,
+            CNContactFamilyNameKey,
+            CNContactPhoneNumbersKey,
+            CNContactEmailAddressesKey,
+          ] as any);
+          const request = CNContactFetchRequest.alloc().initWithKeysToFetch(keys);
+          const contacts: Array<{ name: string; phones: string[]; emails: string[] }> = [];
+          store.enumerateContactsWithFetchRequestErrorUsingBlock(request, null as any, (contact: any) => {
+            contacts.push({
+              name: `${contact.givenName ?? ''} ${contact.familyName ?? ''}`.trim(),
+              phones: collect(contact.phoneNumbers, (v) => String(v.stringValue)),
+              emails: collect(contact.emailAddresses, (v) => String(v)),
+            });
+          });
+          resolve({ contacts });
+        } catch (e: any) {
+          reject(err('NATIVE_ERROR', e.message));
+        }
+      });
+    });
+  });
+
   // ── calendar (EventKit) ────────────────────────────────────────────
   bridge.register('calendar.createEvent', ({ title, start, durationMin, notes }: any) => {
     if (!isIOS) throw iosOnly();
