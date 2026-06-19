@@ -1145,7 +1145,10 @@ async function deploy(cwd: string, flags: Record<string, string>, positionals: s
   console.log(`▶ installing ${ipa} → ${device.name} [${device.transport}]`);
   try {
     // Capture (not inherit) so we can recognize specific failures; echo it for visibility.
-    const out = execFileSync('xcrun', ['devicectl', 'device', 'install', 'app', '--device', device.id, ipaPath], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'pipe'] });
+    // Wrapped so a LOCKED device waits-and-retries instead of hard-failing (the common annoyance).
+    const out = withUnlockRetry('Install', () =>
+      execFileSync('xcrun', ['devicectl', 'device', 'install', 'app', '--device', device.id, ipaPath], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'pipe'] })
+    );
     process.stdout.write(out);
   } catch (e: any) {
     const log = `${e?.stdout ?? ''}${e?.stderr ?? ''}`;
@@ -1162,7 +1165,7 @@ async function deploy(cwd: string, flags: Record<string, string>, positionals: s
       );
     } else {
       console.error(
-        '✖ Install failed. Usually the device is LOCKED or only on Wi-Fi.\n' +
+        '✖ Install failed (device still locked after waiting, or only on Wi-Fi).\n' +
           '  → Unlock the phone (and plug in USB for a reliable connection), then re-run.\n' +
           `  The built .ipa is ready: ${ipaPath}`
       );
@@ -1173,12 +1176,33 @@ async function deploy(cwd: string, flags: Record<string, string>, positionals: s
   if (!('no-launch' in flags)) {
     console.log(`▶ launching ${cfg.id}`);
     try {
-      execFileSync('xcrun', ['devicectl', 'device', 'process', 'launch', '--device', device.id, cfg.id], { stdio: 'inherit' });
+      withUnlockRetry('Launch', () =>
+        execFileSync('xcrun', ['devicectl', 'device', 'process', 'launch', '--device', device.id, cfg.id], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'pipe'] })
+      );
     } catch {
-      console.error('⚠ Launch failed (device locked?). The app is installed — unlock and tap it, or re-run.');
+      console.error('⚠ Launch failed (still locked after waiting). The app is installed — unlock and tap it, or re-run.');
     }
   }
   console.log(`✓ Deployed to ${device.name}.`);
+}
+
+/** Run a devicectl op; if it fails because the device is LOCKED (or transiently unavailable), prompt
+ * once and poll-retry until it succeeds or the budget runs out — instead of hard-failing. A free-team
+ * 3-app-limit error is NOT a lock, so it's re-thrown immediately for the caller's specific handling.
+ * (We can't auto-unlock — that needs the passcode by design — but we can wait gracefully.) */
+function withUnlockRetry<T>(label: string, run: () => T, tries = 40, delayMs = 3000): T {
+  for (let i = 0; ; i++) {
+    try {
+      return run();
+    } catch (e: any) {
+      const log = `${e?.stdout ?? ''}${e?.stderr ?? ''}`;
+      if (/maximum number of installed apps|MIInstallerErrorDomain error 13|ApplicationVerificationFailed/.test(log)) throw e;
+      if (i >= tries) throw e;
+      if (i === 0) process.stdout.write(`\n🔒 ${label}: device unavailable — unlock your iPhone. Waiting (auto-retries every ${delayMs / 1000}s, up to ${Math.round((tries * delayMs) / 1000)}s)…\n`);
+      else process.stdout.write(`  …waiting for unlock (${i}/${tries})\n`);
+      try { execFileSync('sleep', [String(delayMs / 1000)], { stdio: 'ignore' }); } catch { /* sleep interrupted */ }
+    }
+  }
 }
 
 /** First connected libimobiledevice UDID (USB, then network). Distinct from devicectl's identifier. */
