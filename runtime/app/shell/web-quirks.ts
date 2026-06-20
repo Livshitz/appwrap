@@ -120,6 +120,65 @@ export function serviceWorkerGuardJs(enabled: boolean): string {
 }
 
 /**
+ * Make the shell behave like a regular native app when the web content tries to leave the app's own
+ * origin: route external-origin navigations to the OS-native in-app browser (iOS
+ * `SFSafariViewController` / Android Chrome Custom Tabs, via the core `browser.open` handler) instead
+ * of replacing the shell WebView. Intercepts, at document-start (BEFORE the page wires its own
+ * handlers), two intents:
+ *   - a click on an `<a href>` resolving to a DIFFERENT origin (incl. `target="_blank"`), and
+ *   - `window.open(url, ...)` to a different origin.
+ * Same-origin links / SPA route changes pass straight through (the app keeps owning its own
+ * navigation), so this never ejects the user mid-flow inside their own app. Only runs in the top
+ * frame — embedded iframes (maps, video, ad frames) are left alone. Non-http(s) schemes
+ * (`tel:`/`mailto:`/`app:`) are ignored here and handled by the OS/WebView as usual.
+ *
+ * The request is dispatched fire-and-forget over the same raw transport the bridge listens on (iOS
+ * `webkit.messageHandlers.appwrap`, Android `appwrapNative.postMessage`) — independent of the
+ * consumer's native-kit, so it works even on an unmodified remotely-loaded (loader:'server') webapp.
+ *
+ * `enabled` = SHELL_CONFIG.openNewWindowsInBrowser (default false). Idempotent via a window guard.
+ */
+export function externalNavGuardJs(enabled: boolean): string {
+  if (!enabled) return '';
+  return `(function(){
+  if (window.top !== window.self || window.__appwrapExtNavGuard) return;
+  window.__appwrapExtNavGuard = true;
+  function send(url){
+    try {
+      var json = JSON.stringify({ v:1, id:'extnav-'+Date.now()+'-'+Math.random().toString(36).slice(2),
+        kind:'request', method:'browser.open', params:{ url:url } });
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.appwrap) {
+        window.webkit.messageHandlers.appwrap.postMessage(json); return true; }
+      if (window.appwrapNative && window.appwrapNative.postMessage) {
+        window.appwrapNative.postMessage(json); return true; }
+    } catch (e) {}
+    return false;
+  }
+  // Resolve to an absolute http(s) URL that is on a DIFFERENT origin than the app shell; else null.
+  function external(href){
+    try {
+      var u = new URL(href, location.href);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return null; // tel:/mailto:/app:/blob: → OS/WebView
+      return u.origin !== location.origin ? u.href : null;
+    } catch (e) { return null; }
+  }
+  document.addEventListener('click', function(e){
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    if (!a) return;
+    var url = external(a.getAttribute('href'));
+    if (url && send(url)) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
+  var open = window.open;
+  window.open = function(url){
+    var ext = url != null ? external(String(url)) : null;
+    if (ext && send(ext)) return null;
+    return open ? open.apply(window, arguments) : null;
+  };
+})();`;
+}
+
+/**
  * Native-feel injection shared by both CustomWebViews. Suppresses the "it's a
  * web page" tells: pinch / double-tap zoom, long-press callout & selection,
  * overscroll glow/bounce, and iOS text auto-resizing. Injected at document

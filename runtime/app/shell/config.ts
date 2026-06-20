@@ -40,6 +40,11 @@ export const SHELL_CONFIG = {
    * fights the app:// handler / remote-update detection). On by default; set false to opt out and keep
    * the SW (e.g. for in-WebView web-push). See `serviceWorkerGuardJs`. */
   neutralizeServiceWorker: true,
+  /** Open external-origin navigations (`<a>` to another origin, incl. `target="_blank"`, and
+   * `window.open(...)`) in the OS-native in-app browser (SFSafariViewController / Chrome Custom Tabs)
+   * instead of inside the shell WebView — regular-native-app behavior. Same-origin SPA navigation is
+   * untouched. Off by default. See `externalNavGuardJs`. */
+  openNewWindowsInBrowser: false,
   /** Remote push configured, per platform (iOS aps-environment entitlement / Android FCM). Drives the
    * `push` capability flag at runtime by platform — off unless `appwrap.json.push` enables it, so an
    * un-provisioned build honestly reports 'none' (and a personal-team iOS build keeps `pushIos:false`). */
