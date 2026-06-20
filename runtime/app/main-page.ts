@@ -7,6 +7,7 @@ import { registerSystemHandlers } from './shell/handlers-system';
 import { registerBillingHandlers } from './shell/handlers-billing';
 import { registerMediaHandlers } from './shell/handlers-media';
 import { registerKeyboardHandlers } from './shell/keyboard';
+import { registerFsHandlers } from './shell/handlers-fs';
 import { registerPushHandlers } from './shell/handlers-push';
 import { registerAndroidHandlers } from './shell/handlers-android';
 import { registerOptionalHandlers } from './shell/optional-handlers.generated';
@@ -43,6 +44,7 @@ export function onPageLoaded(args: EventData): void {
   registerBillingHandlers();
   registerMediaHandlers();
   registerKeyboardHandlers();
+  registerFsHandlers();
   registerPushHandlers();
   // Last on purpose: overrides the iOS-only placeholders with Android impls
   if (isAndroid) registerAndroidHandlers();

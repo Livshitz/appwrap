@@ -175,6 +175,8 @@ await kit.ui.safeArea(); await kit.ui.setBrightness(0.5); await kit.ui.keepAwake
 await kit.screen.orientation.lock('landscape');   // pin orientation; .unlock() to free; .onChange(cb)
 kit.keyboard.onShow((e) => …e.height);             // lift content above the keyboard; .onHide(cb); .hide()
 await kit.app.badge(3); await kit.app.badge(0);    // app-icon badge (iOS springboard / web Badging API; Android no-op)
+await kit.fs.write('logs/app.txt', 'hi');          // app-sandbox files: read/write/append/list/stat/mkdir/delete/getUri ({dir:'documents'|'data'|'cache'})
+const picked = await kit.fs.pickFile();            // system document picker → [{ name, mimeType, size, base64 }]
 await kit.ui.alert({ message: 'Hi' });            // native dialogs: alert/confirm/action
 await kit.ui.action({ options: ['A', 'B'] });     // → chosen index | null
 kit.ui.syncThemeColor();                          // <meta name=theme-color> → native chrome
@@ -395,7 +397,8 @@ bun test packages/                                  # kit unit tests
 ## Status / roadmap
 
 - [x] kit core + web adapter + appwrap adapter
-- [x] iOS shell — 26 domains: haptics, share (text + files), storage (kv + secure/Keychain), toast,
+- [x] iOS shell — 27 domains: haptics, share (text + files), storage (kv + secure/Keychain),
+      fs (file I/O + document picker), toast,
       status bar, device, clipboard, notifications (+badge), biometrics, geolocation (current + watch),
       photos, network, screen (safe-area/brightness/keep-awake/orientation-lock), keyboard (show/hide+height), dialogs (alert/
       confirm/action), StoreKit review, theme-color sync, motion sensors, contacts picker, calendar,

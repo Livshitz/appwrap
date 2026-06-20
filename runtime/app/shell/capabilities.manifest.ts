@@ -68,6 +68,9 @@ export const MODULES: ModuleManifest[] = [
   { name: 'haptics', core: true, group: 'core', capabilities: { haptics: 'native' } },
   { name: 'share', core: true, group: 'core', capabilities: { share: 'native', shareFiles: 'native' } },
   { name: 'storage', core: true, group: 'core', capabilities: { storage: 'native', secureStorage: 'native' } },
+  // fs: app-sandbox file I/O (documents/data/cache) + system document picker. Core — every root is
+  // inside the app sandbox and the picker returns user-chosen security-scoped URIs → zero perms.
+  { name: 'fs', core: true, group: 'core', capabilities: { fs: 'native' } },
   { name: 'toast', core: true, group: 'core', capabilities: { toast: 'native', banner: 'native', updates: 'native' } },
   { name: 'statusBar', core: true, group: 'core', capabilities: { statusBar: 'native', themeColor: 'native' } },
   { name: 'device', core: true, group: 'extended', capabilities: { device: 'native' } },

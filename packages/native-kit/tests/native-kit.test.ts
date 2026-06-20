@@ -135,6 +135,139 @@ describe('Keyboard', () => {
   });
 });
 
+describe('Fs', () => {
+  test('module methods route to namespaced fs.* with path + options merged in', async () => {
+    const calls: Array<[string, unknown]> = [];
+    const kit = new NativeKit({
+      adapters: [fakeAdapter({
+        handshake: async () => ({ ...HS, capabilities: { fs: 'native' } }),
+        invoke: async <T,>(m: string, p?: unknown) => { calls.push([m, p]); return ({ uri: 'file:///x' } as unknown) as T; },
+      })],
+    });
+    await kit.ready();
+    expect(kit.fs.capability).toBe('native');
+
+    await kit.fs.write('a/b.txt', 'hi', { dir: 'cache', recursive: true });
+    await kit.fs.read('a/b.txt', { dir: 'cache', encoding: 'base64' });
+    await kit.fs.list('a', { dir: 'documents' });
+    await kit.fs.pickFile({ types: ['application/pdf'], multiple: true });
+    expect(calls).toEqual([
+      ['fs.write', { path: 'a/b.txt', data: 'hi', dir: 'cache', recursive: true }],
+      ['fs.read', { path: 'a/b.txt', dir: 'cache', encoding: 'base64' }],
+      ['fs.list', { path: 'a', dir: 'documents' }],
+      ['fs.pickFile', { types: ['application/pdf'], multiple: true }],
+    ]);
+  });
+
+  test('web OPFS round-trips write → read → list → stat; getUri is honestly UNSUPPORTED', async () => {
+    const { WebAdapter } = await import('../src/core/web-adapter');
+    const { KitError } = await import('../src/core/types');
+
+    // Minimal in-memory OPFS: a dir handle holding nested dir/file handles.
+    const makeFile = (bytes: Uint8Array) => {
+      const h: any = {
+        kind: 'file',
+        _bytes: bytes,
+        getFile: async () => ({
+          size: h._bytes.length,
+          lastModified: 123,
+          text: async () => new TextDecoder().decode(h._bytes),
+          arrayBuffer: async () => h._bytes.buffer,
+        }),
+        createWritable: async ({ keepExistingData }: any = {}) => ({
+          _buf: keepExistingData ? Array.from(h._bytes as Uint8Array) : [],
+          seek() {},
+          async write(chunk: any) {
+            const u8 = typeof chunk === 'string' ? new TextEncoder().encode(chunk) : new Uint8Array(chunk);
+            for (const b of u8) (this._buf as number[]).push(b);
+          },
+          async close() { h._bytes = Uint8Array.from(this._buf as number[]); },
+        }),
+      };
+      return h;
+    };
+    const makeDir = (): any => {
+      const dirs = new Map<string, any>();
+      const files = new Map<string, any>();
+      return {
+        kind: 'directory',
+        async getDirectoryHandle(name: string, { create }: any = {}) {
+          if (!dirs.has(name)) { if (!create) throw new Error('NotFound'); dirs.set(name, makeDir()); }
+          return dirs.get(name);
+        },
+        async getFileHandle(name: string, { create }: any = {}) {
+          if (!files.has(name)) { if (!create) throw new Error('NotFound'); files.set(name, makeFile(new Uint8Array())); }
+          return files.get(name);
+        },
+        async removeEntry(name: string) { files.delete(name); dirs.delete(name); },
+        async *entries() { for (const [n, h] of files) yield [n, h]; for (const [n, h] of dirs) yield [n, h]; },
+      };
+    };
+    const root = makeDir();
+    (globalThis as any).navigator = { storage: { getDirectory: async () => root } };
+    (globalThis as any).window = {};
+    (globalThis as any).btoa = (s: string) => Buffer.from(s, 'binary').toString('base64');
+    (globalThis as any).atob = (s: string) => Buffer.from(s, 'base64').toString('binary');
+    try {
+      const web = new WebAdapter();
+      await web.invoke('fs.write', { path: 'demo/note.txt', data: 'hello', recursive: true });
+      expect(await web.invoke('fs.read', { path: 'demo/note.txt' })).toBe('hello');
+
+      const list = await web.invoke<Array<{ name: string; type: string }>>('fs.list', { path: 'demo' });
+      expect(list).toEqual([{ name: 'note.txt', type: 'file' }]);
+
+      const st = await web.invoke<{ type: string; size: number }>('fs.stat', { path: 'demo/note.txt' });
+      expect(st.type).toBe('file');
+      expect(st.size).toBe(5);
+
+      await expect(web.invoke('fs.getUri', { path: 'demo/note.txt' })).rejects.toBeInstanceOf(KitError);
+    } finally {
+      delete (globalThis as any).navigator;
+      delete (globalThis as any).window;
+    }
+  });
+
+  test('web OPFS rejects `..` path traversal across read/write/list/mkdir', async () => {
+    const { WebAdapter } = await import('../src/core/web-adapter');
+    const { KitError } = await import('../src/core/types');
+    (globalThis as any).navigator = { storage: { getDirectory: async () => ({}) } };
+    (globalThis as any).window = {};
+    try {
+      const web = new WebAdapter();
+      const evil = '../../etc/passwd';
+      await expect(web.invoke('fs.read', { path: evil })).rejects.toBeInstanceOf(KitError);
+      await expect(web.invoke('fs.write', { path: evil, data: 'x' })).rejects.toBeInstanceOf(KitError);
+      await expect(web.invoke('fs.list', { path: '../escape' })).rejects.toBeInstanceOf(KitError);
+      await expect(web.invoke('fs.mkdir', { path: 'a/../../b' })).rejects.toBeInstanceOf(KitError);
+    } finally {
+      delete (globalThis as any).navigator;
+      delete (globalThis as any).window;
+    }
+  });
+
+  test('web pickFile reads chosen files into base64 via a hidden <input type=file>', async () => {
+    const { WebAdapter } = await import('../src/core/web-adapter');
+    let input: any;
+    const fakeFile = {
+      name: 'doc.pdf',
+      type: 'application/pdf',
+      size: 3,
+      arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+    };
+    (globalThis as any).document = {
+      createElement: () => (input = { type: '', files: [fakeFile], click() { queueMicrotask(() => this.onchange()); } }),
+    };
+    (globalThis as any).btoa = (s: string) => Buffer.from(s, 'binary').toString('base64');
+    try {
+      const out = await new WebAdapter().invoke<any[]>('fs.pickFile', { types: ['application/pdf'] });
+      expect(input.accept).toBe('application/pdf');
+      expect(out).toEqual([{ name: 'doc.pdf', mimeType: 'application/pdf', size: 3, base64: btoa('\x01\x02\x03') }]);
+    } finally {
+      delete (globalThis as any).document;
+    }
+  });
+});
+
 describe('App badge', () => {
   test('capability reads the badge flag; badge(n) reuses the native notifications.setBadge path', async () => {
     const calls: Array<[string, unknown]> = [];

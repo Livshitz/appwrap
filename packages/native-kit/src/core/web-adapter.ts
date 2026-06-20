@@ -8,6 +8,14 @@ function base64ToBuffer(b64: string): ArrayBuffer {
   return out.buffer;
 }
 
+/** Encode an ArrayBuffer → raw base64 (no `data:` prefix). */
+function bufferToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
 /** Map our lock vocabulary to valid ScreenOrientation `OrientationLockType` values. */
 function toWebOrientation(o: string): any {
   switch (o) {
@@ -44,6 +52,9 @@ export class WebAdapter implements NativeKitAdapter {
       orientation: (screen as any)?.orientation ? 'web' : 'none', // Screen Orientation API (lock needs fullscreen)
       storage: 'web',
       secureStorage: 'none',
+      // OPFS (navigator.storage.getDirectory) backs read/write/list; pickFile falls back to
+      // <input type=file> even without OPFS, so 'web' whenever either surface exists.
+      fs: n.storage?.getDirectory || typeof document !== 'undefined' ? 'web' : 'none',
       toast: 'web',
       statusBar: 'none',
       device: 'web',
@@ -315,6 +326,26 @@ export class WebAdapter implements NativeKitAdapter {
       case 'camera.capture':
         return this.pickImageFile(true, !!p.dataUrl, p.maxSize) as Promise<T>;
 
+      case 'fs.read':
+        return this.opfsRead(p.path, p.encoding === 'base64' ? 'base64' : 'utf8') as Promise<T>;
+      case 'fs.write':
+        return this.opfsWrite(p.path, p.data, p.encoding === 'base64' ? 'base64' : 'utf8', false, !!p.recursive) as Promise<T>;
+      case 'fs.append':
+        return this.opfsWrite(p.path, p.data, p.encoding === 'base64' ? 'base64' : 'utf8', true, true) as Promise<T>;
+      case 'fs.delete':
+        return this.opfsDelete(p.path) as Promise<T>;
+      case 'fs.list':
+        return this.opfsList(p.path) as Promise<T>;
+      case 'fs.mkdir':
+        return this.opfsMkdir(p.path) as Promise<T>;
+      case 'fs.stat':
+        return this.opfsStat(p.path) as Promise<T>;
+      case 'fs.getUri':
+        // OPFS files have no URL the page can hand around — be honest rather than fake one.
+        throw new KitError('UNSUPPORTED', 'No file URI on web (OPFS is opaque) — read the bytes instead');
+      case 'fs.pickFile':
+        return this.pickDocuments(p.types, !!p.multiple) as Promise<T>;
+
       case 'media.configureAudio':
         return undefined as T; // browser owns the audio session — nothing to tune
 
@@ -451,6 +482,105 @@ export class WebAdapter implements NativeKitAdapter {
         img.src = URL.createObjectURL(file);
       };
       input.oncancel = () => resolve({ picked: false });
+      input.click();
+    });
+  }
+
+  // ── filesystem (Origin Private File System) ─────────────────────────
+  // OPFS is one private root per origin — our `dir` enum has no meaning here, so paths resolve
+  // straight off the root. Slash-separated paths walk nested dirs.
+
+  private async opfsRoot(): Promise<any> {
+    const dir = (navigator as any).storage?.getDirectory;
+    if (!dir) throw new KitError('UNSUPPORTED', 'No OPFS in this browser');
+    return (navigator as any).storage.getDirectory();
+  }
+
+  /** Split a path into clean segments, rejecting any `..` so it can't escape the OPFS root. */
+  private opfsSegments(path: string): string[] {
+    const parts = String(path).split('/').filter(Boolean);
+    if (parts.some((seg) => seg === '..')) throw new KitError('NATIVE_ERROR', `Path traversal rejected: ${path}`);
+    return parts;
+  }
+
+  /** Walk `path` to its parent dir handle + leaf name. `create` makes intermediate dirs. */
+  private async opfsResolveParent(path: string, create: boolean): Promise<{ parent: any; name: string }> {
+    const parts = this.opfsSegments(path);
+    const name = parts.pop();
+    if (!name) throw new KitError('NATIVE_ERROR', 'Empty path');
+    let dir = await this.opfsRoot();
+    for (const seg of parts) dir = await dir.getDirectoryHandle(seg, { create });
+    return { parent: dir, name };
+  }
+
+  private async opfsRead(path: string, encoding: 'utf8' | 'base64'): Promise<string> {
+    const { parent, name } = await this.opfsResolveParent(path, false);
+    const handle = await parent.getFileHandle(name).catch(() => { throw new KitError('NATIVE_ERROR', `No such file: ${path}`); });
+    const file = await handle.getFile();
+    if (encoding === 'base64') return bufferToBase64(await file.arrayBuffer());
+    return file.text();
+  }
+
+  private async opfsWrite(path: string, data: string, encoding: 'utf8' | 'base64', append: boolean, recursive: boolean): Promise<{ uri: string }> {
+    const { parent, name } = await this.opfsResolveParent(path, recursive);
+    const handle = await parent.getFileHandle(name, { create: true });
+    const writable = await handle.createWritable({ keepExistingData: append });
+    if (append) writable.seek?.((await handle.getFile()).size);
+    const payload: BlobPart = encoding === 'base64' ? base64ToBuffer(data) : data;
+    await writable.write(payload);
+    await writable.close();
+    return { uri: `opfs:/${path}` };
+  }
+
+  private async opfsDelete(path: string): Promise<void> {
+    const { parent, name } = await this.opfsResolveParent(path, false);
+    await parent.removeEntry(name, { recursive: false }).catch(() => {}); // no-throw if absent
+  }
+
+  private async opfsList(path: string): Promise<Array<{ name: string; type: 'file' | 'dir' }>> {
+    let dir = await this.opfsRoot();
+    for (const seg of this.opfsSegments(path)) dir = await dir.getDirectoryHandle(seg);
+    const out: Array<{ name: string; type: 'file' | 'dir' }> = [];
+    for await (const [name, handle] of (dir as any).entries()) {
+      out.push({ name, type: handle.kind === 'directory' ? 'dir' : 'file' });
+    }
+    return out;
+  }
+
+  private async opfsMkdir(path: string): Promise<void> {
+    let dir = await this.opfsRoot();
+    for (const seg of this.opfsSegments(path)) dir = await dir.getDirectoryHandle(seg, { create: true });
+  }
+
+  private async opfsStat(path: string): Promise<{ name: string; type: 'file' | 'dir'; size?: number; mtime?: number }> {
+    const { parent, name } = await this.opfsResolveParent(path, false);
+    const fileHandle = await parent.getFileHandle(name).catch(() => null);
+    if (fileHandle) {
+      const f = await fileHandle.getFile();
+      return { name, type: 'file', size: f.size, mtime: f.lastModified };
+    }
+    await parent.getDirectoryHandle(name).catch(() => { throw new KitError('NATIVE_ERROR', `No such path: ${path}`); });
+    return { name, type: 'dir' };
+  }
+
+  /** Document picker via a hidden `<input type=file>` (works everywhere; reuses the photos pattern). */
+  private pickDocuments(types?: string[], multiple = false): Promise<Array<{ name: string; mimeType: string; size: number; base64: string }>> {
+    const toPicked = async (file: File) => ({
+      name: file.name,
+      mimeType: file.type || 'application/octet-stream',
+      size: file.size,
+      base64: bufferToBase64(await file.arrayBuffer()),
+    });
+    return new Promise((resolve) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      if (multiple) input.multiple = true;
+      if (types?.length) input.accept = types.join(',');
+      input.onchange = async () => {
+        const files = Array.from(input.files ?? []);
+        resolve(await Promise.all(files.map(toPicked)));
+      };
+      input.oncancel = () => resolve([]);
       input.click();
     });
   }

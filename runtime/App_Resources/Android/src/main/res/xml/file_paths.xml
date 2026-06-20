@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Paths FileProvider may expose. kit.share.files writes into cacheDir/shared. -->
+<!-- Paths FileProvider may expose.
+     - cacheDir/shared: kit.share.files staging area (keep exact, share writes here).
+     - The three roots below back kit.fs.getUri() so content:// resolves for every FsDirectory:
+       cache→getCacheDir, data→getFilesDir, documents→getExternalFilesDir(null). -->
 <paths>
     <cache-path name="shared" path="shared/" />
+    <cache-path name="fs_cache" path="." />
+    <files-path name="fs_data" path="." />
+    <external-files-path name="fs_documents" path="." />
 </paths>

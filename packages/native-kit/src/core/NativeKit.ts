@@ -9,6 +9,7 @@ import { CalendarModule } from '../modules/calendar';
 import { ClipboardModule } from '../modules/clipboard';
 import { ContactsModule } from '../modules/contacts';
 import { DeviceModule } from '../modules/device';
+import { FsModule } from '../modules/fs';
 import { GeoModule } from '../modules/geo';
 import { HapticsModule } from '../modules/haptics';
 import { HealthModule } from '../modules/health';
@@ -73,6 +74,7 @@ export class NativeKit {
   public readonly screen = new ScreenModule(this);
   public readonly keyboard = new KeyboardModule(this);
   public readonly storage = new StorageModule(this);
+  public readonly fs = new FsModule(this);
   public readonly toast = new ToastModule(this);
   public readonly ui = new UiModule(this);
   public readonly device = new DeviceModule(this);

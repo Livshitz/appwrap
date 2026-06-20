@@ -393,6 +393,17 @@ async function main() {
   kit.keyboard.onShow((e) => log(`keyboard show → ${e.height}px`));
   kit.keyboard.onHide(() => log('keyboard hide'));
 
+  // Filesystem — round-trips a file (write → read → list), then opens the document picker.
+  tile('Filesystem', kit.fs.capability, [
+    ['write+read', async () => {
+      await kit.fs.write('demo/note.txt', `hello @ ${Date.now()}`);
+      return kit.fs.read('demo/note.txt');
+    }],
+    ['list', () => kit.fs.list('demo')],
+    ['stat', () => kit.fs.stat('demo/note.txt')],
+    ['pick', async () => (await kit.fs.pickFile()).map((f) => `${f.name} (${f.size}b)`)],
+  ]);
+
   tile('Dialogs', kit.ui.dialogsCapability, [
     ['alert', () => kit.ui.alert({ title: 'AppWrap', message: 'Native alert via the kit' })],
     ['confirm', () => kit.ui.confirm({ title: 'AppWrap', message: 'Proceed with the demo?' })],
