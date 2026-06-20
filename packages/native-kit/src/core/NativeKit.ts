@@ -23,6 +23,7 @@ import { OAuthModule } from '../modules/oauth';
 import { PhotosModule } from '../modules/photos';
 import { PushModule } from '../modules/push';
 import { ReviewsModule } from '../modules/reviews';
+import { ScannerModule } from '../modules/scanner';
 import { ScreenModule } from '../modules/screen';
 import { ShareModule } from '../modules/share';
 import { StorageModule } from '../modules/storage';
@@ -91,6 +92,7 @@ export class NativeKit {
   public readonly health = new HealthModule(this);
   public readonly media = new MediaModule(this);
   public readonly contacts = new ContactsModule(this);
+  public readonly scanner = new ScannerModule(this);
   public readonly calendar = new CalendarModule(this);
   public readonly app = new AppModule(this);
   public readonly browser = new BrowserModule(this);

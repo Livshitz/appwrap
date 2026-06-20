@@ -154,6 +154,22 @@ export const MODULES: ModuleManifest[] = [
     capabilities: { oauth: { ios: true, android: false } },
   },
 
+  // ── scanner — camera barcode/QR decode — opt-in (camera permission + decoder weight) ──
+  // Reuses the SAME camera permission as media/camera (the CLI dedups across active modules), so a
+  // scanner-only app still gets NSCameraUsageDescription / CAMERA without a second permission.
+  // iOS: AVCaptureMetadataOutput (no extra dep). Android: ZXing-android-embedded — it ships its own
+  // capture Activity, so the handler just launches it via startActivityForResult and reads the
+  // result (fewest moving parts vs ML Kit, which needs a hand-built Camera2/CameraX preview).
+  {
+    name: 'scanner', group: 'scanner',
+    capabilities: { scanner: 'native' },
+    ios: { permissions: [{ key: 'NSCameraUsageDescription', domain: 'camera', defaultUsage: 'Scan barcodes and QR codes with the camera.' }] },
+    android: {
+      permissions: ['android.permission.CAMERA'],
+      gradleDeps: ['com.journeyapps:zxing-android-embedded:4.3.0'],
+    },
+  },
+
   // ── health (steps) — opt-in heavy module; FG live + BG via OS step store ──
   {
     name: 'health', group: 'health',
@@ -204,7 +220,7 @@ export const MODULES: ModuleManifest[] = [
 
 /** Opt-in registration groups that own their own NS handler file (strippable when inactive). Core
  * groups (core/extended/parity/system/media/billing) are always bundled; only these are CLI-gated. */
-export const OPTIONAL_GROUPS = ['health', 'oauth'] as const;
+export const OPTIONAL_GROUPS = ['health', 'oauth', 'scanner'] as const;
 
 /** Resolve the active capability map for the handshake from a set of active capability names. */
 export function buildCapabilityMap(

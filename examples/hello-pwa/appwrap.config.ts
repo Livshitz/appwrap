@@ -11,7 +11,7 @@ export default defineConfig({
   urlScheme: 'hellowrap',
   modules: [
     'notifications', 'biometrics', 'geo', 'photos', 'camera', 'media',
-    'motion', 'contacts', 'calendar', 'reviews', 'billing', 'health',
+    'motion', 'contacts', 'calendar', 'reviews', 'billing', 'health', 'scanner',
   ],
   permissions: {
     location: 'Demo: show your coordinates in the capability dashboard',

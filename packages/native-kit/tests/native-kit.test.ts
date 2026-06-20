@@ -268,6 +268,108 @@ describe('Fs', () => {
   });
 });
 
+describe('Scanner', () => {
+  test('scan/cancel route to namespaced scanner.* with options merged in', async () => {
+    const calls: Array<[string, unknown]> = [];
+    const kit = new NativeKit({
+      adapters: [fakeAdapter({
+        handshake: async () => ({ ...HS, capabilities: { scanner: 'native' } }),
+        invoke: async <T,>(m: string, p?: unknown) => { calls.push([m, p]); return ({ value: 'X', format: 'qr' } as unknown) as T; },
+      })],
+    });
+    await kit.ready();
+    expect(kit.scanner.capability).toBe('native');
+
+    await kit.scanner.scan({ formats: ['qr', 'ean13'], camera: 'front' });
+    await kit.scanner.scan();
+    await kit.scanner.cancel();
+    expect(calls).toEqual([
+      ['scanner.scan', { formats: ['qr', 'ean13'], camera: 'front' }],
+      ['scanner.scan', {}],
+      ['scanner.cancel', undefined],
+    ]);
+  });
+
+  test('isScanResult discriminates the result vs cancelled shapes', async () => {
+    const { isScanResult } = await import('../src/modules/scanner');
+    expect(isScanResult({ value: 'abc', format: 'qr' })).toBe(true);
+    expect(isScanResult({ cancelled: true })).toBe(false);
+  });
+
+  test('web: capability is "web" only when BOTH BarcodeDetector and getUserMedia exist', async () => {
+    const { WebAdapter } = await import('../src/core/web-adapter');
+    const baseNav = { mediaDevices: { getUserMedia: async () => ({}) } };
+
+    // Both present → 'web'
+    (globalThis as any).window = { BarcodeDetector: class {} };
+    (globalThis as any).navigator = baseNav;
+    (globalThis as any).screen = {};
+    (globalThis as any).location = { hostname: 'x' };
+    (globalThis as any).document = { title: 't' };
+    try {
+      expect((await new WebAdapter().handshake()).capabilities.scanner).toBe('web');
+
+      // Detector present but NO camera → 'none'
+      (globalThis as any).navigator = {};
+      expect((await new WebAdapter().handshake()).capabilities.scanner).toBe('none');
+
+      // Camera present but NO detector → 'none'
+      (globalThis as any).window = {};
+      (globalThis as any).navigator = baseNav;
+      expect((await new WebAdapter().handshake()).capabilities.scanner).toBe('none');
+    } finally {
+      for (const k of ['window', 'navigator', 'screen', 'location', 'document']) delete (globalThis as any)[k];
+    }
+  });
+
+  test('web: scanner.scan throws UNSUPPORTED when BarcodeDetector is absent (no JS-decoder fallback)', async () => {
+    const { WebAdapter } = await import('../src/core/web-adapter');
+    (globalThis as any).window = {}; // no BarcodeDetector
+    (globalThis as any).navigator = { mediaDevices: { getUserMedia: async () => ({}) } };
+    try {
+      await expect(new WebAdapter().invoke('scanner.scan', {})).rejects.toBeInstanceOf(KitError);
+    } finally {
+      delete (globalThis as any).window;
+      delete (globalThis as any).navigator;
+    }
+  });
+
+  test('web: scanner.scan decodes the first BarcodeDetector hit and tears the camera down', async () => {
+    const { WebAdapter } = await import('../src/core/web-adapter');
+    const stopped: string[] = [];
+    const stream = { getTracks: () => [{ stop: () => stopped.push('video') }] };
+    let detectCalls = 0;
+    class FakeDetector {
+      constructor(public opts?: any) {}
+      async detect() {
+        detectCalls++;
+        return detectCalls >= 2 ? [{ rawValue: 'WIFI:demo', format: 'qr_code', boundingBox: { x: 1, y: 2, width: 3, height: 4 } }] : [];
+      }
+    }
+    const removed: any[] = [];
+    (globalThis as any).window = { BarcodeDetector: FakeDetector };
+    (globalThis as any).navigator = { mediaDevices: { getUserMedia: async () => stream } };
+    (globalThis as any).requestAnimationFrame = (cb: any) => { Promise.resolve().then(() => cb()); return 1; };
+    (globalThis as any).cancelAnimationFrame = () => {};
+    (globalThis as any).document = {
+      body: { appendChild() {} },
+      createElement: () => ({
+        style: {}, setAttribute() {}, appendChild() {}, play: async () => {},
+        set srcObject(_v: any) {}, remove() { removed.push(1); },
+        setTitleForState() {},
+      }),
+    };
+    try {
+      const out: any = await new WebAdapter().invoke('scanner.scan', { formats: 'qr' });
+      expect(out).toEqual({ value: 'WIFI:demo', format: 'qr', bounds: { x: 1, y: 2, width: 3, height: 4 } });
+      expect(stopped).toContain('video'); // camera released
+      expect(removed.length).toBeGreaterThan(0); // overlay removed
+    } finally {
+      for (const k of ['window', 'navigator', 'document', 'requestAnimationFrame', 'cancelAnimationFrame']) delete (globalThis as any)[k];
+    }
+  });
+});
+
 describe('App badge', () => {
   test('capability reads the badge flag; badge(n) reuses the native notifications.setBadge path', async () => {
     const calls: Array<[string, unknown]> = [];

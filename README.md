@@ -177,6 +177,7 @@ kit.keyboard.onShow((e) => …e.height);             // lift content above the k
 await kit.app.badge(3); await kit.app.badge(0);    // app-icon badge (iOS springboard / web Badging API; Android no-op)
 await kit.fs.write('logs/app.txt', 'hi');          // app-sandbox files: read/write/append/list/stat/mkdir/delete/getUri ({dir:'documents'|'data'|'cache'})
 const picked = await kit.fs.pickFile();            // system document picker → [{ name, mimeType, size, base64 }]
+const code = await kit.scanner.scan();             // camera barcode/QR (opt-in `scanner` module) → { value, format } | { cancelled:true } (web: BarcodeDetector where present, else UNSUPPORTED)
 await kit.ui.alert({ message: 'Hi' });            // native dialogs: alert/confirm/action
 await kit.ui.action({ options: ['A', 'B'] });     // → chosen index | null
 kit.ui.syncThemeColor();                          // <meta name=theme-color> → native chrome
@@ -397,12 +398,13 @@ bun test packages/                                  # kit unit tests
 ## Status / roadmap
 
 - [x] kit core + web adapter + appwrap adapter
-- [x] iOS shell — 27 domains: haptics, share (text + files), storage (kv + secure/Keychain),
+- [x] iOS shell — 28 domains: haptics, share (text + files), storage (kv + secure/Keychain),
       fs (file I/O + document picker), toast,
       status bar, device, clipboard, notifications (+badge), biometrics, geolocation (current + watch),
       photos, network, screen (safe-area/brightness/keep-awake/orientation-lock), keyboard (show/hide+height), dialogs (alert/
       confirm/action), StoreKit review, theme-color sync, motion sensors, contacts picker, calendar,
-      camera capture, app (openUrl/openSettings/badge), in-app browser (SFSafariViewController),
+      camera capture, scanner (barcode/QR via AVCaptureMetadataOutput — opt-in module),
+      app (openUrl/openSettings/badge), in-app browser (SFSafariViewController),
       billing (StoreKit 1 IAP/subscriptions — pluggable validator: RevenueCat/IAPHUB/custom;
       a real purchase needs an Xcode-run `.storekit` config or App Store Connect sandbox products)
 - [x] modular capabilities — each capability self-declares its perms/bg-modes/deps in a manifest
@@ -413,6 +415,12 @@ bun test packages/                                  # kit unit tests
       watch`. iOS device-verified (iPhone 13 Pro Max); Android builds+launches clean on the API-35
       emulator. Health Connect needs compileSdk 36 + minSdk 26 + a Kotlin coroutine shim — all
       module-owned (manifest entitlement/perms/deps + `runtime/modules-native/`), zero app `overrides/`
+- [x] `scanner` (barcode/QR) — opt-in module: iOS `AVCaptureMetadataOutput` full-screen capture,
+      Android ZXing-android-embedded capture Activity. `kit.scanner.scan()` → first `{ value, format }`
+      then auto-dismiss; `cancel()` / user-dismiss resolve `{ cancelled: true }`. Reuses the camera
+      permission (deduped). Web maps to `BarcodeDetector` where present (Chrome/Android `web`), else
+      honest `none` + `UNSUPPORTED` (no heavy JS decoder). Compiles clean; camera-session lifecycle is
+      device-gated (not yet device-verified)
 - [x] billing is cross-platform on ONE API: the same `kit.billing.*` calls drive the native
       store on a shell and a pluggable web checkout provider (`HttpBillingProvider` → Stripe/
       Paddle/custom) in the browser — verified on web in `examples/hello-pwa` (badge `web`,

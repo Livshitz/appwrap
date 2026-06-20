@@ -361,6 +361,13 @@ async function main() {
     }],
   ]);
 
+  tile('Scanner', kit.scanner.capability, [
+    ['scan QR/barcode', async () => {
+      const r = await kit.scanner.scan({ formats: 'all' });
+      return 'cancelled' in r ? 'cancelled' : `${r.format}: ${r.value.slice(0, 40)}`;
+    }],
+  ]);
+
   tile('Network', kit.network.capability, [
     ['status', () => kit.network.status()],
   ]);

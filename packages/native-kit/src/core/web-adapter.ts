@@ -38,6 +38,8 @@ export class WebAdapter implements NativeKitAdapter {
   private listeners = new Map<string, Set<(payload: unknown) => void>>();
   private geoWatchId: number | null = null;
   private motionHandler: ((e: DeviceMotionEvent) => void) | null = null;
+  /** Tear-down for an in-progress scanner.scan loop (stops the camera, removes the overlay). */
+  private scanCancel: (() => void) | null = null;
 
   detect(): boolean {
     return typeof window !== 'undefined';
@@ -75,6 +77,8 @@ export class WebAdapter implements NativeKitAdapter {
       calendar: 'none',
       camera: 'web', // <input capture> — mobile browsers open the camera
       media: (navigator as any).mediaDevices?.getUserMedia ? 'web' : 'none',
+      // BarcodeDetector (Chrome/Android) decodes; needs a getUserMedia stream to feed it. Both → 'web'.
+      scanner: typeof (window as any).BarcodeDetector !== 'undefined' && (navigator as any).mediaDevices?.getUserMedia ? 'web' : 'none',
       app: 'web', // openUrl via window.open; openSettings unsupported
       browser: 'web', // new tab/window
       billing: 'none', // no IAP in a plain browser — wire a web checkout yourself
@@ -321,6 +325,12 @@ export class WebAdapter implements NativeKitAdapter {
       case 'calendar.createEvent':
         throw new KitError('UNSUPPORTED', 'No calendar access on web');
 
+      case 'scanner.scan':
+        return this.scanBarcode(p.formats, p.camera === 'front' ? 'user' : 'environment') as Promise<T>;
+      case 'scanner.cancel':
+        this.scanCancel?.();
+        return undefined as T;
+
       case 'photos.pick':
         return this.pickImageFile(false, !!p.dataUrl, p.maxSize) as Promise<T>;
       case 'camera.capture':
@@ -445,6 +455,96 @@ export class WebAdapter implements NativeKitAdapter {
 
   private emit(event: string, payload: unknown): void {
     this.listeners.get(event)?.forEach((cb) => cb(payload));
+  }
+
+  /** Map our small format enum → BarcodeDetector `formats` strings. Omit/`'all'` = detector default. */
+  private toDetectorFormats(formats?: string | string[]): string[] | undefined {
+    const want = (Array.isArray(formats) ? formats : formats ? [formats] : []).filter((f) => f && f !== 'all');
+    if (!want.length) return undefined;
+    const map: Record<string, string> = { qr: 'qr_code', ean13: 'ean_13', code128: 'code_128' };
+    return want.map((f) => map[f] ?? f);
+  }
+
+  /** Reverse map a detector format string → our enum (best-effort). */
+  private fromDetectorFormat(f: string): 'qr' | 'ean13' | 'code128' | 'unknown' {
+    if (f === 'qr_code') return 'qr';
+    if (f === 'ean_13') return 'ean13';
+    if (f === 'code_128') return 'code128';
+    return 'unknown';
+  }
+
+  /**
+   * Open a full-screen camera overlay, run a BarcodeDetector loop, resolve the FIRST hit then tear
+   * down. Resolves `{ cancelled: true }` if the user taps the close button or `scanner.cancel` fires.
+   */
+  private scanBarcode(
+    formats: string | string[] | undefined,
+    facingMode: 'environment' | 'user'
+  ): Promise<{ value: string; format: string; bounds?: any } | { cancelled: true }> {
+    const Detector = (window as any).BarcodeDetector;
+    const getUserMedia = (navigator as any).mediaDevices?.getUserMedia?.bind((navigator as any).mediaDevices);
+    if (!Detector || !getUserMedia) throw new KitError('UNSUPPORTED', 'BarcodeDetector / camera unavailable in this browser');
+
+    return new Promise(async (resolve, reject) => {
+      let stream: MediaStream | null = null;
+      let raf = 0;
+      let done = false;
+      const wrap = document.createElement('div');
+      const video = document.createElement('video');
+
+      const teardown = () => {
+        if (done) return;
+        done = true;
+        cancelAnimationFrame(raf);
+        stream?.getTracks().forEach((t) => t.stop());
+        wrap.remove();
+        // Only clear if it's still OUR handler — a newer scan may have replaced it.
+        if (this.scanCancel === cancelHandler) this.scanCancel = null;
+      };
+      const cancelHandler = () => { teardown(); resolve({ cancelled: true }); };
+      this.scanCancel = cancelHandler;
+
+      try {
+        const detector = new Detector(this.toDetectorFormats(formats) ? { formats: this.toDetectorFormats(formats) } : undefined);
+        stream = await getUserMedia({ video: { facingMode } });
+        wrap.style.cssText = 'position:fixed;inset:0;background:#000;z-index:99999;display:flex;flex-direction:column';
+        video.setAttribute('playsinline', '');
+        video.muted = true;
+        video.style.cssText = 'flex:1;width:100%;height:100%;object-fit:cover';
+        (video as any).srcObject = stream;
+        const close = document.createElement('button');
+        close.textContent = 'Cancel';
+        close.style.cssText = 'position:absolute;top:max(12px,env(safe-area-inset-top));right:16px;z-index:1;background:rgba(0,0,0,.5);color:#fff;border:0;border-radius:18px;padding:8px 16px;font:15px system-ui';
+        close.onclick = () => { teardown(); resolve({ cancelled: true }); };
+        wrap.appendChild(video);
+        wrap.appendChild(close);
+        document.body.appendChild(wrap);
+        await video.play();
+
+        const tick = async () => {
+          if (done) return;
+          try {
+            const codes = await detector.detect(video);
+            if (codes?.length) {
+              const c = codes[0];
+              const b = c.boundingBox;
+              teardown();
+              resolve({
+                value: c.rawValue,
+                format: this.fromDetectorFormat(c.format),
+                bounds: b ? { x: b.x, y: b.y, width: b.width, height: b.height } : undefined,
+              });
+              return;
+            }
+          } catch { /* transient detect error — keep looping */ }
+          raf = requestAnimationFrame(tick);
+        };
+        raf = requestAnimationFrame(tick);
+      } catch (e: any) {
+        teardown();
+        reject(new KitError(e?.name === 'NotAllowedError' ? 'DENIED' : 'NATIVE_ERROR', e?.message ?? 'scan failed'));
+      }
+    });
   }
 
   private pickImageFile(

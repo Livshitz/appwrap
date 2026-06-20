@@ -35,6 +35,8 @@ export type { ActionOptions, AlertOptions, ConfirmOptions, SafeAreaInsets } from
 export type { MotionSample } from './modules/motion';
 export type { UpdateStatus, UpdatesOptions } from './modules/updates';
 export type { PickedContact } from './modules/contacts';
+export type { ScanFormat, ScanOptions, ScanResult, ScanCancelled } from './modules/scanner';
+export { isScanResult } from './modules/scanner';
 export type { CalendarEventOptions } from './modules/calendar';
 export type { BrowserOptions } from './modules/browser';
 export type { OAuthAuthorizeParams, OAuthResult } from './modules/oauth';
