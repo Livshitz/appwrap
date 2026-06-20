@@ -363,6 +363,7 @@ export const SHELL_CONFIG = {
   debugLog: ${JSON.stringify(cfg.debugLog ?? '*')},
   devMenu: ${JSON.stringify(cfg.devMenu ?? true)},
   neutralizeServiceWorker: ${JSON.stringify(cfg.neutralizeServiceWorker ?? true)},
+  openNewWindowsInBrowser: ${JSON.stringify(cfg.openNewWindowsInBrowser ?? false)},
   pushIos: ${JSON.stringify(!!cfg.push?.enabled && cfg.push?.ios !== false)},
   pushAndroid: ${JSON.stringify(!!cfg.push?.enabled && cfg.push?.android !== false)},
 };

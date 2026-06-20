@@ -79,6 +79,14 @@ export interface AppwrapConfig {
    * for in-WebView web-push as a fallback. NOTE: keeping the SW is the only way to get web push; native
    * push is the separate `push` lane (APNs/FCM) and does NOT need a SW. */
   neutralizeServiceWorker?: boolean;
+  /** Route navigations that LEAVE the app's own origin to the OS-native in-app browser
+   * (iOS `SFSafariViewController` / Android Chrome Custom Tabs) instead of replacing the shell
+   * WebView — so external links and `window.open(...)`/`target="_blank"` behave like a regular
+   * native app (open a browser sheet, keep the app underneath) rather than navigating away inside
+   * the shell. Covers external-origin `<a>` clicks (including `target="_blank"`) and
+   * `window.open()`; same-origin SPA navigation, subframes/iframes and `tel:`/`mailto:` are left
+   * untouched. Default `false` (unchanged in-WebView navigation). See `externalNavGuardJs`. */
+  openNewWindowsInBrowser?: boolean;
   /** Apple Development Team ID for device builds (Xcode → Settings → Accounts). */
   teamId?: string;
   /** Path (relative to the PWA project) to a StoreKit configuration file for LOCAL IAP
