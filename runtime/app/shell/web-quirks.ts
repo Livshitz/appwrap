@@ -121,10 +121,9 @@ export function serviceWorkerGuardJs(enabled: boolean): string {
 
 /**
  * Make the shell behave like a regular native app when the web content tries to leave the app's own
- * origin: route external-origin navigations to the OS-native in-app browser (iOS
- * `SFSafariViewController` / Android Chrome Custom Tabs, via the core `browser.open` handler) instead
- * of replacing the shell WebView. Intercepts, at document-start (BEFORE the page wires its own
- * handlers), two intents:
+ * origin: hand external-origin navigations to the OS default browser (Safari / Chrome — via the core
+ * `app.openUrl` handler, which leaves the app) instead of replacing the shell WebView. Intercepts, at
+ * document-start (BEFORE the page wires its own handlers), two intents:
  *   - a click on an `<a href>` resolving to a DIFFERENT origin (incl. `target="_blank"`), and
  *   - `window.open(url, ...)` to a different origin.
  * Same-origin links / SPA route changes pass straight through (the app keeps owning its own
@@ -146,7 +145,7 @@ export function externalNavGuardJs(enabled: boolean): string {
   function send(url){
     try {
       var json = JSON.stringify({ v:1, id:'extnav-'+Date.now()+'-'+Math.random().toString(36).slice(2),
-        kind:'request', method:'browser.open', params:{ url:url } });
+        kind:'request', method:'app.openUrl', params:{ url:url } });
       if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.appwrap) {
         window.webkit.messageHandlers.appwrap.postMessage(json); return true; }
       if (window.appwrapNative && window.appwrapNative.postMessage) {
