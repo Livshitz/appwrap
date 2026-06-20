@@ -554,6 +554,32 @@ async function main() {
     ['→ item/7', () => kit.app.openUrl('hellowrap://item/7')],
   ]);
 
+  // OTA updates — checks the deployed manifest for a newer bundle. On a bundled/app:// build
+  // `latest` is unknown (no manifest URL) → updateAvailable:false, honestly. reload() hard-reloads.
+  kit.updates.onAvailable((s) => log(`update available → ${s.latest}`));
+  tile('Updates', kit.updates.capability, [
+    ['check', () => kit.updates.check()],
+    ['reload', () => kit.updates.reload()],
+  ]);
+
+  // System-browser OAuth (iOS ASWebAuthenticationSession). Opt-in module; the sheet closes the moment
+  // the provider redirects back to our callbackScheme. Demo points at a public test endpoint.
+  tile('OAuth', kit.oauth.capability, [
+    ['authorize', () => kit.oauth.authorize({
+      url: 'https://example.com/oauth/authorize?client_id=demo&redirect_uri=hellowrap://oauth&response_type=code',
+      callbackScheme: 'hellowrap',
+    })],
+  ]);
+
+  // Remote push (APNs/FCM). Gated by `push:{enabled}` in appwrap.config (NOT the modules list) because
+  // the iOS aps-environment entitlement needs a PAID team — left off here, so capability is honestly
+  // 'none' and the calls degrade gracefully. register() returns a raw token; sending is your backend's job.
+  kit.push.onMessage((m) => log(`push message → ${JSON.stringify(m).slice(0, 60)}`));
+  tile('Push', kit.push.capability, [
+    ['permission', () => kit.push.permissionStatus()],
+    ['register', async () => (await kit.push.register()).token.slice(0, 24) + '…'],
+  ]);
+
   // ── wire the router ────────────────────────────────────────────────
   document.querySelectorAll<HTMLAnchorElement>('#nav a').forEach((a) => {
     a.onclick = (e) => { e.preventDefault(); navigate(a.getAttribute('data-route')!); };
