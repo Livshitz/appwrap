@@ -57,7 +57,7 @@ function registerIosFs(): void {
     if (!fm().fileExistsAtPath(full)) throw err('NATIVE_ERROR', `No such file: ${path}`);
     const data = NSData.dataWithContentsOfFile(full);
     if (!data) throw err('NATIVE_ERROR', `Read failed: ${path}`);
-    if (encoding === 'base64') return data.base64EncodedStringWithOptions(0);
+    if (encoding === 'base64') return data.base64EncodedStringWithOptions(0 as unknown as NSDataBase64EncodingOptions);
     return NSString.alloc().initWithDataEncoding(data, 4 /* NSUTF8StringEncoding */) as unknown as string;
   });
 
@@ -65,7 +65,7 @@ function registerIosFs(): void {
     const full = iosResolve(path, dir);
     if (recursive) ensureParentIos(full);
     const blob = encoding === 'base64'
-      ? NSData.alloc().initWithBase64EncodedStringOptions(data, 0)
+      ? NSData.alloc().initWithBase64EncodedStringOptions(data, 0 as unknown as NSDataBase64DecodingOptions)
       : (NSString.stringWithString(String(data ?? '')) as any).dataUsingEncoding(4);
     if (!blob) throw err('NATIVE_ERROR', `Encode failed: ${path}`);
     if (!blob.writeToFileAtomically(full, true)) throw err('NATIVE_ERROR', `Write failed: ${path}`);
@@ -76,7 +76,7 @@ function registerIosFs(): void {
     const full = iosResolve(path, dir);
     ensureParentIos(full);
     const blob = encoding === 'base64'
-      ? NSData.alloc().initWithBase64EncodedStringOptions(data, 0)
+      ? NSData.alloc().initWithBase64EncodedStringOptions(data, 0 as unknown as NSDataBase64DecodingOptions)
       : (NSString.stringWithString(String(data ?? '')) as any).dataUsingEncoding(4);
     if (!blob) throw err('NATIVE_ERROR', `Encode failed: ${path}`);
     if (!fm().fileExistsAtPath(full)) {
@@ -182,7 +182,7 @@ function pickFileIos(types: string[] | undefined, multiple: boolean): Promise<an
                       name: url.lastPathComponent,
                       mimeType: mimeForUrlIos(url),
                       size: data.length,
-                      base64: data.base64EncodedStringWithOptions(0),
+                      base64: data.base64EncodedStringWithOptions(0 as unknown as NSDataBase64EncodingOptions),
                     });
                   }
                 } finally {
