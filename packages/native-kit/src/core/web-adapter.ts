@@ -49,6 +49,7 @@ export class WebAdapter implements NativeKitAdapter {
       device: 'web',
       clipboard: navigator.clipboard ? 'web' : 'none',
       notifications: 'Notification' in window ? 'web' : 'none',
+      badge: typeof (navigator as any).setAppBadge === 'function' ? 'web' : 'none', // Badging API (PWA icon badge)
       biometrics: 'none',
       geo: 'geolocation' in navigator ? 'web' : 'none',
       photos: 'web',

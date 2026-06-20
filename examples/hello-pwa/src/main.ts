@@ -489,6 +489,12 @@ async function main() {
     ['settings', () => kit.app.openSettings()],
   ]);
 
+  // App-icon badge — set a count on the home-screen icon; "clear" removes it.
+  tile('Badge', kit.app.badgeCapability, [
+    ['set 3', () => kit.app.badge(3)],
+    ['clear', () => kit.app.badge(0)],
+  ]);
+
   tile('Browser', kit.browser.capability, [
     ['in-app', () => kit.browser.open('https://livx.cc', { toolbarColor: '#0b1020' })],
   ]);

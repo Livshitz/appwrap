@@ -174,6 +174,7 @@ await kit.network.status();
 await kit.ui.safeArea(); await kit.ui.setBrightness(0.5); await kit.ui.keepAwake(true);
 await kit.screen.orientation.lock('landscape');   // pin orientation; .unlock() to free; .onChange(cb)
 kit.keyboard.onShow((e) => …e.height);             // lift content above the keyboard; .onHide(cb); .hide()
+await kit.app.badge(3); await kit.app.badge(0);    // app-icon badge (iOS springboard / web Badging API; Android no-op)
 await kit.ui.alert({ message: 'Hi' });            // native dialogs: alert/confirm/action
 await kit.ui.action({ options: ['A', 'B'] });     // → chosen index | null
 kit.ui.syncThemeColor();                          // <meta name=theme-color> → native chrome
@@ -398,7 +399,7 @@ bun test packages/                                  # kit unit tests
       status bar, device, clipboard, notifications (+badge), biometrics, geolocation (current + watch),
       photos, network, screen (safe-area/brightness/keep-awake/orientation-lock), keyboard (show/hide+height), dialogs (alert/
       confirm/action), StoreKit review, theme-color sync, motion sensors, contacts picker, calendar,
-      camera capture, app (openUrl/openSettings), in-app browser (SFSafariViewController),
+      camera capture, app (openUrl/openSettings/badge), in-app browser (SFSafariViewController),
       billing (StoreKit 1 IAP/subscriptions — pluggable validator: RevenueCat/IAPHUB/custom;
       a real purchase needs an Xcode-run `.storekit` config or App Store Connect sandbox products)
 - [x] modular capabilities — each capability self-declares its perms/bg-modes/deps in a manifest

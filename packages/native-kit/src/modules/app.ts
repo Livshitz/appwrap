@@ -31,6 +31,22 @@ export class AppModule {
     return this.kit.capability('app');
   }
 
+  /** 'native' where the OS exposes an app-icon badge (iOS always; Android launcher-dependent →
+   *  honest no-op) · 'web' where the Badging API exists · else 'none'. Branch on this, not try/catch. */
+  get badgeCapability() {
+    return this.kit.capability('badge');
+  }
+
+  /**
+   * Set (or clear, with `0`) the app-icon badge count — the small number on the home-screen icon.
+   * Convenience over the shared native badge path: iOS sets the springboard badge; Android is an
+   * honest no-op (launchers own badges); web uses the Badging API where present.
+   * Branch on {@link badgeCapability}.
+   */
+  badge(count: number): Promise<void> {
+    return this.kit.invoke('notifications.setBadge', { count });
+  }
+
   /** Install-level environment facts for analytics/identification (source, install id, timestamps). */
   environment(): Promise<AppEnvironment> {
     return this.kit.invoke('app.environment');

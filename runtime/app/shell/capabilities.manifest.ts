@@ -74,7 +74,9 @@ export const MODULES: ModuleManifest[] = [
   { name: 'clipboard', core: true, group: 'extended', capabilities: { clipboard: 'native' } },
   { name: 'network', core: true, group: 'extended', capabilities: { network: 'native' } },
   { name: 'screen', core: true, group: 'extended', capabilities: { screen: 'native', dialogs: 'native', orientation: 'native', keyboard: 'native' } },
-  { name: 'app', core: true, group: 'system', capabilities: { app: 'native', browser: 'native' } },
+  // badge: app-icon badge via the always-bundled notifications.setBadge handler — iOS sets the
+  // springboard badge; Android is an honest no-op (launchers own badges) → ios:true / android:false.
+  { name: 'app', core: true, group: 'system', capabilities: { app: 'native', browser: 'native', badge: { ios: true, android: false } } },
 
   // ── opt-in: permission / dependency / weight-bearing ───────────────────
   // POST_NOTIFICATIONS / VIBRATE / USE_BIOMETRIC etc. are in the template's baseline manifest already.

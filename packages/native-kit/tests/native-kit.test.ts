@@ -135,6 +135,61 @@ describe('Keyboard', () => {
   });
 });
 
+describe('App badge', () => {
+  test('capability reads the badge flag; badge(n) reuses the native notifications.setBadge path', async () => {
+    const calls: Array<[string, unknown]> = [];
+    const kit = new NativeKit({
+      adapters: [fakeAdapter({
+        handshake: async () => ({ ...HS, capabilities: { badge: 'native' } }),
+        invoke: async <T,>(m: string, p?: unknown) => { calls.push([m, p]); return undefined as T; },
+      })],
+    });
+    await kit.ready();
+    expect(kit.app.badgeCapability).toBe('native');
+
+    await kit.app.badge(3);
+    await kit.app.badge(0);
+    // DRY: the convenience wrapper rides the proven setBadge handler — no new native surface.
+    expect(calls).toEqual([['notifications.setBadge', { count: 3 }], ['notifications.setBadge', { count: 0 }]]);
+  });
+
+  function stubWebEnv(navOverrides: Record<string, unknown>) {
+    (globalThis as any).window = { Notification: function () {} };
+    (globalThis as any).navigator = { ...navOverrides };
+    (globalThis as any).screen = {};
+    (globalThis as any).location = { hostname: 'app.test' };
+    (globalThis as any).document = { title: 'Test' };
+  }
+  function clearWebEnv() {
+    for (const k of ['window', 'navigator', 'screen', 'location', 'document']) delete (globalThis as any)[k];
+  }
+
+  test('web: capability=web + badge(n) calls the Badging API when present', async () => {
+    const { WebAdapter } = await import('../src/core/web-adapter');
+    const badged: number[] = [];
+    stubWebEnv({ setAppBadge: async (n: number) => { badged.push(n); } });
+    try {
+      const hs = await new WebAdapter().handshake();
+      expect(hs.capabilities.badge).toBe('web');
+      await new WebAdapter().invoke('notifications.setBadge', { count: 5 });
+      expect(badged).toEqual([5]);
+    } finally {
+      clearWebEnv();
+    }
+  });
+
+  test('web: capability=none when the Badging API is absent', async () => {
+    const { WebAdapter } = await import('../src/core/web-adapter');
+    stubWebEnv({}); // no setAppBadge
+    try {
+      const hs = await new WebAdapter().handshake();
+      expect(hs.capabilities.badge).toBe('none');
+    } finally {
+      clearWebEnv();
+    }
+  });
+});
+
 describe('Billing — swappable validator seam', () => {
   const NATIVE_ENTS = [{ productId: 'pro_monthly', active: true }];
 
