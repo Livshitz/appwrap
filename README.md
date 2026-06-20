@@ -173,6 +173,7 @@ await kit.photos.pick();
 await kit.network.status();
 await kit.ui.safeArea(); await kit.ui.setBrightness(0.5); await kit.ui.keepAwake(true);
 await kit.screen.orientation.lock('landscape');   // pin orientation; .unlock() to free; .onChange(cb)
+kit.keyboard.onShow((e) => …e.height);             // lift content above the keyboard; .onHide(cb); .hide()
 await kit.ui.alert({ message: 'Hi' });            // native dialogs: alert/confirm/action
 await kit.ui.action({ options: ['A', 'B'] });     // → chosen index | null
 kit.ui.syncThemeColor();                          // <meta name=theme-color> → native chrome
@@ -393,9 +394,9 @@ bun test packages/                                  # kit unit tests
 ## Status / roadmap
 
 - [x] kit core + web adapter + appwrap adapter
-- [x] iOS shell — 25 domains: haptics, share (text + files), storage (kv + secure/Keychain), toast,
+- [x] iOS shell — 26 domains: haptics, share (text + files), storage (kv + secure/Keychain), toast,
       status bar, device, clipboard, notifications (+badge), biometrics, geolocation (current + watch),
-      photos, network, screen (safe-area/brightness/keep-awake/orientation-lock), dialogs (alert/
+      photos, network, screen (safe-area/brightness/keep-awake/orientation-lock), keyboard (show/hide+height), dialogs (alert/
       confirm/action), StoreKit review, theme-color sync, motion sensors, contacts picker, calendar,
       camera capture, app (openUrl/openSettings), in-app browser (SFSafariViewController),
       billing (StoreKit 1 IAP/subscriptions — pluggable validator: RevenueCat/IAPHUB/custom;

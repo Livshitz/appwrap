@@ -381,6 +381,18 @@ async function main() {
   ]);
   kit.screen.orientation.onChange((o) => log(`orientation → ${o}`));
 
+  // Keyboard — focus the input to raise it; the height lands in the log, "hide" dismisses it.
+  const kbTile = tile('Keyboard', kit.keyboard.capability, [
+    ['hide', () => kit.keyboard.hide()],
+  ]);
+  const kbInput = document.createElement('input');
+  kbInput.type = 'text';
+  kbInput.placeholder = 'tap to raise the keyboard';
+  kbInput.style.cssText = 'width:100%;margin-top:8px;padding:8px;font:inherit;box-sizing:border-box';
+  kbTile.appendChild(kbInput);
+  kit.keyboard.onShow((e) => log(`keyboard show → ${e.height}px`));
+  kit.keyboard.onHide(() => log('keyboard hide'));
+
   tile('Dialogs', kit.ui.dialogsCapability, [
     ['alert', () => kit.ui.alert({ title: 'AppWrap', message: 'Native alert via the kit' })],
     ['confirm', () => kit.ui.confirm({ title: 'AppWrap', message: 'Proceed with the demo?' })],

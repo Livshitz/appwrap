@@ -54,6 +54,7 @@ export class WebAdapter implements NativeKitAdapter {
       photos: 'web',
       network: 'web',
       screen: 'wakeLock' in n ? 'web' : 'none',
+      keyboard: (window as any).visualViewport ? 'web' : 'none', // VisualViewport resize ≈ keyboard show/hide
       dialogs: 'web',
       reviews: 'none',
       themeColor: 'web', // the browser honors <meta name="theme-color"> itself
@@ -179,6 +180,11 @@ export class WebAdapter implements NativeKitAdapter {
         return undefined as T;
       case 'screen.orientation.current':
         return (((screen as any)?.orientation?.type ?? '').startsWith('landscape') ? 'landscape' : 'portrait') as T;
+
+      case 'keyboard.hide':
+        // No programmatic IME on web — blurring the focused field dismisses it.
+        (document.activeElement as HTMLElement | null)?.blur?.();
+        return undefined as T;
 
       case 'reviews.requestReview':
         throw new KitError('UNSUPPORTED', 'No in-app review prompt on web');
@@ -370,6 +376,22 @@ export class WebAdapter implements NativeKitAdapter {
       const fire = () => cb(String(so.type ?? '').startsWith('landscape') ? 'landscape' : 'portrait');
       so.addEventListener('change', fire);
       return () => so.removeEventListener('change', fire);
+    }
+    if (event === 'keyboard.show' || event === 'keyboard.hide') {
+      const vv = (window as any).visualViewport;
+      if (!vv) return () => {};
+      let shown = false;
+      const onResize = () => {
+        // The keyboard shrinks the visual viewport; the hidden band ≈ its height.
+        const height = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+        const nowShown = height > 120; // threshold filters URL-bar/toolbar resizes
+        if (nowShown === shown) return;
+        shown = nowShown;
+        if (event === 'keyboard.show' && nowShown) cb({ height: Math.round(height) });
+        if (event === 'keyboard.hide' && !nowShown) cb(undefined);
+      };
+      vv.addEventListener('resize', onResize);
+      return () => vv.removeEventListener('resize', onResize);
     }
     if (event === 'app.pause' || event === 'app.resume') {
       const handler = () => {

@@ -73,7 +73,7 @@ export const MODULES: ModuleManifest[] = [
   { name: 'device', core: true, group: 'extended', capabilities: { device: 'native' } },
   { name: 'clipboard', core: true, group: 'extended', capabilities: { clipboard: 'native' } },
   { name: 'network', core: true, group: 'extended', capabilities: { network: 'native' } },
-  { name: 'screen', core: true, group: 'extended', capabilities: { screen: 'native', dialogs: 'native', orientation: 'native' } },
+  { name: 'screen', core: true, group: 'extended', capabilities: { screen: 'native', dialogs: 'native', orientation: 'native', keyboard: 'native' } },
   { name: 'app', core: true, group: 'system', capabilities: { app: 'native', browser: 'native' } },
 
   // ── opt-in: permission / dependency / weight-bearing ───────────────────

@@ -62,6 +62,79 @@ describe('NativeKit core', () => {
   });
 });
 
+describe('Keyboard', () => {
+  test('hide() routes to keyboard.hide; onShow/onHide forward the payload', async () => {
+    const calls: string[] = [];
+    const handlers = new Map<string, (p: unknown) => void>();
+    const kit = new NativeKit({
+      adapters: [fakeAdapter({
+        handshake: async () => ({ ...HS, capabilities: { keyboard: 'native' } }),
+        invoke: async <T,>(m: string) => { calls.push(m); return undefined as T; },
+        on: (e, cb) => { handlers.set(e, cb); return () => {}; },
+      })],
+    });
+    await kit.ready();
+    expect(kit.keyboard.capability).toBe('native');
+
+    await kit.keyboard.hide();
+    expect(calls).toEqual(['keyboard.hide']);
+
+    const shows: unknown[] = [];
+    let hidden = 0;
+    kit.keyboard.onShow((e) => shows.push(e));
+    kit.keyboard.onHide(() => hidden++);
+    handlers.get('keyboard.show')!({ height: 291 });
+    handlers.get('keyboard.hide')!(undefined);
+    expect(shows).toEqual([{ height: 291 }]);
+    expect(hidden).toBe(1);
+  });
+
+  test('web keyboard.hide blurs the focused element', async () => {
+    const { WebAdapter } = await import('../src/core/web-adapter');
+    let blurred = false;
+    (globalThis as any).document = { activeElement: { blur: () => { blurred = true; } } };
+    try {
+      await new WebAdapter().invoke('keyboard.hide');
+      expect(blurred).toBe(true);
+    } finally {
+      delete (globalThis as any).document;
+    }
+  });
+
+  test('web VisualViewport heuristic: fires show(height) once, then hide — no double-fire, ignores sub-threshold', async () => {
+    const { WebAdapter } = await import('../src/core/web-adapter');
+    const handlers = new Set<() => void>(); // real addEventListener stacks listeners — one per subscription
+    const fire = () => handlers.forEach((h) => h());
+    const vv = {
+      height: 800,
+      offsetTop: 0,
+      addEventListener: (_e: string, cb: () => void) => { handlers.add(cb); },
+      removeEventListener: (_e: string, cb: () => void) => { handlers.delete(cb); },
+    };
+    (globalThis as any).window = { innerHeight: 800, visualViewport: vv };
+    try {
+      const web = new WebAdapter();
+      const shows: Array<{ height: number }> = [];
+      let hides = 0;
+      web.on('keyboard.show', (p) => shows.push(p as { height: number }));
+      web.on('keyboard.hide', () => hides++);
+
+      vv.height = 750; fire();              // 50px < 120 threshold → toolbar, NOT keyboard
+      expect(shows.length).toBe(0);
+
+      vv.height = 500; fire();              // 300px hidden → keyboard up
+      vv.height = 480; fire();              // still up — must NOT re-fire show
+      expect(shows).toEqual([{ height: 300 }]);
+      expect(hides).toBe(0);
+
+      vv.height = 800; fire();              // dismissed
+      expect(hides).toBe(1);
+    } finally {
+      delete (globalThis as any).window;
+    }
+  });
+});
+
 describe('Billing — swappable validator seam', () => {
   const NATIVE_ENTS = [{ productId: 'pro_monthly', active: true }];
 

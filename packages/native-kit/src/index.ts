@@ -22,6 +22,7 @@ export type {
 export type { ImpactStyle, NotifyType } from './modules/haptics';
 export type { SharePayload, ShareFile } from './modules/share';
 export type { Orientation, OrientationLock } from './modules/screen';
+export type { KeyboardInfo } from './modules/keyboard';
 export type { DeviceInfo } from './modules/device';
 export type { ScheduleOptions } from './modules/notifications';
 export type { PushMessage, PushPlatform, PushToken } from './modules/push';

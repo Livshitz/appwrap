@@ -12,6 +12,7 @@ import { DeviceModule } from '../modules/device';
 import { GeoModule } from '../modules/geo';
 import { HapticsModule } from '../modules/haptics';
 import { HealthModule } from '../modules/health';
+import { KeyboardModule } from '../modules/keyboard';
 import { LifecycleModule } from '../modules/lifecycle';
 import { MediaModule } from '../modules/media';
 import { MotionModule } from '../modules/motion';
@@ -70,6 +71,7 @@ export class NativeKit {
   public readonly haptics = new HapticsModule(this);
   public readonly share = new ShareModule(this);
   public readonly screen = new ScreenModule(this);
+  public readonly keyboard = new KeyboardModule(this);
   public readonly storage = new StorageModule(this);
   public readonly toast = new ToastModule(this);
   public readonly ui = new UiModule(this);
