@@ -37,6 +37,7 @@ export type { UpdateStatus, UpdatesOptions } from './modules/updates';
 export type { PickedContact } from './modules/contacts';
 export type { ScanFormat, ScanOptions, ScanResult, ScanCancelled } from './modules/scanner';
 export { isScanResult } from './modules/scanner';
+export type { SpeechVoice, SpeakOptions, ListenOptions, SpeechPartial } from './modules/speech';
 export type { CalendarEventOptions } from './modules/calendar';
 export type { BrowserOptions } from './modules/browser';
 export type { OAuthAuthorizeParams, OAuthResult } from './modules/oauth';

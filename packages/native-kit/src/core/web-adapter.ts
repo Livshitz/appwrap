@@ -40,6 +40,8 @@ export class WebAdapter implements NativeKitAdapter {
   private motionHandler: ((e: DeviceMotionEvent) => void) | null = null;
   /** Tear-down for an in-progress scanner.scan loop (stops the camera, removes the overlay). */
   private scanCancel: (() => void) | null = null;
+  /** Stop an in-progress speech.listen session (resolves it with the best transcript so far). */
+  private listenStop: (() => void) | null = null;
 
   detect(): boolean {
     return typeof window !== 'undefined';
@@ -79,6 +81,13 @@ export class WebAdapter implements NativeKitAdapter {
       media: (navigator as any).mediaDevices?.getUserMedia ? 'web' : 'none',
       // BarcodeDetector (Chrome/Android) decodes; needs a getUserMedia stream to feed it. Both → 'web'.
       scanner: typeof (window as any).BarcodeDetector !== 'undefined' && (navigator as any).mediaDevices?.getUserMedia ? 'web' : 'none',
+      // TTS: SpeechSynthesis API (broad support). STT: SpeechRecognition (Chrome/webkit only).
+      speech: typeof (window as any).speechSynthesis !== 'undefined' ? 'web' : 'none',
+      speechRecognition:
+        typeof (window as any).SpeechRecognition !== 'undefined' ||
+        typeof (window as any).webkitSpeechRecognition !== 'undefined'
+          ? 'web'
+          : 'none',
       app: 'web', // openUrl via window.open; openSettings unsupported
       browser: 'web', // new tab/window
       billing: 'none', // no IAP in a plain browser — wire a web checkout yourself
@@ -331,6 +340,19 @@ export class WebAdapter implements NativeKitAdapter {
         this.scanCancel?.();
         return undefined as T;
 
+      case 'speech.speak':
+        return this.speak(String(p.text ?? ''), p) as Promise<T>;
+      case 'speech.stop':
+        (window as any).speechSynthesis?.cancel?.();
+        return undefined as T;
+      case 'speech.voices':
+        return this.listVoices() as Promise<T>;
+      case 'speech.listen':
+        return this.listen(p) as Promise<T>;
+      case 'speech.stopListening':
+        this.listenStop?.();
+        return undefined as T;
+
       case 'photos.pick':
         return this.pickImageFile(false, !!p.dataUrl, p.maxSize) as Promise<T>;
       case 'camera.capture':
@@ -544,6 +566,88 @@ export class WebAdapter implements NativeKitAdapter {
         teardown();
         reject(new KitError(e?.name === 'NotAllowedError' ? 'DENIED' : 'NATIVE_ERROR', e?.message ?? 'scan failed'));
       }
+    });
+  }
+
+  // ── speech (Web Speech API) ─────────────────────────────────────────
+
+  /** Speak via SpeechSynthesis; resolve when the utterance ends (or rejects on synth error). */
+  private speak(text: string, opts: Record<string, any>): Promise<void> {
+    const synth = (window as any).speechSynthesis;
+    if (!synth) throw new KitError('UNSUPPORTED', 'SpeechSynthesis unavailable');
+    return new Promise((resolve, reject) => {
+      const u = new (window as any).SpeechSynthesisUtterance(text);
+      if (opts.lang) u.lang = opts.lang;
+      if (opts.rate != null) u.rate = opts.rate;
+      if (opts.pitch != null) u.pitch = opts.pitch;
+      if (opts.voice) {
+        const v = synth.getVoices().find((vc: any) => vc.voiceURI === opts.voice || vc.name === opts.voice);
+        if (v) u.voice = v;
+      }
+      u.onend = () => resolve();
+      u.onerror = (e: any) => reject(new KitError('NATIVE_ERROR', e?.error ?? 'speech synthesis failed'));
+      synth.speak(u);
+    });
+  }
+
+  /** List synthesizer voices, awaiting the async `voiceschanged` event when the list is empty. */
+  private listVoices(): Promise<Array<{ id: string; name: string; lang: string }>> {
+    const synth = (window as any).speechSynthesis;
+    if (!synth) throw new KitError('UNSUPPORTED', 'SpeechSynthesis unavailable');
+    const map = (vs: any[]) => vs.map((v) => ({ id: v.voiceURI ?? v.name, name: v.name, lang: v.lang }));
+    const ready = synth.getVoices();
+    if (ready.length) return Promise.resolve(map(ready));
+    // Chrome populates voices asynchronously — wait once for voiceschanged, with a short fallback.
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        resolve(map(synth.getVoices()));
+      };
+      synth.addEventListener?.('voiceschanged', done, { once: true });
+      setTimeout(done, 1000);
+    });
+  }
+
+  /** Capture the mic via SpeechRecognition; resolve the FINAL transcript, stream partials. */
+  private listen(opts: Record<string, any>): Promise<string> {
+    const Rec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!Rec) throw new KitError('UNSUPPORTED', 'SpeechRecognition unavailable (Chrome only)');
+    return new Promise((resolve, reject) => {
+      const rec = new Rec();
+      if (opts.lang) rec.lang = opts.lang;
+      rec.interimResults = !!opts.partial;
+      rec.continuous = false;
+      let best = '';
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (this.listenStop === stop) this.listenStop = null;
+        resolve(best);
+      };
+      const stop = () => { try { rec.stop(); } catch { /* already stopped */ } };
+      this.listenStop = stop;
+      rec.onresult = (e: any) => {
+        let interim = '';
+        let finalText = '';
+        for (let i = 0; i < e.results.length; i++) {
+          const t = e.results[i][0]?.transcript ?? '';
+          if (e.results[i].isFinal) finalText += t;
+          else interim += t;
+        }
+        best = (finalText || interim).trim();
+        if (opts.partial && interim) this.emit('speech.partial', { transcript: interim.trim() });
+      };
+      rec.onerror = (e: any) => {
+        if (settled) return;
+        settled = true;
+        if (this.listenStop === stop) this.listenStop = null;
+        reject(new KitError(e?.error === 'not-allowed' ? 'DENIED' : 'NATIVE_ERROR', e?.error ?? 'recognition failed'));
+      };
+      rec.onend = finish; // fires after stop() or natural end → resolve with best-so-far
+      rec.start();
     });
   }
 

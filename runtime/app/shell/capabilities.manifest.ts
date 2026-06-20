@@ -170,6 +170,25 @@ export const MODULES: ModuleManifest[] = [
     },
   },
 
+  // ── speech (TTS + STT) — opt-in module; ONE coherent kit.speech, TWO honest capabilities ──
+  // ONE module (not split TTS-core / STT-opt-in): TTS-only apps are rare and a split fractures
+  // `kit.speech` across tiers. The module declares the STT perms (mic + speech-recognition); the
+  // CLI only stamps them when `speech` is active, and TTS (`speak`/`voices`) rides along perm-free.
+  // It advertises TWO handshake caps so the kit gates each concern honestly:
+  //   `speech`            → TTS (synthesis), always native on a shell.
+  //   `speechRecognition` → STT (transcription), always native on a shell.
+  // iOS: AVSpeechSynthesizer (TTS, no dep) + SFSpeechRecognizer/AVAudioEngine (STT). Android:
+  // TextToSpeech + SpeechRecognizer — both plain Java → NO kotlin flag, NO gradle dep.
+  {
+    name: 'speech', group: 'speech',
+    capabilities: { speech: 'native', speechRecognition: 'native' },
+    ios: { permissions: [
+      { key: 'NSSpeechRecognitionUsageDescription', domain: 'speechRecognition', defaultUsage: 'Transcribe your speech to text.' },
+      { key: 'NSMicrophoneUsageDescription', domain: 'microphone', defaultUsage: 'Listen to your voice for speech-to-text.' },
+    ] },
+    android: { permissions: ['android.permission.RECORD_AUDIO'] },
+  },
+
   // ── health (steps) — opt-in heavy module; FG live + BG via OS step store ──
   {
     name: 'health', group: 'health',
@@ -220,7 +239,7 @@ export const MODULES: ModuleManifest[] = [
 
 /** Opt-in registration groups that own their own NS handler file (strippable when inactive). Core
  * groups (core/extended/parity/system/media/billing) are always bundled; only these are CLI-gated. */
-export const OPTIONAL_GROUPS = ['health', 'oauth', 'scanner'] as const;
+export const OPTIONAL_GROUPS = ['health', 'oauth', 'scanner', 'speech'] as const;
 
 /** Resolve the active capability map for the handshake from a set of active capability names. */
 export function buildCapabilityMap(

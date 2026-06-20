@@ -370,6 +370,146 @@ describe('Scanner', () => {
   });
 });
 
+describe('Speech', () => {
+  test('TTS + STT calls route to namespaced speech.* with options merged in', async () => {
+    const calls: Array<[string, unknown]> = [];
+    const kit = new NativeKit({
+      adapters: [fakeAdapter({
+        handshake: async () => ({ ...HS, capabilities: { speech: 'native', speechRecognition: 'native' } }),
+        invoke: async <T,>(m: string, p?: unknown) => { calls.push([m, p]); return (m === 'speech.listen' ? 'hello world' : []) as unknown as T; },
+      })],
+    });
+    await kit.ready();
+    expect(kit.speech.capability).toBe('native');
+    expect(kit.speech.recognitionCapability).toBe('native');
+
+    await kit.speech.speak('hi there', { lang: 'en-US', rate: 1.2 });
+    await kit.speech.stop();
+    await kit.speech.voices();
+    const transcript = await kit.speech.listen({ lang: 'en-US', partial: true });
+    await kit.speech.stopListening();
+
+    expect(transcript).toBe('hello world');
+    expect(calls).toEqual([
+      ['speech.speak', { text: 'hi there', lang: 'en-US', rate: 1.2 }],
+      ['speech.stop', undefined],
+      ['speech.voices', undefined],
+      ['speech.listen', { lang: 'en-US', partial: true }],
+      ['speech.stopListening', undefined],
+    ]);
+  });
+
+  test('onPartial forwards the interim transcript payload', async () => {
+    const handlers = new Map<string, (p: unknown) => void>();
+    const kit = new NativeKit({
+      adapters: [fakeAdapter({
+        handshake: async () => ({ ...HS, capabilities: { speech: 'native', speechRecognition: 'native' } }),
+        on: (e, cb) => { handlers.set(e, cb); return () => {}; },
+      })],
+    });
+    await kit.ready();
+    const partials: string[] = [];
+    kit.speech.onPartial((p) => partials.push(p.transcript));
+    handlers.get('speech.partial')!({ transcript: 'hel' });
+    handlers.get('speech.partial')!({ transcript: 'hello' });
+    expect(partials).toEqual(['hel', 'hello']);
+  });
+
+  test('web: TTS cap gates on speechSynthesis, STT cap gates on SpeechRecognition presence', async () => {
+    const { WebAdapter } = await import('../src/core/web-adapter');
+    (globalThis as any).navigator = {};
+    (globalThis as any).screen = {};
+    (globalThis as any).location = { hostname: 'x' };
+    (globalThis as any).document = { title: 't' };
+    try {
+      // Both present
+      (globalThis as any).window = { speechSynthesis: {}, webkitSpeechRecognition: class {} };
+      let caps = (await new WebAdapter().handshake()).capabilities;
+      expect(caps.speech).toBe('web');
+      expect(caps.speechRecognition).toBe('web');
+
+      // TTS only (Safari/Firefox — no SpeechRecognition)
+      (globalThis as any).window = { speechSynthesis: {} };
+      caps = (await new WebAdapter().handshake()).capabilities;
+      expect(caps.speech).toBe('web');
+      expect(caps.speechRecognition).toBe('none');
+
+      // Neither
+      (globalThis as any).window = {};
+      caps = (await new WebAdapter().handshake()).capabilities;
+      expect(caps.speech).toBe('none');
+      expect(caps.speechRecognition).toBe('none');
+    } finally {
+      for (const k of ['window', 'navigator', 'screen', 'location', 'document']) delete (globalThis as any)[k];
+    }
+  });
+
+  test('web: speech.listen throws UNSUPPORTED when SpeechRecognition is absent (honest)', async () => {
+    const { WebAdapter } = await import('../src/core/web-adapter');
+    (globalThis as any).window = {}; // no SpeechRecognition
+    try {
+      await expect(new WebAdapter().invoke('speech.listen', {})).rejects.toBeInstanceOf(KitError);
+    } finally {
+      delete (globalThis as any).window;
+    }
+  });
+
+  test('web: speak resolves on utterance end and applies lang/rate', async () => {
+    const { WebAdapter } = await import('../src/core/web-adapter');
+    const spoken: any[] = [];
+    class FakeUtterance {
+      lang = ''; rate = 1; pitch = 1; voice: any = null;
+      onend: any = null; onerror: any = null;
+      constructor(public text: string) {}
+    }
+    (globalThis as any).window = {
+      SpeechSynthesisUtterance: FakeUtterance,
+      speechSynthesis: {
+        getVoices: () => [],
+        speak: (u: any) => { spoken.push(u); Promise.resolve().then(() => u.onend?.()); },
+      },
+    };
+    try {
+      await new WebAdapter().invoke('speech.speak', { text: 'hi', lang: 'en-GB', rate: 1.5 });
+      expect(spoken.length).toBe(1);
+      expect(spoken[0].text).toBe('hi');
+      expect(spoken[0].lang).toBe('en-GB');
+      expect(spoken[0].rate).toBe(1.5);
+    } finally {
+      delete (globalThis as any).window;
+    }
+  });
+
+  test('web: listen streams a partial then resolves the final transcript on end', async () => {
+    const { WebAdapter } = await import('../src/core/web-adapter');
+    let inst: any = null;
+    class FakeRecognition {
+      lang = ''; interimResults = false; continuous = false;
+      onresult: any = null; onerror: any = null; onend: any = null;
+      constructor() { inst = this; }
+      start() {
+        // interim → final → end (mirrors the Web Speech event sequence)
+        this.onresult({ results: [Object.assign([{ transcript: 'hel' }], { isFinal: false })] });
+        this.onresult({ results: [Object.assign([{ transcript: 'hello world' }], { isFinal: true })] });
+        this.onend();
+      }
+      stop() { this.onend?.(); }
+    }
+    (globalThis as any).window = { webkitSpeechRecognition: FakeRecognition };
+    try {
+      const web = new WebAdapter();
+      const partials: string[] = [];
+      web.on('speech.partial', (p: any) => partials.push(p.transcript));
+      const final = await web.invoke('speech.listen', { partial: true });
+      expect(final).toBe('hello world');
+      expect(partials).toEqual(['hel']); // interim emitted, final not double-counted as partial
+      expect(inst.interimResults).toBe(true);
+    } finally {
+      delete (globalThis as any).window;
+    }
+  });
+});
+
 describe('App badge', () => {
   test('capability reads the badge flag; badge(n) reuses the native notifications.setBadge path', async () => {
     const calls: Array<[string, unknown]> = [];

@@ -173,6 +173,7 @@ const OPTIONAL_GROUP_HANDLERS: Record<string, { file: string; fn: string }> = {
   health: { file: './handlers-health', fn: 'registerHealthHandlers' },
   oauth: { file: './handlers-oauth', fn: 'registerOAuthHandlers' },
   scanner: { file: './handlers-scanner', fn: 'registerScannerHandlers' },
+  speech: { file: './handlers-speech', fn: 'registerSpeechHandlers' },
 };
 
 /** Generate the two composition artifacts in the wrapper: the active capability list (drives the

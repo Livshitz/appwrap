@@ -178,6 +178,8 @@ await kit.app.badge(3); await kit.app.badge(0);    // app-icon badge (iOS spring
 await kit.fs.write('logs/app.txt', 'hi');          // app-sandbox files: read/write/append/list/stat/mkdir/delete/getUri ({dir:'documents'|'data'|'cache'})
 const picked = await kit.fs.pickFile();            // system document picker → [{ name, mimeType, size, base64 }]
 const code = await kit.scanner.scan();             // camera barcode/QR (opt-in `scanner` module) → { value, format } | { cancelled:true } (web: BarcodeDetector where present, else UNSUPPORTED)
+await kit.speech.speak('Hello');                   // text-to-speech (opt-in `speech` module); .voices()/.stop(); kit.speech.capability
+const said = await kit.speech.listen({ partial: true }); // speech-to-text → final transcript; kit.speech.onPartial(cb); .stopListening(); kit.speech.recognitionCapability
 await kit.ui.alert({ message: 'Hi' });            // native dialogs: alert/confirm/action
 await kit.ui.action({ options: ['A', 'B'] });     // → chosen index | null
 kit.ui.syncThemeColor();                          // <meta name=theme-color> → native chrome
@@ -398,12 +400,13 @@ bun test packages/                                  # kit unit tests
 ## Status / roadmap
 
 - [x] kit core + web adapter + appwrap adapter
-- [x] iOS shell — 28 domains: haptics, share (text + files), storage (kv + secure/Keychain),
+- [x] iOS shell — 29 domains: haptics, share (text + files), storage (kv + secure/Keychain),
       fs (file I/O + document picker), toast,
       status bar, device, clipboard, notifications (+badge), biometrics, geolocation (current + watch),
       photos, network, screen (safe-area/brightness/keep-awake/orientation-lock), keyboard (show/hide+height), dialogs (alert/
       confirm/action), StoreKit review, theme-color sync, motion sensors, contacts picker, calendar,
       camera capture, scanner (barcode/QR via AVCaptureMetadataOutput — opt-in module),
+      speech (TTS + STT via AVSpeechSynthesizer/SFSpeechRecognizer — opt-in module),
       app (openUrl/openSettings/badge), in-app browser (SFSafariViewController),
       billing (StoreKit 1 IAP/subscriptions — pluggable validator: RevenueCat/IAPHUB/custom;
       a real purchase needs an Xcode-run `.storekit` config or App Store Connect sandbox products)
@@ -421,6 +424,14 @@ bun test packages/                                  # kit unit tests
       permission (deduped). Web maps to `BarcodeDetector` where present (Chrome/Android `web`), else
       honest `none` + `UNSUPPORTED` (no heavy JS decoder). Compiles clean; camera-session lifecycle is
       device-gated (not yet device-verified)
+- [x] `speech` (TTS + STT) — opt-in module, ONE `kit.speech` with TWO honest capabilities:
+      `capability` (synthesis) + `recognitionCapability` (transcription). iOS `AVSpeechSynthesizer` +
+      `SFSpeechRecognizer`/`AVAudioEngine`; Android `TextToSpeech` + `SpeechRecognizer` (plain Java —
+      no Kotlin flag, no gradle dep). `kit.speech.speak/stop/voices`; `listen()` resolves the final
+      transcript with `onPartial` interim streaming, `stopListening()` resolves with best-so-far. STT
+      declares mic + speech-recognition perms (TTS rides along perm-free). Web: TTS via
+      `speechSynthesis`, STT via `SpeechRecognition` (Chrome) else `none` + `UNSUPPORTED`. Compiles
+      clean; the mic-tap/recognizer lifecycle is device-gated (not yet device-verified)
 - [x] billing is cross-platform on ONE API: the same `kit.billing.*` calls drive the native
       store on a shell and a pluggable web checkout provider (`HttpBillingProvider` → Stripe/
       Paddle/custom) in the browser — verified on web in `examples/hello-pwa` (badge `web`,

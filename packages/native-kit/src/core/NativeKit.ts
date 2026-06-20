@@ -1,6 +1,6 @@
 import { AppwrapAdapter } from './appwrap-adapter';
 import { WebAdapter } from './web-adapter';
-import { Capability, Handshake, InvokeOptions, KIT_PROTOCOL, KitError, NativeKitAdapter, Unsubscribe } from './types';
+import { Capability, Handshake, InvokeOptions, KIT_PROTOCOL, KitError, NativeKitAdapter, Platform, Unsubscribe } from './types';
 import { AppModule } from '../modules/app';
 import { BillingModule } from '../modules/billing/billing';
 import { BiometricsModule } from '../modules/biometrics';
@@ -26,6 +26,7 @@ import { ReviewsModule } from '../modules/reviews';
 import { ScannerModule } from '../modules/scanner';
 import { ScreenModule } from '../modules/screen';
 import { ShareModule } from '../modules/share';
+import { SpeechModule } from '../modules/speech';
 import { StorageModule } from '../modules/storage';
 import { ToastModule } from '../modules/toast';
 import { UiModule } from '../modules/ui';
@@ -93,6 +94,7 @@ export class NativeKit {
   public readonly media = new MediaModule(this);
   public readonly contacts = new ContactsModule(this);
   public readonly scanner = new ScannerModule(this);
+  public readonly speech = new SpeechModule(this);
   public readonly calendar = new CalendarModule(this);
   public readonly app = new AppModule(this);
   public readonly browser = new BrowserModule(this);

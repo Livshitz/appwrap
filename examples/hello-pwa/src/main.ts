@@ -368,6 +368,20 @@ async function main() {
     }],
   ]);
 
+  // Speech: TTS badge on the tile; STT (recognitionCapability) noted on its own button.
+  kit.speech.onPartial((p) => log(`Speech/partial → ${p.transcript}`));
+  tile(`Speech (STT ${kit.speech.recognitionCapability})`, kit.speech.capability, [
+    ['speak', async () => { await kit.speech.speak('Hello from AppWrap'); return 'spoken'; }],
+    ['stop', () => kit.speech.stop()],
+    ['voices', async () => `${(await kit.speech.voices()).length} voices`],
+    ['tap to listen', async () => {
+      if (kit.speech.recognitionCapability === 'none') return 'STT unsupported here';
+      const transcript = await kit.speech.listen({ partial: true });
+      return `heard: ${transcript.slice(0, 60) || '(nothing)'}`;
+    }],
+    ['stop listening', () => kit.speech.stopListening()],
+  ]);
+
   tile('Network', kit.network.capability, [
     ['status', () => kit.network.status()],
   ]);

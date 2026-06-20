@@ -11,7 +11,7 @@ export default defineConfig({
   urlScheme: 'hellowrap',
   modules: [
     'notifications', 'biometrics', 'geo', 'photos', 'camera', 'media',
-    'motion', 'contacts', 'calendar', 'reviews', 'billing', 'health', 'scanner',
+    'motion', 'contacts', 'calendar', 'reviews', 'billing', 'health', 'scanner', 'speech',
   ],
   permissions: {
     location: 'Demo: show your coordinates in the capability dashboard',
@@ -22,6 +22,7 @@ export default defineConfig({
     microphone: 'Demo: record audio to prove native microphone access',
     contacts: 'Demo: pick a contact to prove native contacts access',
     motion: 'Demo: count your steps',
+    speechRecognition: 'Demo: transcribe your voice in the speech tile',
   },
   teamId: 'YOUR_APPLE_TEAM_ID',
   storekitConfig: 'Products.storekit',
