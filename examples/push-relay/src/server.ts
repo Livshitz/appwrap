@@ -43,16 +43,19 @@ function sendApns(token: string, topic: string, title: string, body: string): Pr
   const host = env('APNS_PROD') === '1' ? 'https://api.push.apple.com' : 'https://api.sandbox.push.apple.com';
   return new Promise((resolve) => {
     const client = http2connect(host);
-    client.on('error', (e: any) => resolve({ status: 0, reason: String(e?.message || e) }));
+    let settled = false;
+    const done = (r: { status: number; id?: string; reason?: string }) => { if (settled) return; settled = true; try { client.close(); } catch {} resolve(r); };
+    client.on('error', (e: any) => done({ status: 0, reason: String(e?.message || e) }));
     const payload = JSON.stringify({ aps: { alert: { title, body }, sound: 'default', badge: 1 } });
     const req = client.request({
       ':method': 'POST', ':path': `/3/device/${token}`,
       authorization: `bearer ${apnsJwtCached()}`, 'apns-topic': topic, 'apns-push-type': 'alert', 'apns-priority': '10',
     });
-    let data = '';
-    req.on('response', (h: any) => resolve({ status: h[':status'], id: h['apns-id'] }));
+    let status = 0, id: string | undefined, data = '';
+    req.on('response', (h: any) => { status = h[':status']; id = h['apns-id']; });
     req.on('data', (c: Buffer) => (data += c));
-    req.on('end', () => { try { client.close(); } catch {} if (data) try { (resolve as any)({ reason: JSON.parse(data).reason }); } catch {} });
+    // Resolve at end so a non-200 surfaces APNs's `reason` (e.g. BadDeviceToken) instead of losing it.
+    req.on('end', () => done({ status, id, reason: data ? (() => { try { return JSON.parse(data).reason; } catch { return data.slice(0, 120); } })() : undefined }));
     req.end(payload);
   });
 }
@@ -95,16 +98,21 @@ Bun.serve({
     if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
     if (url.pathname === '/health') return json({ ok: true, tokens: tokens.size });
 
-    // Register a device token + send it a welcome push.
+    // Register a device token. Apps register on EVERY launch (to keep the latest token), so the welcome
+    // push fires ONLY the first time we see a token — re-registering is just a silent refresh, not a
+    // notification every launch. (In-memory: a relay restart re-welcomes once, fine for a demo.)
     if (url.pathname === '/register' && req.method === 'POST') {
       const { token, platform, topic } = (await req.json().catch(() => ({}))) as any;
       if (!token || (platform !== 'ios' && platform !== 'android')) return json({ error: 'token + platform(ios|android) required' }, 400);
-      tokens.set(`${platform}:${token}`, { token, platform, topic, at: Date.now() });
-      let result: any;
-      if (platform === 'ios') result = await sendApns(token, topic || env('APNS_DEFAULT_TOPIC'), WELCOME.title, WELCOME.body);
-      else result = await sendFcm(token, WELCOME.title, WELCOME.body);
+      const key = `${platform}:${token}`;
+      const isNew = !tokens.has(key);
+      tokens.set(key, { token, platform, topic, at: Date.now() });
+      if (!isNew) return json({ ok: true, sent: false, alreadyRegistered: true, registered: tokens.size });
+      const result = platform === 'ios'
+        ? await sendApns(token, topic || env('APNS_DEFAULT_TOPIC'), WELCOME.title, WELCOME.body)
+        : await sendFcm(token, WELCOME.title, WELCOME.body);
       const ok = result.status === 200;
-      console.log(`[relay] register ${platform} → ${ok ? 'sent' : 'FAILED'} ${JSON.stringify(result)}`);
+      console.log(`[relay] register ${platform} (new) → ${ok ? 'sent welcome' : 'FAILED'} ${JSON.stringify(result)}`);
       return json({ ok, sent: ok, result, registered: tokens.size });
     }
 

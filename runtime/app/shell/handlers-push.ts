@@ -230,8 +230,11 @@ function androidGetToken(): Promise<PushToken> {
       const task = fcm().getToken();
       task.addOnCompleteListener(new OnCompleteListener({
         onComplete(t: any) {
-          if (t.isSuccessful()) resolve({ platform: 'fcm', token: String(t.getResult()) });
-          else reject(Object.assign(new Error('FCM token fetch failed'), { code: 'NATIVE_ERROR' }));
+          if (t.isSuccessful()) {
+            const tok = String(t.getResult());
+            registerTokenWithBackend('android', tok); // parity with iOS onApnsToken
+            resolve({ platform: 'fcm', token: tok });
+          } else reject(Object.assign(new Error('FCM token fetch failed'), { code: 'NATIVE_ERROR' }));
         },
       }));
     } catch (e: any) {

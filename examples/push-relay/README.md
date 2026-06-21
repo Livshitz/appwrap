@@ -10,7 +10,8 @@ app (kit.push.register) ──POST /register {token,platform,topic}──▶ rel
 ```
 
 ## Endpoints
-- `POST /register` `{ token, platform: "ios"|"android", topic? }` → stores the token + sends a welcome push.
+- `POST /register` `{ token, platform: "ios"|"android", topic? }` → stores the token; sends a welcome push
+  the FIRST time a token is seen (apps re-register every launch, so repeats are a silent refresh — no spam).
 - `POST /broadcast` `{ title?, body? }` (Bearer `RELAY_API_KEY`) → pushes every stored token.
 - `GET /health` → `{ ok, tokens }`.
 
