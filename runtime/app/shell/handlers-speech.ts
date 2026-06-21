@@ -144,11 +144,24 @@ function registerIos(): void {
         }
         Utils.dispatchToMainThread(() => {
           try {
-            const locale = params?.lang ? NSLocale.localeWithLocaleIdentifier(String(params.lang)) : NSLocale.currentLocale;
-            recognizer = SFSpeechRecognizer.alloc().initWithLocale(locale);
-            if (!recognizer || !recognizer.isAvailable) {
+            // Pick a locale SFSpeechRecognizer has a model for: try the requested lang, the device
+            // language code, then en-US (always supported) as a last resort. Do NOT gate on
+            // `isAvailable` — it's unreliable SYNCHRONOUSLY right after init (becomes true async via
+            // the availabilityDidChange delegate), so checking it here wrongly rejects a good recognizer
+            // (proven on-device: en-US reported unavailable). Accept any non-nil recognizer; a genuine
+            // failure surfaces in the recognitionTask error callback instead.
+            const tryRec = (id: string) => {
+              try { return SFSpeechRecognizer.alloc().initWithLocale(NSLocale.localeWithLocaleIdentifier(id)) || null; }
+              catch { return null; }
+            };
+            let langCode = 'en';
+            try { langCode = String(NSLocale.currentLocale.languageCode || 'en'); } catch { /* default */ }
+            const tried = params?.lang ? [String(params.lang)] : [langCode, 'en-US'];
+            recognizer = null;
+            for (const id of tried) { recognizer = tryRec(id); if (recognizer) break; }
+            if (!recognizer) {
               const p = listenPending; listenPending = null;
-              p?.reject(err('UNSUPPORTED', 'Speech recognizer unavailable for locale'));
+              p?.reject(err('UNSUPPORTED', `Speech recognizer unavailable (tried: ${tried.join(', ')})`));
               return;
             }
 

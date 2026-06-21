@@ -127,7 +127,10 @@ export function registerExtendedHandlers(): void {
       Utils.dispatchToMainThread(() => {
         UNUserNotificationCenter.currentNotificationCenter().setBadgeCountWithCompletionHandler?.(
           count,
-          () => {}
+          // iOS silently ignores the badge unless notification authorization (incl. .badge) was granted —
+          // the completion's error is the ONLY signal, so DON'T swallow it (else the badge just never
+          // appears with no explanation). Resolve regardless (the JS call itself didn't fail).
+          (error: any) => { if (error) console.warn('[appwrap] setBadge ignored — notifications not authorized?', String(error)); }
         );
         resolve();
       });
