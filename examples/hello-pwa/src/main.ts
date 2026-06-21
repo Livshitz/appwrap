@@ -598,6 +598,19 @@ async function main() {
   };
   log(`build: ${BUILD}`); // build marker — confirms the running bundle is current
 
+  // Headless push-token capture: after the handshake resolves the capability map, auto-register and
+  // log the FULL APNs/FCM token to the console (forwarded via `appwrap logs ios`) so a test push can
+  // be sent without a UI tap. The token isn't a secret (sending still needs the APNs key).
+  kit.ready().then(() => {
+    if (kit.push.capability !== 'native') return; // web / un-provisioned build
+    // The token reaches the relay NATIVELY (appwrap.config push.registrationUrl) — the shell POSTs it,
+    // sidestepping the WKWebView app:// CORS wall — and the relay sends a welcome push. Nothing to do here
+    // but confirm registration fired.
+    kit.push.register()
+      .then((t) => log(`PUSH TOKEN [${t.platform}] ${t.token}`))
+      .catch((e) => log(`push register failed: ${e?.message ?? e}`));
+  });
+
   // Keep native chrome tinted to the page's theme-color meta
   kit.ui.syncThemeColor();
 

@@ -1,4 +1,4 @@
-import { Application, Utils, isAndroid, isIOS } from '@nativescript/core';
+import { Application, Http, Utils, isAndroid, isIOS } from '@nativescript/core';
 import { bridge } from './bridge';
 import { SHELL_CONFIG } from './config';
 
@@ -21,12 +21,32 @@ let cachedToken: string | null = null;
 
 interface PushToken { platform: 'apns' | 'fcm'; token: string; }
 
+/** POST the device token to the app's configured backend NATIVELY (no WKWebView fetch → no app://
+ * cross-origin/CORS wall). The backend stores it + sends pushes. No-op when no URL is configured. */
+function registerTokenWithBackend(platform: 'ios' | 'android', token: string): void {
+  const url = SHELL_CONFIG.pushRegistrationUrl;
+  if (!url) return;
+  // NativeScript Http (NOT the global fetch — unreliable in the NS runtime). Native HTTP, no CORS.
+  // Guarded: never let a backend-register hiccup break token resolution (this runs before resolve()).
+  try {
+    Http.request({
+      url, method: 'POST', headers: { 'Content-Type': 'application/json' },
+      content: JSON.stringify({ token, platform }),
+    })
+      .then((res) => console.log('[push] token registered with backend → ' + res.statusCode))
+      .catch((e: any) => console.log('[push] backend register failed: ' + (e?.message ?? e)));
+  } catch (e: any) {
+    console.log('[push] backend register threw: ' + (e?.message ?? e));
+  }
+}
+
 /** iOS AppDelegate → APNs device token arrived. Resolve any pending register() + cache. */
 export function onApnsToken(hexToken: string): void {
   cachedToken = hexToken;
   // Log the FULL token so it's readable headlessly (`appwrap logs ios`) to send a test push —
   // mirrors the Android FCM boot-log. The token alone isn't a secret (you still need the APNs key).
   console.log('[push] APNs token: ' + hexToken);
+  registerTokenWithBackend('ios', hexToken);
   if (pendingRegister) {
     pendingRegister.resolve({ platform: 'apns', token: hexToken });
     pendingRegister = null;

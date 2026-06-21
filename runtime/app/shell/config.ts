@@ -50,4 +50,8 @@ export const SHELL_CONFIG = {
    * un-provisioned build honestly reports 'none' (and a personal-team iOS build keeps `pushIos:false`). */
   pushIos: false,
   pushAndroid: false,
+  /** Optional backend URL that the shell POSTs the device token to NATIVELY as soon as it's acquired —
+   * `{ token, platform: 'ios'|'android' }`. Native HTTP avoids the WKWebView `app://` cross-origin/CORS
+   * wall, so a token reaches your server without any WebView fetch. Empty = the app handles sending. */
+  pushRegistrationUrl: '',
 };

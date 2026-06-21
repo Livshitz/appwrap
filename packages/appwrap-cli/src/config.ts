@@ -139,6 +139,10 @@ export interface AppwrapConfig {
     apsEnvironment?: 'development' | 'production';
     /** Path (relative to the PWA project) to the Firebase `google-services.json` for Android FCM. */
     googleServicesJson?: string;
+    /** Optional backend URL the shell POSTs the device token to NATIVELY on acquisition (`{token,
+     * platform}`). Native HTTP sidesteps the WKWebView app:// cross-origin wall — the token reaches
+     * your server with no WebView fetch. Your backend stores it + sends pushes (provider-agnostic). */
+    registrationUrl?: string;
   };
 }
 

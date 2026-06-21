@@ -369,6 +369,7 @@ export const SHELL_CONFIG = {
   openNewWindowsInBrowser: ${JSON.stringify(cfg.openNewWindowsInBrowser ?? false)},
   pushIos: ${JSON.stringify(!!cfg.push?.enabled && cfg.push?.ios !== false)},
   pushAndroid: ${JSON.stringify(!!cfg.push?.enabled && cfg.push?.android !== false)},
+  pushRegistrationUrl: ${JSON.stringify(cfg.push?.registrationUrl ?? '')},
 };
 `;
   writeFileSync(join(outDir, 'app/shell/config.ts'), content);
