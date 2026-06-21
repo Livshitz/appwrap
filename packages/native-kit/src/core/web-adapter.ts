@@ -417,6 +417,7 @@ export class WebAdapter implements NativeKitAdapter {
       case 'push.requestPermission':
       case 'push.register':
       case 'push.unregister':
+      case 'push.sendTest':
         throw new KitError('UNSUPPORTED', 'No native remote push on web — use Web Push (VAPID) in your app, or run inside the appwrap shell');
 
       default:

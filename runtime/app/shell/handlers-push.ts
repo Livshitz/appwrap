@@ -166,6 +166,18 @@ export function registerPushHandlers(): void {
     if (isAndroid) return androidDeleteToken();
   });
 
+  // Dev/demo: ask the backend to push THIS device on demand. Goes native (NS Http) → no app:// CORS
+  // wall. Requires push.registrationUrl + a registered token; the backend honors `test:true`.
+  bridge.register('push.sendTest', () => {
+    const url = SHELL_CONFIG.pushRegistrationUrl;
+    if (!url) return Promise.reject(Object.assign(new Error('push.registrationUrl not configured'), { code: 'UNSUPPORTED' }));
+    if (!cachedToken) return Promise.reject(Object.assign(new Error('no device token yet — register first'), { code: 'NOT_READY' }));
+    return Http.request({
+      url, method: 'POST', headers: { 'Content-Type': 'application/json' },
+      content: JSON.stringify({ token: cachedToken, platform: isIOS ? 'ios' : 'android', test: true }),
+    }).then((res) => ({ status: res.statusCode }));
+  });
+
   // Debug: auto-acquire + log the FCM token at boot so it's readable HEADLESSLY (adb logcat / appwrap
   // logs) without a UI tap — the dev loop needs the token to send a test push. Android only (iOS push
   // is off on personal teams); no-op when push isn't configured for this platform.

@@ -581,6 +581,7 @@ async function main() {
   tile('Push', kit.push.capability, [
     ['permission', () => kit.push.permissionStatus()],
     ['register', async () => (await kit.push.register()).token.slice(0, 24) + '…'],
+    ['send me a push', async () => `relay → HTTP ${(await kit.push.sendTest()).status}`],
   ]);
 
   // ── wire the router ────────────────────────────────────────────────

@@ -65,6 +65,13 @@ export class PushModule {
     return this.kit.invoke('push.unregister');
   }
 
+  /** Dev/demo: ask your backend (via `push.registrationUrl`) to push THIS device on demand. The shell
+   *  POSTs the token natively (no WebView CORS) with `test:true`. Resolves `{ status }` (the backend's
+   *  HTTP code). Requires a configured registrationUrl + a registered token. */
+  sendTest(): Promise<{ status: number }> {
+    return this.kit.invoke('push.sendTest', undefined, { timeoutMs: 20_000 });
+  }
+
   /** Foreground message delivery (app open, no tap). */
   onMessage(cb: (m: PushMessage) => void): Unsubscribe {
     return this.kit.on('push.message', (p) => cb(p as PushMessage));

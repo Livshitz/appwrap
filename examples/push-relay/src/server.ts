@@ -102,15 +102,17 @@ Bun.serve({
     // push fires ONLY the first time we see a token — re-registering is just a silent refresh, not a
     // notification every launch. (In-memory: a relay restart re-welcomes once, fine for a demo.)
     if (url.pathname === '/register' && req.method === 'POST') {
-      const { token, platform, topic } = (await req.json().catch(() => ({}))) as any;
+      const { token, platform, topic, test } = (await req.json().catch(() => ({}))) as any;
       if (!token || (platform !== 'ios' && platform !== 'android')) return json({ error: 'token + platform(ios|android) required' }, 400);
       const key = `${platform}:${token}`;
       const isNew = !tokens.has(key);
       tokens.set(key, { token, platform, topic, at: Date.now() });
-      if (!isNew) return json({ ok: true, sent: false, alreadyRegistered: true, registered: tokens.size });
+      // `test:true` (the in-app "send me a push" button) always sends; otherwise welcome-once on first-seen.
+      if (!isNew && !test) return json({ ok: true, sent: false, alreadyRegistered: true, registered: tokens.size });
+      const msg = test ? { title: 'AppWrap test 🔔', body: 'On-demand push from the in-app button.' } : WELCOME;
       const result = platform === 'ios'
-        ? await sendApns(token, topic || env('APNS_DEFAULT_TOPIC'), WELCOME.title, WELCOME.body)
-        : await sendFcm(token, WELCOME.title, WELCOME.body);
+        ? await sendApns(token, topic || env('APNS_DEFAULT_TOPIC'), msg.title, msg.body)
+        : await sendFcm(token, msg.title, msg.body);
       const ok = result.status === 200;
       console.log(`[relay] register ${platform} (new) → ${ok ? 'sent welcome' : 'FAILED'} ${JSON.stringify(result)}`);
       return json({ ok, sent: ok, result, registered: tokens.size });
