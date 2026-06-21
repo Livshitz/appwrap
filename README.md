@@ -167,7 +167,7 @@ await kit.device.info();
 await kit.clipboard.copy('text');
 await kit.notifications.schedule({ title: 'Hi', delaySec: 5 });
 await kit.biometrics.authenticate('Prove it');
-await kit.oauth.authorize({ url: authUrl, callbackScheme: 'myapp' }); // system-browser OAuth (iOS, opt-in `oauth` module) — for providers (Google…) that reject embedded WebViews; → { url } callback to exchange + signInWithCredential
+await kit.oauth.authorize({ url: authUrl, callbackScheme: 'myapp' }); // system-browser OAuth (iOS ASWebAuthenticationSession / Android Chrome Custom Tabs, opt-in `oauth` module) — for providers (Google…) that reject embedded WebViews; redirect returns via the app's urlScheme → { url } callback to exchange + signInWithCredential (user-dismiss → 'CANCELLED')
 await kit.geo.current();
 await kit.photos.pick();
 await kit.network.status();
@@ -183,7 +183,7 @@ const said = await kit.speech.listen({ partial: true }); // speech-to-text → f
 await kit.ui.alert({ message: 'Hi' });            // native dialogs: alert/confirm/action
 await kit.ui.action({ options: ['A', 'B'] });     // → chosen index | null
 kit.ui.syncThemeColor();                          // <meta name=theme-color> → native chrome
-await kit.reviews.requestReview();                // StoreKit in-app review
+await kit.reviews.requestReview();                // in-app review (opt-in `reviews` module): iOS StoreKit · Android Play In-App Review (surfaces only on a Play-track install; sideload/emulator no-ops)
 const stopGeo = await kit.geo.watch((pos) => {}); // streaming position
 const stopMotion = await kit.motion.watch((s) => {}); // accelerometer+gyro ~10Hz
 await kit.contacts.pick();                        // CNContactPicker (no permission needed)
@@ -450,7 +450,8 @@ bun test packages/                                  # kit unit tests
       from marketing version). Release/AAB build path + capabilities→entitlements (push/universal
       links) still open — see `.tmp/tasks/store-readiness.md`, `framework-extensibility.md`
 - [x] Maestro full-capability flow (`examples/hello-pwa/maestro/demo-full.yaml`)
-- [x] Android shell — full parity except reviews (Play In-App Review, deferred): motion
+- [x] Android shell — full parity incl. reviews (Play In-App Review) + oauth (Chrome Custom Tabs,
+      redirect via the urlScheme deep-link path): motion
       (SensorManager), browser (Chrome Custom Tabs), contacts (ACTION_PICK + ContactsContract),
       calendar (CalendarContract insert), camera (MediaStore capture). Transport: prompt() tunnel
       via onJsPrompt; PWA served from `https://appwrap.local` (shouldInterceptRequest, ES modules OK);

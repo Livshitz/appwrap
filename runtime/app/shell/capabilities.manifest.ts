@@ -136,22 +136,33 @@ export const MODULES: ModuleManifest[] = [
     android: { permissions: ['android.permission.READ_CALENDAR', 'android.permission.WRITE_CALENDAR'] },
   },
   {
-    name: 'reviews', group: 'system',
-    capabilities: { reviews: { ios: true, android: false } },
-  },
-  {
     name: 'billing', group: 'billing',
     capabilities: { billing: { ios: true, android: false } },
   },
 
-  // ── oauth — system-browser OAuth (iOS ASWebAuthenticationSession) ──
-  // Opt-in, strippable (own handler file). No permissions/entitlements — ASWebAuthenticationSession
-  // needs none; it only relies on the app's urlScheme so the provider redirect returns to the app.
+  // ── reviews — in-app store review prompt — opt-in, STRIPPABLE (own handler + group) ──
+  // Moved out of the always-bundled parity/system handlers: the Android Play In-App Review path
+  // references `com.google.android.play:review` classes — a gradle dep that must NOT land in builds
+  // without `reviews` (missing-class crash / dead weight). iOS: SKStoreReviewController (no dep).
+  // HONEST LIMIT (Android): the dialog only surfaces for a Play-Store-track install; on a bare
+  // emulator / sideload the API resolves WITHOUT showing UI (documented; same class as billing).
+  {
+    name: 'reviews', group: 'reviews',
+    capabilities: { reviews: { ios: true, android: true } },
+    android: { gradleDeps: ['com.google.android.play:review:2.0.2'] },
+  },
+
+  // ── oauth — system-browser OAuth (iOS ASWebAuthenticationSession / Android Chrome Custom Tabs) ──
+  // Opt-in, strippable (own handler file). iOS: ASWebAuthenticationSession (auto-closes on redirect).
+  // Android: a Chrome Custom Tab — it does NOT auto-close on the provider redirect, so the callback
+  // (`callbackScheme://…`) returns via the app's EXISTING urlScheme deep-link path; the handler hooks
+  // that delivery, matches the scheme, and resolves. androidx.browser is already a baseline dep
+  // (browser.open); declared here too so the module stays self-contained (CLI dedups). No permission.
   // Lets Google et al. complete sign-in they reject inside an embedded WebView (disallowed_useragent).
-  // Android (Custom Tabs + intent callback) is a future addition.
   {
     name: 'oauth', group: 'oauth',
-    capabilities: { oauth: { ios: true, android: false } },
+    capabilities: { oauth: { ios: true, android: true } },
+    android: { gradleDeps: ['androidx.browser:browser:1.8.0'] },
   },
 
   // ── scanner — camera barcode/QR decode — opt-in (camera permission + decoder weight) ──
@@ -239,7 +250,7 @@ export const MODULES: ModuleManifest[] = [
 
 /** Opt-in registration groups that own their own NS handler file (strippable when inactive). Core
  * groups (core/extended/parity/system/media/billing) are always bundled; only these are CLI-gated. */
-export const OPTIONAL_GROUPS = ['health', 'oauth', 'scanner', 'speech'] as const;
+export const OPTIONAL_GROUPS = ['health', 'oauth', 'reviews', 'scanner', 'speech'] as const;
 
 /** Resolve the active capability map for the handshake from a set of active capability names. */
 export function buildCapabilityMap(

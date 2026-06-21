@@ -6,7 +6,7 @@ const err = (code: string, message: string) => Object.assign(new Error(message),
 const iosOnly = () => err('UNSUPPORTED', 'iOS only for now');
 
 /**
- * Extended-parity handlers: dialogs, reviews, storage.clear, geo watch, theme color,
+ * Extended-parity handlers: dialogs, storage.clear, geo watch, theme color,
  * motion, contacts, calendar, camera. iOS-first like handlers-extended.
  */
 export function registerParityHandlers(): void {
@@ -31,18 +31,8 @@ export function registerParityHandlers(): void {
     return idx >= 0 ? idx : null;
   });
 
-  // ── reviews (SKStoreReviewController) ──────────────────────────────
-  bridge.register('reviews.requestReview', () => {
-    if (!isIOS) throw iosOnly();
-    Utils.dispatchToMainThread(() => {
-      const scene = UIApplication.sharedApplication.keyWindow?.windowScene;
-      if (scene && SKStoreReviewController.requestReviewInWindowScene) {
-        SKStoreReviewController.requestReviewInWindowScene(scene);
-      } else {
-        SKStoreReviewController.requestReview();
-      }
-    });
-  });
+  // reviews → moved to the strippable `reviews` module (handlers-reviews.ts): its Android Play
+  // In-App Review path carries a gradle dep that must not bundle into builds without `reviews`.
 
   // ── storage.clear ──────────────────────────────────────────────────
   bridge.register('storage.clear', () => {

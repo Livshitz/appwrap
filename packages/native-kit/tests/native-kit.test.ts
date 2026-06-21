@@ -994,3 +994,35 @@ describe('Push — provider-agnostic token + receipt seam', () => {
     await expect(web.invoke('push.requestPermission')).rejects.toThrow(/web push|VAPID|shell/i);
   });
 });
+
+// Manifest is pure data (no NativeScript globals) → importable straight into a bun test.
+describe('capability manifest — oauth + reviews Android parity', () => {
+  test('reviews is now a STRIPPABLE optional group (own handler, not always-bundled)', async () => {
+    const { MODULES, OPTIONAL_GROUPS } = await import('../../../runtime/app/shell/capabilities.manifest');
+    const reviews = MODULES.find((m) => m.name === 'reviews')!;
+    expect(reviews).toBeDefined();
+    expect(reviews.core).toBeFalsy();          // opt-in
+    expect(reviews.group).toBe('reviews');     // its own group, not the always-bundled 'system'
+    expect(OPTIONAL_GROUPS).toContain('reviews'); // CLI gates/strips it like scanner/speech
+    // Android Play In-App Review dep rides ONLY with the module (so a build without reviews stays clean).
+    expect(reviews.android?.gradleDeps ?? []).toContain('com.google.android.play:review:2.0.2');
+  });
+
+  test('oauth + reviews resolve android:true when active; absent when stripped', async () => {
+    const { buildCapabilityMap } = await import('../../../runtime/app/shell/capabilities.manifest');
+
+    const active = buildCapabilityMap(new Set(['oauth', 'reviews']), 'android');
+    expect(active.oauth).toBe('native');   // was 'none' before this change
+    expect(active.reviews).toBe('native'); // was 'none' before this change
+
+    // iOS keeps parity too.
+    const ios = buildCapabilityMap(new Set(['oauth', 'reviews']), 'ios');
+    expect(ios.oauth).toBe('native');
+    expect(ios.reviews).toBe('native');
+
+    // Stripped (not in the active set) → the cap isn't advertised at all (opt-in modules vanish).
+    const stripped = buildCapabilityMap(new Set<string>(), 'android');
+    expect(stripped.oauth).toBeUndefined();
+    expect(stripped.reviews).toBeUndefined();
+  });
+});

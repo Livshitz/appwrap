@@ -17,7 +17,10 @@ export interface OAuthResult {
 }
 
 /**
- * System-browser OAuth via ASWebAuthenticationSession (iOS). Provider-agnostic by design — the same
+ * System-browser OAuth — iOS ASWebAuthenticationSession / Android Chrome Custom Tabs. The Android
+ * tab returns the provider redirect via the app's urlScheme deep-link path (it doesn't auto-close
+ * like iOS); the shell matches the callbackScheme and resolves with the same { url } shape. A
+ * user-dismissed tab/sheet rejects with code 'CANCELLED'. Provider-agnostic by design — the same
  * philosophy as `kit.push`: the shell owns only the device-side primitive (run the auth handshake in
  * the OS-shared, policy-compliant browser), while the PWA builds the auth URL and does token exchange.
  *
@@ -36,6 +39,9 @@ export class OAuthModule {
   }
 
   authorize(params: OAuthAuthorizeParams): Promise<OAuthResult> {
-    return this.kit.invoke('oauth.authorize', params as unknown as Record<string, unknown>);
+    // Long timeout: a real sign-in (password + 2FA + consent in the system browser) easily exceeds
+    // the 10s invoke default — without this the kit abandons the request id before the redirect
+    // returns and the login is silently dropped. Matches the other interactive flows (pickers 120s).
+    return this.kit.invoke('oauth.authorize', params as unknown as Record<string, unknown>, { timeoutMs: 300_000 });
   }
 }

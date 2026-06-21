@@ -172,6 +172,7 @@ function nativeReqs(cfg: AppwrapConfig): NativeReqs {
 const OPTIONAL_GROUP_HANDLERS: Record<string, { file: string; fn: string }> = {
   health: { file: './handlers-health', fn: 'registerHealthHandlers' },
   oauth: { file: './handlers-oauth', fn: 'registerOAuthHandlers' },
+  reviews: { file: './handlers-reviews', fn: 'registerReviewsHandlers' },
   scanner: { file: './handlers-scanner', fn: 'registerScannerHandlers' },
   speech: { file: './handlers-speech', fn: 'registerSpeechHandlers' },
 };

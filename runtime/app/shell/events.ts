@@ -10,8 +10,19 @@ let pendingPushTap: { data: Record<string, string> } | null = null;
 // (the cold-start-from-notification bug). So we gate delivery on the handshake.
 let pwaReady = false;
 
+/** A pending native-side consumer of an inbound deep link (e.g. the Android OAuth flow waiting for
+ * the provider's `callbackScheme://…` redirect). Returns true if it CONSUMED the URL — then it's an
+ * internal callback, not an app deep link, and must NOT reach the PWA. Set by handlers-oauth. */
+let deepLinkInterceptor: ((url: string) => boolean) | null = null;
+export function setDeepLinkInterceptor(fn: ((url: string) => boolean) | null): void {
+  deepLinkInterceptor = fn;
+}
+
 /** Called by the iOS delegate (cold start or while running) and Android intents. */
 export function onDeepLink(url: string): void {
+  // Give a native consumer (OAuth callback) first refusal — a matched OAuth redirect is internal
+  // plumbing, not an app deep link, so it's swallowed here and never forwarded to the PWA.
+  if (deepLinkInterceptor?.(url)) return;
   if (pwaReady) bridge.emit('deeplink.open', { url });
   else pendingDeepLink = url; // buffer until the PWA handshakes
 }
