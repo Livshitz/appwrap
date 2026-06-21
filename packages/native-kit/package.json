@@ -37,7 +37,8 @@
     "src"
   ],
   "scripts": {
-    "build": "bun build src/index.ts --outdir=dist --format=esm && bun build src/index.ts --outfile=dist/native-kit.iife.js --format=iife --global-name=NativeKitLib"
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && bun build src/index.ts --outdir=dist --format=esm && bun build src/index.ts --outfile=dist/native-kit.iife.js --format=iife --global-name=NativeKitLib"
   },
   "devDependencies": {
     "typescript": "^5.4.0"

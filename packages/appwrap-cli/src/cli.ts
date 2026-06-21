@@ -437,7 +437,15 @@ function stampIOSDisplayName(outDir: string, cfg: AppwrapConfig, req: NativeReqs
 
 function stampTeamId(outDir: string, cfg: AppwrapConfig): void {
   const xcconfig = join(outDir, 'App_Resources/iOS/build.xcconfig');
-  if (!existsSync(xcconfig) || !cfg.teamId) return;
+  // A placeholder/empty teamId silently produces an unsignable build (DEVELOPMENT_TEAM = YOUR_APPLE_TEAM_ID
+  // → xcodebuild "No Account for Team"). Warn loudly rather than let a long build fail cryptically.
+  if (!cfg.teamId || /YOUR_APPLE_TEAM_ID|^$/.test(cfg.teamId)) {
+    console.warn(`⚠ teamId is unset/placeholder ("${cfg.teamId ?? ''}") — device builds won't sign.\n` +
+      '  Set it to your Apple Team ID in appwrap.config (Xcode → Settings → Accounts shows it; ' +
+      'Individual = paid, Personal Team = free).');
+    return;
+  }
+  if (!existsSync(xcconfig)) return;
   let src = readFileSync(xcconfig, 'utf8');
   src = /DEVELOPMENT_TEAM\s*=/.test(src)
     ? src.replace(/DEVELOPMENT_TEAM\s*=\s*[^;\n]*;?/, `DEVELOPMENT_TEAM = ${cfg.teamId};`)
@@ -1150,7 +1158,21 @@ async function deploy(cwd: string, flags: Record<string, string>, positionals: s
   // Dev deploy → debug mode: keep-awake + WebView inspector for continuous troubleshooting.
   stampShellConfig(outDir, { ...cfg, debug: true });
   console.log('▶ ns build ios --for-device  (debug: keep-awake + inspector on)');
-  execFileSync('ns', ['build', 'ios', '--for-device'], { cwd: outDir, stdio: 'inherit' });
+  try {
+    execFileSync('ns', ['build', 'ios', '--for-device'], { cwd: outDir, stdio: 'inherit' });
+  } catch (e) {
+    // The xcodebuild dump above is cryptic; surface the two signing failures we actually hit most.
+    console.error(
+      '\n✖ Device build failed — if the errors above mention signing:\n' +
+        `  • "Failed Registering Bundle Identifier … not available" → the App ID "${cfg.id}" is already\n` +
+        '    registered to another team (e.g. a prior free-team build). Change `id` in appwrap.config to a\n' +
+        '    unique string and re-deploy.\n' +
+        '  • "profile doesn\'t include the … entitlement" (e.g. HealthKit) → that capability needs a PAID\n' +
+        '    team (Individual). A free Personal Team can\'t hold it — switch teamId or drop the module.\n' +
+        '  • "No Account for Team" → sign that Apple ID into Xcode → Settings → Accounts first.'
+    );
+    process.exit(1);
+  }
 
   const ipaDir = join(outDir, 'platforms/ios/build/Debug-iphoneos');
   const ipa = existsSync(ipaDir) ? readdirSync(ipaDir).find((f) => f.endsWith('.ipa')) : undefined;
