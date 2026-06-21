@@ -94,6 +94,9 @@ export class WebAdapter implements NativeKitAdapter {
       browser: 'web', // new tab/window
       billing: 'none', // no IAP in a plain browser — wire a web checkout yourself
       push: 'none', // remote push (APNs/FCM) is native-only — web push (VAPID) is the app's own concern
+      // headless background execution is native-only — a PWA's Background/Periodic Sync lives in a
+      // service worker the kit doesn't own → honest 'none' (schedule/cancel resolve as no-ops).
+      backgroundTask: 'none',
     };
     return {
       protocol: 1,
@@ -428,6 +431,12 @@ export class WebAdapter implements NativeKitAdapter {
       case 'push.register':
       case 'push.unregister':
         throw new KitError('UNSUPPORTED', 'No native remote push on web — use Web Push (VAPID) in your app, or run inside the appwrap shell');
+
+      case 'backgroundTask.schedule':
+      case 'backgroundTask.cancel':
+        // Honest no-op: a browser has no OS-scheduled headless wake the kit owns (that's a service
+        // worker's Background/Periodic Sync). Resolve so callers don't have to branch on platform.
+        return undefined as T;
 
       default:
         throw new KitError('UNSUPPORTED', `Unknown method: ${method}`);

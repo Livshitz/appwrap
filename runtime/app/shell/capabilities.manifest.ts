@@ -249,11 +249,27 @@ export const MODULES: ModuleManifest[] = [
     },
     nativeSrc: 'health',
   },
+
+  // ── backgroundTask — headless background execution (HEADLESS JS HANDLER) — opt-in, STRIPPABLE ──
+  // The OS wakes the app (possibly cold, no visible WebView) for a permitted task id; the shell builds
+  // an OFFSCREEN WebView, loads the app conveying the id (the handshake reports it), awaits the JS
+  // handler's `backgroundTask.finish`, then completes + reschedules the OS task. iOS: BGTaskScheduler
+  // (BGAppRefreshTaskRequest / BGProcessingTaskRequest) — NO gradle dep, but Info.plist MUST declare
+  // the permitted identifiers (`appwrap.json.backgroundTasks`, stamped by the CLI) + the fetch/processing
+  // background modes. Android: WorkManager periodic work (the work-runtime dep rides via this module),
+  // self-initialized by its androidx startup provider — nothing mandatory to stamp.
+  // DEVICE-UNVERIFIED: the native background-wake path (offscreen WebView under BGTask / WorkManager)
+  // compiles only; it has NOT been run on a device. See handlers-background.ts.
+  {
+    name: 'backgroundTask', group: 'backgroundTask',
+    capabilities: { backgroundTask: { ios: true, android: true } },
+    android: { gradleDeps: ['androidx.work:work-runtime:2.9.1'] },
+  },
 ];
 
 /** Opt-in registration groups that own their own NS handler file (strippable when inactive). Core
  * groups (core/extended/parity/system/media/billing) are always bundled; only these are CLI-gated. */
-export const OPTIONAL_GROUPS = ['health', 'oauth', 'reviews', 'scanner', 'speech'] as const;
+export const OPTIONAL_GROUPS = ['health', 'oauth', 'reviews', 'scanner', 'speech', 'backgroundTask'] as const;
 
 /** Resolve the active capability map for the handshake from a set of active capability names. */
 export function buildCapabilityMap(

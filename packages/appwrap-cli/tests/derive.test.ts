@@ -8,6 +8,7 @@ import {
   normalizeOrientation,
   stampAndroidOrientation,
   stampAndroidQueries,
+  stampPlistBackgroundTasks,
   stampPlistOrientations,
 } from '../src/derive';
 
@@ -239,5 +240,53 @@ describe('stampAndroidQueries — canOpenUrl visibility (operates on the REAL ma
     const twice = stampAndroidQueries(once, ['com.whatsapp'], ['whatsapp']);
     expect(twice).toBe(once);
     expect(twice.match(/<queries>/g)?.length).toBe(1);
+  });
+});
+
+describe('stampPlistBackgroundTasks — headless background tasks (operates on the REAL Info.plist template)', () => {
+  // Drive the real transform against the actual shipped template (with its existing `audio` bg mode).
+  const TEMPLATE = join(import.meta.dir, '../../../runtime/App_Resources/iOS/Info.plist');
+  const PLIST = readFileSync(TEMPLATE, 'utf8');
+
+  test('stamps BGTaskSchedulerPermittedIdentifiers + MERGES fetch/processing into UIBackgroundModes (keeps audio)', () => {
+    const out = stampPlistBackgroundTasks(PLIST, ['sync', 'cleanup']);
+    // permitted identifiers block
+    expect(out).toContain('<key>BGTaskSchedulerPermittedIdentifiers</key>');
+    expect(out).toContain('<string>sync</string>');
+    expect(out).toContain('<string>cleanup</string>');
+    // background modes merged into the SINGLE existing array (no duplicate key)
+    expect(out.match(/<key>UIBackgroundModes<\/key>/g)).toHaveLength(1);
+    expect(out).toContain('<string>fetch</string>');
+    expect(out).toContain('<string>processing</string>');
+    expect(out).toContain('<string>audio</string>'); // pre-existing mode preserved
+    // still a single valid <dict>/<plist>
+    expect(out.match(/<\/plist>/g)).toHaveLength(1);
+  });
+
+  test('absent/empty ids → strips the identifiers block AND removes the two modes it adds (audio stays)', () => {
+    const stamped = stampPlistBackgroundTasks(PLIST, ['sync']);
+    const cleared = stampPlistBackgroundTasks(stamped, undefined);
+    expect(cleared).not.toContain('BGTaskSchedulerPermittedIdentifiers');
+    expect(cleared).not.toContain('<string>fetch</string>');
+    expect(cleared).not.toContain('<string>processing</string>');
+    expect(cleared).toContain('<string>audio</string>'); // untouched pre-existing mode
+    expect(cleared).toBe(PLIST); // round-trips back to the original template
+  });
+
+  test('idempotent — re-stamping the same ids is a fixed point (no duplicate identifiers/modes)', () => {
+    const once = stampPlistBackgroundTasks(PLIST, ['sync']);
+    const twice = stampPlistBackgroundTasks(once, ['sync']);
+    expect(twice).toBe(once);
+    expect(twice.match(/<string>fetch<\/string>/g)).toHaveLength(1);
+    expect(twice.match(/BGTaskSchedulerPermittedIdentifiers/g)).toHaveLength(1);
+  });
+
+  test('on a plist WITHOUT a UIBackgroundModes array, creates one with fetch+processing', () => {
+    const minimal = `<plist version="1.0">\n<dict>\n\t<key>CFBundleName</key>\n\t<string>X</string>\n</dict>\n</plist>\n`;
+    const out = stampPlistBackgroundTasks(minimal, ['sync']);
+    expect(out).toContain('<key>UIBackgroundModes</key>');
+    expect(out).toContain('<string>fetch</string>');
+    expect(out).toContain('<string>processing</string>');
+    expect(out.match(/<key>UIBackgroundModes<\/key>/g)).toHaveLength(1);
   });
 });

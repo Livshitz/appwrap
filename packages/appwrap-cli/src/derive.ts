@@ -107,6 +107,49 @@ export function stampAndroidOrientation(src: string, value: string): string {
  * Pure + idempotent: always rewrites the marker block, so a re-sync never duplicates. No-op (empty
  * block) when both lists are absent.
  */
+/**
+ * Stamp (or strip) the headless background-task wiring in an Info.plist string for the `backgroundTask`
+ * module: `BGTaskSchedulerPermittedIdentifiers` (the permitted ids — iOS requires them declared at
+ * build time or `BGTaskScheduler.register` throws) AND the `fetch`+`processing` `UIBackgroundModes`
+ * (BGAppRefreshTask needs `fetch`, BGProcessingTask needs `processing`). Pure + idempotent: rewrites an
+ * `appwrap:bgtask` marker block (added before `</dict>`), and MERGES the two modes into any existing
+ * `UIBackgroundModes` array (a second `<key>` would be invalid plist — same hazard as push's
+ * `remote-notification`). `ids` empty/undefined → strips the block + removes the two modes it added.
+ */
+export function stampPlistBackgroundTasks(src: string, ids: string[] | undefined): string {
+  // 1) Always rewrite the marker block (permitted identifiers). Strip first → idempotent.
+  src = src.replace(/\s*<!-- appwrap:bgtask -->[\s\S]*?<!-- \/appwrap:bgtask -->/g, '');
+  const list = (ids ?? []).filter(Boolean);
+  if (list.length) {
+    const items = list.map((s) => `    <string>${s}</string>`).join('\n');
+    const block =
+      `  <!-- appwrap:bgtask -->\n` +
+      `  <key>BGTaskSchedulerPermittedIdentifiers</key>\n  <array>\n${items}\n  </array>\n` +
+      `  <!-- /appwrap:bgtask -->`;
+    src = src.replace(/<\/dict>\s*<\/plist>\s*$/, `${block}\n</dict>\n</plist>\n`);
+  }
+
+  // 2) Merge/remove the fetch + processing background modes (separate from the marker — they live in
+  //    the shared UIBackgroundModes array, which may also hold audio/remote-notification).
+  const modes = ['fetch', 'processing'];
+  const bgArray = /(<key>UIBackgroundModes<\/key>\s*<array>)([\s\S]*?)(<\/array>)/;
+  if (list.length) {
+    const need = modes.filter((m) => !new RegExp(`<string>${m}</string>`).test(src));
+    if (need.length) {
+      const inject = need.map((m) => `\t<string>${m}</string>`).join('\n');
+      src = bgArray.test(src)
+        ? src.replace(bgArray, (_m, open, inner, close) => `${open}${inner}${inject}\n\t${close}`)
+        : src.replace(
+            /<\/dict>\s*<\/plist>\s*$/,
+            `  <key>UIBackgroundModes</key>\n  <array>\n${need.map((m) => `    <string>${m}</string>`).join('\n')}\n  </array>\n</dict>\n</plist>\n`
+          );
+    }
+  } else {
+    for (const m of modes) src = src.replace(new RegExp(`\\s*<string>${m}</string>`), '');
+  }
+  return src;
+}
+
 export function stampAndroidQueries(src: string, queryPackages?: string[], queryUrlSchemes?: string[]): string {
   const children = [
     ...(queryPackages ?? []).map((p) => `\t\t<package android:name="${p}"/>`),

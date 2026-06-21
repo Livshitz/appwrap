@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, jest, test } from 'bun:test';
 import { NativeKit } from '../src/core/NativeKit';
 import { AppwrapAdapter } from '../src/core/appwrap-adapter';
 import { KitError, type Handshake, type NativeKitAdapter, type RequestEnvelope } from '../src/core/types';
@@ -1113,5 +1113,164 @@ describe('capability manifest — oauth + reviews Android parity', () => {
     const stripped = buildCapabilityMap(new Set<string>(), 'android');
     expect(stripped.oauth).toBeUndefined();
     expect(stripped.reviews).toBeUndefined();
+  });
+});
+
+describe('BackgroundTask — headless dispatch contract (Loop C)', () => {
+  // A kit whose handshake carries an optional backgroundTaskId, recording every invoke for assertions.
+  function bgKit(backgroundTaskId?: string) {
+    const calls: Array<[string, unknown]> = [];
+    const kit = new NativeKit({
+      adapters: [fakeAdapter({
+        handshake: async () => ({ ...HS, capabilities: { backgroundTask: 'native' }, ...(backgroundTaskId ? { backgroundTaskId } : {}) }),
+        invoke: async <T,>(m: string, p?: unknown) => { calls.push([m, p]); return undefined as T; },
+      })],
+    });
+    return { kit, calls };
+  }
+
+  test('(a) wake handshake + register → handler invoked with an AbortSignal', async () => {
+    const { kit } = bgKit('sync');
+    let seen: { id: string; signal: AbortSignal } | null = null;
+    kit.backgroundTask.register('sync', async (ctx) => { seen = ctx; });
+    await kit.ready();
+    await Bun.sleep(0); // let the dispatch microtask run
+    expect(kit.backgroundTask.capability).toBe('native');
+    expect(seen!.id).toBe('sync');
+    expect(seen!.signal).toBeInstanceOf(AbortSignal);
+    expect(seen!.signal.aborted).toBe(false);
+  });
+
+  test('(b1) register BEFORE ready dispatches once ready resolves', async () => {
+    const { kit, calls } = bgKit('sync');
+    const ran: string[] = [];
+    kit.backgroundTask.register('sync', async () => { ran.push('sync'); });
+    expect(ran).toEqual([]);          // nothing yet — ready hasn't resolved
+    await kit.ready();
+    await Bun.sleep(0);
+    expect(ran).toEqual(['sync']);
+    expect(calls.some(([m]) => m === 'backgroundTask.finish')).toBe(true);
+  });
+
+  test('(b2) register AFTER ready (late) still dispatches the pending wake', async () => {
+    const { kit } = bgKit('sync');
+    await kit.ready();                 // wake id arrives, no handler yet → remembered
+    await Bun.sleep(0);
+    const ran: string[] = [];
+    kit.backgroundTask.register('sync', async () => { ran.push('sync'); });
+    await Bun.sleep(0);
+    expect(ran).toEqual(['sync']);
+  });
+
+  test('a non-matching wake id never dispatches a different handler', async () => {
+    const { kit } = bgKit('other');
+    const ran: string[] = [];
+    kit.backgroundTask.register('sync', async () => { ran.push('sync'); });
+    await kit.ready();
+    await Bun.sleep(0);
+    expect(ran).toEqual([]);           // wake was for 'other', no 'other' handler → nothing runs
+  });
+
+  test('NO wake id (foreground launch) → register records but never auto-dispatches', async () => {
+    const { kit, calls } = bgKit(); // handshake without backgroundTaskId
+    const ran: string[] = [];
+    kit.backgroundTask.register('sync', async () => { ran.push('sync'); });
+    await kit.ready();
+    await Bun.sleep(0);
+    expect(ran).toEqual([]);
+    expect(calls.some(([m]) => m.startsWith('backgroundTask.'))).toBe(false);
+  });
+
+  test('(c) handler completion → backgroundTask.finish invoked with { id, success:true }', async () => {
+    const { kit, calls } = bgKit('sync');
+    kit.backgroundTask.register('sync', async () => { /* ok */ });
+    await kit.ready();
+    await Bun.sleep(0);
+    expect(calls).toContainEqual(['backgroundTask.finish', { id: 'sync', success: true }]);
+  });
+
+  test('a rejecting handler reports finish with success:false (the OS still reschedules)', async () => {
+    const { kit, calls } = bgKit('sync');
+    kit.backgroundTask.register('sync', async () => { throw new Error('boom'); });
+    await kit.ready();
+    await Bun.sleep(0);
+    expect(calls).toContainEqual(['backgroundTask.finish', { id: 'sync', success: false }]);
+  });
+
+  test('dispatch is once-per-session: replay + ready both matching fire the handler ONCE', async () => {
+    const { kit, calls } = bgKit('sync');
+    let runs = 0;
+    kit.backgroundTask.register('sync', async () => { runs++; });
+    await kit.ready();
+    await Bun.sleep(0);
+    // re-register (idempotent boot call) must not re-fire the already-dispatched wake
+    kit.backgroundTask.register('sync', async () => { runs++; });
+    await Bun.sleep(0);
+    expect(runs).toBe(1);
+    expect(calls.filter(([m]) => m === 'backgroundTask.finish').length).toBe(1);
+  });
+
+  test('(d) the safety timeout aborts the handler signal (below the iOS ~30s budget)', async () => {
+    jest.useFakeTimers();
+    try {
+      const { kit, calls } = bgKit('sync');
+      let aborted = false;
+      let resolveHandler!: () => void;
+      // A handler that hangs until aborted (then resolves) — mirrors a real long-running task.
+      kit.backgroundTask.register('sync', (ctx) =>
+        new Promise<void>((res) => {
+          resolveHandler = res;
+          ctx.signal.addEventListener('abort', () => { aborted = true; res(); });
+        })
+      );
+      await kit.ready();          // dispatch starts, arms the 25s timer
+      await Promise.resolve();    // let dispatch reach the await
+      expect(aborted).toBe(false);
+      jest.advanceTimersByTime(25_000); // cross the safety threshold → abort fires
+      expect(aborted).toBe(true);
+      // drain the finally (finish report) — real microtasks under fake timers
+      jest.useRealTimers();
+      void resolveHandler;
+      await Bun.sleep(0);
+      expect(calls).toContainEqual(['backgroundTask.finish', { id: 'sync', success: true }]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('(e) web: schedule/cancel are no-op resolves; capability is none; register records nothing native', async () => {
+    const { WebAdapter } = await import('../src/core/web-adapter');
+    (globalThis as any).window = {};
+    (globalThis as any).navigator = {};
+    (globalThis as any).screen = {};
+    (globalThis as any).location = { hostname: 'x' };
+    (globalThis as any).document = { title: 't' };
+    try {
+      const web = new WebAdapter();
+      expect((await web.handshake()).capabilities.backgroundTask).toBe('none');
+      expect(await web.invoke('backgroundTask.schedule', { id: 'sync' })).toBeUndefined();
+      expect(await web.invoke('backgroundTask.cancel', { id: 'sync' })).toBeUndefined();
+    } finally {
+      for (const k of ['window', 'navigator', 'screen', 'location', 'document']) delete (globalThis as any)[k];
+    }
+  });
+
+  test('module methods route schedule/cancel to namespaced backgroundTask.* with params merged', async () => {
+    const { kit, calls } = bgKit(); // no wake — just routing
+    await kit.ready();
+    await kit.backgroundTask.schedule({ id: 'sync', minIntervalMs: 900000, requiresNetwork: true });
+    await kit.backgroundTask.cancel('sync');
+    expect(calls).toEqual([
+      ['backgroundTask.schedule', { id: 'sync', minIntervalMs: 900000, requiresNetwork: true }],
+      ['backgroundTask.cancel', { id: 'sync' }],
+    ]);
+  });
+
+  test('(f) buildCapabilityMap gates backgroundTask off when inactive, native when active (both platforms)', async () => {
+    const { buildCapabilityMap } = await import('../../../runtime/app/shell/capabilities.manifest');
+    for (const platform of ['ios', 'android'] as const) {
+      expect(buildCapabilityMap(new Set<string>(), platform).backgroundTask).toBeUndefined();
+      expect(buildCapabilityMap(new Set(['backgroundTask']), platform).backgroundTask).toBe('native');
+    }
   });
 });

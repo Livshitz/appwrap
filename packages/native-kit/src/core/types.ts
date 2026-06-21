@@ -24,6 +24,11 @@ export interface Handshake {
   platform: Platform;
   app: AppInfo;
   capabilities: Record<string, Capability>;
+  /** Set ONLY on a background launch: the OS woke the app (possibly cold, headless, no visible
+   * WebView) to run this registered background-task id. The shell populates it; `kit.backgroundTask`
+   * reads it from {@link NativeKit.handshakeInfo} and dispatches the registered handler. Absent on a
+   * normal foreground launch. See {@link BackgroundTaskModule}. */
+  backgroundTaskId?: string;
   /** Optional diagnostic payload (breadcrumbs, etc.). */
   debug?: Record<string, unknown>;
 }

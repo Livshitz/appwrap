@@ -133,6 +133,13 @@ export interface AppwrapConfig {
    * (the per-app `permissions{}` map only OVERRIDES the default usage copy). When ABSENT, every
    * capability is active and permissions come solely from `permissions{}` (pre-modules behavior). */
   modules?: string[];
+  /** Permitted headless background-task identifiers (for the `backgroundTask` module). iOS REQUIRES
+   * these declared at build time — they stamp into Info.plist `BGTaskSchedulerPermittedIdentifiers`
+   * (without them `BGTaskScheduler.register` throws) plus `fetch`+`processing` into UIBackgroundModes.
+   * Android self-initializes WorkManager via its androidx startup provider — nothing to stamp. The
+   * same ids are what `kit.backgroundTask.register(id, …)` / `.schedule({id})` use. No-op when absent
+   * or the module is inactive. */
+  backgroundTasks?: string[];
   /** Remote push (APNs/FCM). Off unless set — gating matters: an `aps-environment` entitlement on a
    * team that can't hold the Push capability (e.g. a personal team) BREAKS code signing, and the
    * handshake should honestly report `push: 'none'` on an un-provisioned build. The kit returns a raw

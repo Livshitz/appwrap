@@ -476,6 +476,23 @@ async function main() {
     ['stop', () => { stepStop?.(); stepStop = null; return 'stopped'; }],
   ]);
 
+  // Background task — opt-in module (appwrap.config.ts `modules: ["backgroundTask", …]` +
+  // `backgroundTasks: ["sync"]`). The 'sync' handler writes Date.now() to kit.storage; the OS runs it
+  // headlessly when IT decides (can't be triggered on demand). "run now" proves the handler + API shape
+  // work in the foreground; "last bg-run" shows the most recent recorded timestamp.
+  const BG_KEY = 'lastBgRun';
+  const syncHandler = async () => { await kit.storage.set(BG_KEY, Date.now()); };
+  kit.backgroundTask.register('sync', syncHandler); // idempotent — call at boot on every launch
+  tile('Background task', kit.backgroundTask.capability, [
+    ['schedule (~15m)', async () => { await kit.backgroundTask.schedule({ id: 'sync', minIntervalMs: 15 * 60_000 }); return 'scheduled — OS wakes when it decides'; }],
+    ['run now (manual)', async () => { await syncHandler(); return 'handler ran (foreground proof)'; }],
+    ['last bg-run', async () => {
+      const ts = await kit.storage.get<number>(BG_KEY);
+      return ts ? new Date(ts).toLocaleString() : 'never';
+    }],
+    ['cancel', async () => { await kit.backgroundTask.cancel('sync'); return 'cancelled'; }],
+  ]);
+
   tile('Contacts', kit.contacts.capability, [
     ['pick contact', async () => {
       const c = await kit.contacts.pick();

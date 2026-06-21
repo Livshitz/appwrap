@@ -45,6 +45,8 @@ export { ClientTrustedValidator, HttpValidator, HttpValidatorOptions } from './m
 export { HttpBillingProvider, HttpBillingProviderOptions } from './modules/billing/providers';
 export type { HeaderProvider } from './modules/billing/http';
 export { HealthModule } from './modules/health';
+export { BackgroundTaskModule } from './modules/backgroundTask';
+export type { BackgroundTaskHandler, ScheduleBackgroundTaskOptions } from './modules/backgroundTask';
 export type {
   BillingProvider,
   BillingValidator,

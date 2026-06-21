@@ -3,6 +3,7 @@ import { onDeepLink, onShortcut } from './shell/events';
 import { iosOrientationMask } from './shell/orientation';
 import { installForegroundNotificationDelegate } from './shell/handlers-extended';
 import { onApnsToken, onApnsError, onRemoteMessage } from './shell/handlers-push';
+import { registerBackgroundLaunchHandlers } from './shell/background-bootstrap.generated';
 
 /** APNs device token (NSData) → lowercase hex string the push backend expects. */
 function apnsTokenToHex(deviceToken: NSData): string {
@@ -20,6 +21,9 @@ if (isIOS) {
       applicationDidFinishLaunchingWithOptions(_app: UIApplication, launchOptions: NSDictionary<string, any>) {
         // Set the notification delegate NOW so a cold-launch tap's deep link is delivered.
         installForegroundNotificationDelegate();
+        // BGTaskScheduler launch handlers MUST be registered here (Apple's rule) — no-op unless the
+        // backgroundTask module is active (the CLI wires the generated bootstrap to the real impl).
+        registerBackgroundLaunchHandlers();
         const url = launchOptions?.objectForKey(UIApplicationLaunchOptionsURLKey);
         if (url) onDeepLink(url.absoluteString ?? String(url));
         // Cold-launch from a home-screen quick action — Apple delivers it ONLY here in launchOptions

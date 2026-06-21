@@ -7,6 +7,7 @@ import { showBanner, dismissBanner } from './banner';
 import { setStatusBarStyle } from './status-bar';
 import { buildCapabilityMap } from './capabilities.manifest';
 import { ACTIVE_MODULE_NAMES } from './active-modules.generated';
+import { consumePendingBackgroundTaskId } from './background-context';
 
 /** Build identifier for the native shell bundle — bump per deploy to spot stale bundles. */
 export const SHELL_BUILD = 'updates-devmenu-3';
@@ -27,12 +28,17 @@ export function registerHandlers(): void {
     // kit degrades gracefully. Push is special — gated by per-platform build config, not the manifest.
     const capabilities = buildCapabilityMap(new Set(ACTIVE_MODULE_NAMES), isIOS ? 'ios' : 'android') as Record<string, 'native' | 'none'>;
     capabilities.push = (isIOS ? SHELL_CONFIG.pushIos : SHELL_CONFIG.pushAndroid) ? 'native' : 'none';
+    // Background launch: the headless runner (handlers-background) set the wake id before loading this
+    // (offscreen) WebView. Report it so `kit.backgroundTask` dispatches the registered handler. Consumed
+    // (read-once) so a later foreground handshake in the same process never re-reports a stale wake.
+    const backgroundTaskId = consumePendingBackgroundTaskId();
     return {
       protocol: 1,
       platform: isIOS ? 'ios' : 'android',
       app: { id: SHELL_CONFIG.appId, name: SHELL_CONFIG.name, version: SHELL_CONFIG.version, build: SHELL_BUILD, loader: SHELL_CONFIG.loader },
       debug: { lastNotifTap: safeJson(ApplicationSettings.getString('kit:__notifTap', '')) },
       capabilities,
+      ...(backgroundTaskId ? { backgroundTaskId } : {}),
     };
   });
 

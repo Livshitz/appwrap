@@ -2,6 +2,7 @@ import { AppwrapAdapter } from './appwrap-adapter';
 import { WebAdapter } from './web-adapter';
 import { Capability, Handshake, InvokeOptions, KIT_PROTOCOL, KitError, NativeKitAdapter, Platform, Unsubscribe } from './types';
 import { AppModule } from '../modules/app';
+import { BackgroundTaskModule } from '../modules/backgroundTask';
 import { BillingModule } from '../modules/billing/billing';
 import { BiometricsModule } from '../modules/biometrics';
 import { BrowserModule } from '../modules/browser';
@@ -101,6 +102,7 @@ export class NativeKit {
   public readonly oauth = new OAuthModule(this);
   public readonly billing = new BillingModule(this);
   public readonly updates = new UpdatesModule(this);
+  public readonly backgroundTask = new BackgroundTaskModule(this);
 
   public handshakeInfo: Handshake | null = null;
   public options: NativeKitOptions;
@@ -133,6 +135,9 @@ export class NativeKit {
         this.handshakeInfo = handshake;
         // Zero-config: a native server-loader app begins polling for remote updates.
         this.updates.__autostart();
+        // A background launch carries the wake id in the handshake → dispatch the registered handler
+        // (the app's boot register() may have already run, or land moments later — both dispatch).
+        this.backgroundTask.__onReady(handshake.backgroundTaskId);
         return this.handshakeInfo;
       })();
     }

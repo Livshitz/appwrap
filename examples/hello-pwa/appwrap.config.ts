@@ -12,7 +12,11 @@ export default defineConfig({
   modules: [
     'notifications', 'biometrics', 'geo', 'photos', 'camera', 'media',
     'motion', 'contacts', 'calendar', 'reviews', 'billing', 'health', 'scanner', 'speech', 'oauth',
+    'backgroundTask',
   ],
+  // Permitted headless background-task ids (iOS BGTaskSchedulerPermittedIdentifiers). The 'sync' tile
+  // registers + schedules this id.
+  backgroundTasks: ['sync'],
   permissions: {
     location: 'Demo: show your coordinates in the capability dashboard',
     photos: 'Demo: pick a photo to prove native picker access',
