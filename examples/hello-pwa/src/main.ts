@@ -20,6 +20,10 @@ function demoWebBilling(): BillingProvider {
 
 const BUILD = 'media-diag-8'; // bump on each deploy so a stale bundle is obvious in the log
 
+// The demo's own public push relay (examples/push-relay). Not a secret — the relay only sends a test
+// push to a token YOU register; the "send" half lives in the app, not the kit. Safe to commit.
+const PUSH_RELAY_URL = 'https://appwrap-push-relay.bodify.bod.ee';
+
 const $ = (id: string) => document.getElementById(id)!;
 
 function log(msg: string) {
@@ -581,7 +585,16 @@ async function main() {
   tile('Push', kit.push.capability, [
     ['permission', () => kit.push.permissionStatus()],
     ['register', async () => (await kit.push.register()).token.slice(0, 24) + '…'],
-    ['send me a push', async () => `relay → HTTP ${(await kit.push.sendTest()).status}`],
+    // The DEMO sends the test push (not the kit): grab the token, then POST it to our relay's /register
+    // with test:true. The relay serves CORS + OPTIONS, so this cross-origin WebView fetch reaches it.
+    ['send me a push', async () => {
+      const { platform, token } = await kit.push.register();
+      const res = await fetch(`${PUSH_RELAY_URL}/register`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, platform: platform === 'apns' ? 'ios' : 'android', test: true }),
+      });
+      return `relay → HTTP ${res.status}`;
+    }],
   ]);
 
   // ── wire the router ────────────────────────────────────────────────
