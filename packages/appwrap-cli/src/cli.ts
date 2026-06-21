@@ -1181,6 +1181,7 @@ async function deploy(cwd: string, flags: Record<string, string>, positionals: s
   const ipaPath = join(ipaDir, ipa);
 
   console.log(`▶ installing ${ipa} → ${device.name} [${device.transport}]`);
+  let installedViaUsbmux = false;
   try {
     // Capture (not inherit) so we can recognize specific failures; echo it for visibility.
     // Wrapped so a LOCKED device waits-and-retries instead of hard-failing (the common annoyance).
@@ -1204,17 +1205,34 @@ async function deploy(cwd: string, flags: Record<string, string>, positionals: s
           `      xcrun devicectl device uninstall app --device ${device.id} <bundleId>\n` +
           '  (A paid Apple Developer account removes this limit.)'
       );
+      process.exit(1);
+    } else if (/Command timeout|got stuck|could not be reached|Unable to connect to device/.test(log)) {
+      // devicectl/CoreDevice is stuck (a connection hang, NOT a lock). usbmux (ideviceinstaller) is a
+      // separate stack that usually still works — auto-fall-back instead of chasing a phantom "unlock".
+      console.error('\n⚠ devicectl/CoreDevice is stuck (connection hang, not a lock) — falling back to ideviceinstaller (usbmux)…');
+      if (usbmuxInstall(ipaPath)) {
+        installedViaUsbmux = true;
+      } else {
+        console.error(
+          '✖ usbmux fallback unavailable.\n' +
+            '  → Re-plug the USB cable (re-establishes the CoreDevice tunnel) and re-run, OR\n' +
+            '    `brew install ideviceinstaller` for a usbmux install path.\n' +
+            `  The built .ipa is ready: ${ipaPath}`
+        );
+        process.exit(1);
+      }
     } else {
       console.error(
         '✖ Install failed (device still locked after waiting, or only on Wi-Fi).\n' +
           '  → Unlock the phone (and plug in USB for a reliable connection), then re-run.\n' +
           `  The built .ipa is ready: ${ipaPath}`
       );
+      process.exit(1);
     }
-    process.exit(1);
   }
 
-  if (!('no-launch' in flags)) {
+  // devicectl process-launch is also stuck when we fell back to usbmux — skip it; the user taps the icon.
+  if (!('no-launch' in flags) && !installedViaUsbmux) {
     console.log(`▶ launching ${cfg.id}`);
     try {
       withUnlockRetry('Launch', () =>
@@ -1224,7 +1242,23 @@ async function deploy(cwd: string, flags: Record<string, string>, positionals: s
       console.error('⚠ Launch failed (still locked after waiting). The app is installed — unlock and tap it, or re-run.');
     }
   }
-  console.log(`✓ Deployed to ${device.name}.`);
+  console.log(installedViaUsbmux
+    ? `✓ Installed to ${device.name} via usbmux (devicectl was stuck). Tap the app icon to open it.`
+    : `✓ Deployed to ${device.name}.`);
+}
+
+/** Install an .ipa over usbmux via ideviceinstaller — a separate stack from devicectl/CoreDevice, so it
+ * works when the CoreDevice tunnel is stuck. Returns false if ideviceinstaller is absent or the install
+ * fails (the caller then prints the re-plug / brew-install remedy). */
+function usbmuxInstall(ipaPath: string): boolean {
+  try {
+    const out = execFileSync('ideviceinstaller', ['install', ipaPath], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'pipe'] });
+    process.stdout.write(out);
+    return /Complete|Installed/i.test(out);
+  } catch (e: any) {
+    process.stderr.write(`${e?.stdout ?? ''}${e?.stderr ?? ''}`);
+    return false;
+  }
 }
 
 /** Run a devicectl op; if it fails because the device is LOCKED (or transiently unavailable), prompt
@@ -1238,6 +1272,9 @@ function withUnlockRetry<T>(label: string, run: () => T, tries = 40, delayMs = 3
     } catch (e: any) {
       const log = `${e?.stdout ?? ''}${e?.stderr ?? ''}`;
       if (/maximum number of installed apps|MIInstallerErrorDomain error 13|ApplicationVerificationFailed/.test(log)) throw e;
+      // devicectl/CoreDevice tunnel STUCK (it switches to a [wired] path and hangs) is NOT a lock —
+      // retrying as "waiting for unlock" is pointless + misleading. Re-throw so the caller can fall back.
+      if (/Command timeout|got stuck|could not be reached|Unable to connect to device/.test(log)) throw e;
       if (i >= tries) throw e;
       if (i === 0) process.stdout.write(`\n🔒 ${label}: device unavailable — unlock your iPhone. Waiting (auto-retries every ${delayMs / 1000}s, up to ${Math.round((tries * delayMs) / 1000)}s)…\n`);
       else process.stdout.write(`  …waiting for unlock (${i}/${tries})\n`);
