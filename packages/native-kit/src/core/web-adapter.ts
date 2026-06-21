@@ -88,7 +88,9 @@ export class WebAdapter implements NativeKitAdapter {
         typeof (window as any).webkitSpeechRecognition !== 'undefined'
           ? 'web'
           : 'none',
-      app: 'web', // openUrl via window.open; openSettings unsupported
+      app: 'web', // openUrl via window.open; openSettings/canOpenUrl unsupported
+      shortcuts: 'none', // no home-screen quick actions for a PWA
+      privacyScreen: 'none', // a browser can't hide content in the app-switcher or block screenshots
       browser: 'web', // new tab/window
       billing: 'none', // no IAP in a plain browser — wire a web checkout yourself
       push: 'none', // remote push (APNs/FCM) is native-only — web push (VAPID) is the app's own concern
@@ -394,6 +396,14 @@ export class WebAdapter implements NativeKitAdapter {
       }
       case 'app.openSettings':
         throw new KitError('UNSUPPORTED', 'No app settings page on web');
+
+      case 'app.canOpenUrl':
+        // A PWA can't probe installed apps — be honest rather than guess from the scheme.
+        return false as T;
+      case 'app.setShortcuts':
+        return undefined as T; // no home-screen quick actions in a browser — no-op (cap reported 'none')
+      case 'screen.setPrivacy':
+        return undefined as T; // a browser can't hide content in the app-switcher — no-op (cap 'none')
 
       case 'app.environment':
         // On web there's no install — report the honest 'web' source. is_emulator is native-only.

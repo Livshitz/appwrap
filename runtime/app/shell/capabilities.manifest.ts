@@ -76,10 +76,13 @@ export const MODULES: ModuleManifest[] = [
   { name: 'device', core: true, group: 'extended', capabilities: { device: 'native' } },
   { name: 'clipboard', core: true, group: 'extended', capabilities: { clipboard: 'native' } },
   { name: 'network', core: true, group: 'extended', capabilities: { network: 'native' } },
-  { name: 'screen', core: true, group: 'extended', capabilities: { screen: 'native', dialogs: 'native', orientation: 'native', keyboard: 'native' } },
+  // privacyScreen: hide content in the app-switcher / block screenshots — permission-free, cheap → core.
+  { name: 'screen', core: true, group: 'extended', capabilities: { screen: 'native', dialogs: 'native', orientation: 'native', keyboard: 'native', privacyScreen: { ios: true, android: true } } },
   // badge: app-icon badge via the always-bundled notifications.setBadge handler — iOS sets the
   // springboard badge; Android is an honest no-op (launchers own badges) → ios:true / android:false.
-  { name: 'app', core: true, group: 'system', capabilities: { app: 'native', browser: 'native', badge: { ios: true, android: false } } },
+  // app.canOpenUrl rides the always-native `app` cap (no new key). shortcuts: home-screen quick
+  // actions — iOS UIApplicationShortcutItem / Android dynamic shortcuts (API 25+).
+  { name: 'app', core: true, group: 'system', capabilities: { app: 'native', browser: 'native', badge: { ios: true, android: false }, shortcuts: { ios: true, android: true } } },
 
   // ── opt-in: permission / dependency / weight-bearing ───────────────────
   // POST_NOTIFICATIONS / VIBRATE / USE_BIOMETRIC etc. are in the template's baseline manifest already.

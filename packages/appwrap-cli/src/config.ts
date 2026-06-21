@@ -43,6 +43,19 @@ export interface AppwrapConfig {
   pwaDist: string;
   /** Custom URL scheme for deep links (e.g. "hellowrap" → hellowrap://...). */
   urlScheme?: string;
+  /** Custom URL schemes `kit.app.canOpenUrl()` may probe (e.g. `['whatsapp', 'tg']`) — covers BOTH
+   * platforms with a single declaration. Since iOS 9 / Android API 30+ a probe of an undeclared custom
+   * scheme returns false for privacy. These stamp into iOS Info.plist `LSApplicationQueriesSchemes` AND
+   * Android `<queries>` as a VIEW `<intent>` per scheme — so scheme-based `canOpenUrl` is symmetric
+   * without hand-mapping each scheme to a package. Common schemes (http/https/tel/mailto/sms) need no
+   * declaration on either platform. No-op when absent. */
+  queryUrlSchemes?: string[];
+  /** Android-only explicit package visibility for `kit.app.canOpenUrl()` (e.g. `['com.whatsapp']`) —
+   * for probing a specific package directly. Under API 30+ package visibility, `resolveActivity`
+   * returns null for undeclared packages — these stamp into AndroidManifest `<queries>` as
+   * `<package android:name="..."/>`. For scheme probes prefer `queryUrlSchemes` (cross-platform).
+   * No-op when absent. */
+  queryPackages?: string[];
   /** App icon source (≥512px square png). Defaults to the largest icon in the PWA manifest. */
   icon?: string;
   /** Loader: 'app' (default — app:// scheme, ES modules OK), 'file' (debug fallback), or 'server'

@@ -526,6 +526,30 @@ async function main() {
   tile('App', kit.app.capability, [
     ['open url', () => kit.app.openUrl('https://livx.cc')],
     ['settings', () => kit.app.openSettings()],
+    // canOpenUrl is honest out-of-the-box: https resolves everywhere (→ true); an undeclared, clearly-
+    // fictional custom scheme (→ false). To probe a REAL installed app by custom scheme (e.g. whatsapp://)
+    // declare the scheme in appwrap.config.ts `queryUrlSchemes` (stamps iOS + Android in one go).
+    ['can open https', async () => `https → ${await kit.app.canOpenUrl('https://livx.cc')}`],
+    ['can open (none)', async () => `appwrap-not-installed:// → ${await kit.app.canOpenUrl('appwrap-not-installed://x')}`],
+  ]);
+
+  // Home-screen long-press quick actions. Set 1-2; long-press the app icon to activate → onShortcut.
+  kit.app.onShortcut((id) => log(`shortcut activated → ${id}`));
+  tile('Shortcuts', kit.app.shortcutsCapability, [
+    ['set 2', async () => {
+      await kit.app.setShortcuts([
+        { id: 'new', title: 'New Item', subtitle: 'Create' },
+        { id: 'search', title: 'Search' },
+      ]);
+      return 'set — long-press the app icon';
+    }],
+    ['clear', async () => { await kit.app.setShortcuts([]); return 'cleared'; }],
+  ]);
+
+  // Privacy screen — blur in the app-switcher + block screenshots (Android FLAG_SECURE).
+  tile('Privacy screen', kit.screen.privacyCapability, [
+    ['on', async () => { await kit.screen.setPrivacy(true); return 'on — background the app to see the blur'; }],
+    ['off', async () => { await kit.screen.setPrivacy(false); return 'off'; }],
   ]);
 
   // App-icon badge — set a count on the home-screen icon; "clear" removes it.

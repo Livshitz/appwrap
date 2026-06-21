@@ -1,6 +1,6 @@
 export { NativeKit, NativeKitOptions, kit } from './core/NativeKit';
 export type { KitContext } from './core/NativeKit';
-export type { AppEnvironment, InstallSource } from './modules/app';
+export type { AppEnvironment, AppShortcut, InstallSource } from './modules/app';
 export { AppwrapAdapter } from './core/appwrap-adapter';
 export { WebAdapter } from './core/web-adapter';
 export { KitError } from './core/types';

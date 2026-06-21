@@ -1,10 +1,13 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import {
   androidScreenOrientation,
   iosOrientations,
   mergeManifest,
   normalizeOrientation,
   stampAndroidOrientation,
+  stampAndroidQueries,
   stampPlistOrientations,
 } from '../src/derive';
 
@@ -196,5 +199,45 @@ describe('stampAndroidOrientation', () => {
     const once = stampAndroidOrientation(MANIFEST, 'landscape');
     const twice = stampAndroidOrientation(once, 'landscape');
     expect(twice).toBe(once);
+  });
+});
+
+describe('stampAndroidQueries — canOpenUrl visibility (operates on the REAL manifest template)', () => {
+  // Drive the actual transform the CLI runs, against the real shipped template (not a fixture).
+  const TEMPLATE = join(import.meta.dir, '../../../runtime/App_Resources/Android/src/main/AndroidManifest.xml');
+  const MANIFEST = readFileSync(TEMPLATE, 'utf8');
+
+  test('queryUrlSchemes AND queryPackages land as both child kinds in ONE <queries> block', () => {
+    const out = stampAndroidQueries(MANIFEST, ['com.whatsapp'], ['whatsapp']);
+    // exactly one <queries> element
+    expect(out.match(/<queries>/g)?.length).toBe(1);
+    expect(out.match(/<\/queries>/g)?.length).toBe(1);
+    // both children present, inside that block
+    expect(out).toContain('<package android:name="com.whatsapp"/>');
+    expect(out).toContain(
+      '<intent><action android:name="android.intent.action.VIEW"/><data android:scheme="whatsapp"/></intent>'
+    );
+    const block = out.match(/<queries>[\s\S]*?<\/queries>/)![0];
+    expect(block).toContain('com.whatsapp');
+    expect(block).toContain('android:scheme="whatsapp"');
+  });
+
+  test('queryUrlSchemes ALONE drives Android scheme visibility (cross-platform symmetry)', () => {
+    const out = stampAndroidQueries(MANIFEST, undefined, ['tg']);
+    expect(out).toContain('<data android:scheme="tg"/>');
+    expect(out).toContain('<queries>');
+  });
+
+  test('absent → empty block, no <queries> element', () => {
+    const out = stampAndroidQueries(MANIFEST, undefined, undefined);
+    expect(out).not.toContain('<queries>');
+    expect(out).toContain('<!-- appwrap:queries -->\n\t<!-- /appwrap:queries -->');
+  });
+
+  test('idempotent — re-stamping does not duplicate', () => {
+    const once = stampAndroidQueries(MANIFEST, ['com.whatsapp'], ['whatsapp']);
+    const twice = stampAndroidQueries(once, ['com.whatsapp'], ['whatsapp']);
+    expect(twice).toBe(once);
+    expect(twice.match(/<queries>/g)?.length).toBe(1);
   });
 });

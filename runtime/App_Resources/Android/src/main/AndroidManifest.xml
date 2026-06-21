@@ -19,6 +19,9 @@
 	<!-- appwrap:permissions -->
 	<!-- /appwrap:permissions -->
 
+	<!-- appwrap:queries -->
+	<!-- /appwrap:queries -->
+
 	<application
 		android:name="com.tns.NativeScriptApplication"
 		android:allowBackup="true"

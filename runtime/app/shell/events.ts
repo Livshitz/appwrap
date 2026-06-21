@@ -4,6 +4,7 @@ import { connectivityStatus } from './handlers-extended';
 
 let pendingDeepLink: string | null = null;
 let pendingPushTap: { data: Record<string, string> } | null = null;
+let pendingShortcut: string | null = null;
 // True only once the PWA's JS has handshaked — i.e. the WebView is actually
 // running our bundle and about to subscribe. Native page-load is too early:
 // a deeplink.open emitted then lands in a WebView with no listener and is lost
@@ -25,6 +26,15 @@ export function onDeepLink(url: string): void {
   if (deepLinkInterceptor?.(url)) return;
   if (pwaReady) bridge.emit('deeplink.open', { url });
   else pendingDeepLink = url; // buffer until the PWA handshakes
+}
+
+/** A home-screen shortcut was activated (iOS performActionForShortcutItem / cold-start launchOptions;
+ * Android the launch intent's `appwrap_shortcut` extra). Buffered until the handshake like deep links
+ * (cold-start: a shortcut that launched the app would otherwise land in a WebView with no listener). */
+export function onShortcut(id: string): void {
+  if (!id) return;
+  if (pwaReady) bridge.emit('app.shortcut', { id });
+  else pendingShortcut = id;
 }
 
 /** Android: a tray notification (FCM) was tapped → re-launched the activity with the data payload as
@@ -53,6 +63,11 @@ export function onPwaHandshake(): void {
     pendingPushTap = null;
     setTimeout(() => bridge.emit('push.tap', payload), 500);
   }
+  if (pendingShortcut) {
+    const id = pendingShortcut;
+    pendingShortcut = null;
+    setTimeout(() => bridge.emit('app.shortcut', { id }), 500);
+  }
 }
 
 /** Wire lifecycle + connectivity event forwarding (the PWA subscribes to these). */
@@ -77,6 +92,11 @@ function wireAndroidDeepLinks(): void {
       if (data) onDeepLink(String(data.toString()));
       const tap = readFcmTapExtras(intent);
       if (tap) onPushTap(tap);
+      const shortcutId = intent?.getStringExtra?.('appwrap_shortcut');
+      if (shortcutId) {
+        onShortcut(String(shortcutId));
+        intent.removeExtra?.('appwrap_shortcut'); // consume — don't re-fire on the next relayout read
+      }
     } catch (e) {
       console.warn('AppWrap: intent read failed', e);
     }

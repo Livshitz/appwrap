@@ -25,6 +25,7 @@ import {
   iosOrientations,
   mergeManifest,
   stampAndroidOrientation,
+  stampAndroidQueries,
   stampPlistOrientations,
 } from './derive';
 
@@ -412,6 +413,12 @@ function stampIOSDisplayName(outDir: string, cfg: AppwrapConfig, req: NativeReqs
       `  <key>CFBundleURLTypes</key>\n  <array>\n    <dict>\n      <key>CFBundleTypeRole</key>\n      <string>Editor</string>\n      <key>CFBundleURLName</key>\n      <string>${cfg.id}</string>\n      <key>CFBundleURLSchemes</key>\n      <array>\n        <string>${cfg.urlScheme}</string>\n      </array>\n    </dict>\n  </array>`
     );
   }
+  // Schemes kit.app.canOpenUrl() may probe → LSApplicationQueriesSchemes (iOS 9+ requires declaration
+  // for custom schemes). No-op when absent.
+  if (cfg.queryUrlSchemes?.length) {
+    const items = cfg.queryUrlSchemes.map((s) => `    <string>${s}</string>`).join('\n');
+    extras.push(`  <key>LSApplicationQueriesSchemes</key>\n  <array>\n${items}\n  </array>`);
+  }
   if (extras.length) {
     src = src.replace(
       /<\/dict>\s*<\/plist>\s*$/,
@@ -644,6 +651,10 @@ function stampAndroidAppName(outDir: string, cfg: AppwrapConfig, req: NativeReqs
       /<!-- appwrap:application -->[\s\S]*?<!-- \/appwrap:application -->/,
       `<!-- appwrap:application -->\n\t\t${req.androidManifestApp.join('\n\t\t')}\n\t\t<!-- /appwrap:application -->`
     );
+    // <queries> for kit.app.canOpenUrl() visibility probes (API 30+) — idempotent marker. queryPackages
+    // → explicit <package>; queryUrlSchemes → a VIEW <intent> per scheme (symmetric with iOS's
+    // LSApplicationQueriesSchemes). See stampAndroidQueries.
+    src = stampAndroidQueries(src, cfg.queryPackages, cfg.queryUrlSchemes);
     writeFileSync(manifest, src);
   }
 }

@@ -119,6 +119,70 @@ export function registerSystemHandlers(): void {
 
   bridge.register('app.environment', () => appEnvironment());
 
+  // Probe whether the OS can open a URL. Custom schemes need declaring up-front (iOS
+  // LSApplicationQueriesSchemes via appwrap.json.queryUrlSchemes; Android <queries> via
+  // queryPackages) — common schemes (http/https/tel/mailto/sms) resolve without declaration.
+  bridge.register('app.canOpenUrl', ({ url }: { url: string }) => {
+    const target = String(url ?? '');
+    if (!target) return false;
+    if (isIOS) {
+      const nsUrl = NSURL.URLWithString(target);
+      return !!nsUrl && UIApplication.sharedApplication.canOpenURL(nsUrl);
+    }
+    if (isAndroid) {
+      const pm = Utils.android.getApplicationContext().getPackageManager();
+      const intent = new android.content.Intent(
+        android.content.Intent.ACTION_VIEW,
+        android.net.Uri.parse(target)
+      );
+      return pm.resolveActivity(intent, 0) != null;
+    }
+    return false;
+  });
+
+  // Home-screen long-press quick actions. iOS: UIApplication.shortcutItems. Android: dynamic
+  // ShortcutManager shortcuts (API 25+; no-op below) whose launch intent carries appwrap_shortcut=<id>.
+  bridge.register('app.setShortcuts', ({ items }: { items: Array<{ id: string; title: string; subtitle?: string }> }) => {
+    const list = (items ?? []).filter((i) => i && i.id && i.title);
+    if (isIOS) {
+      Utils.dispatchToMainThread(() => {
+        const arr = NSMutableArray.alloc().init();
+        for (const i of list) {
+          const item = UIApplicationShortcutItem.alloc().initWithTypeLocalizedTitleLocalizedSubtitleIconUserInfo(
+            String(i.id), String(i.title), i.subtitle ? String(i.subtitle) : null, null, null
+          );
+          arr.addObject(item);
+        }
+        UIApplication.sharedApplication.shortcutItems = arr as any;
+      });
+    } else if (isAndroid) {
+      if (android.os.Build.VERSION.SDK_INT < 25) return; // ShortcutManager is API 25+
+      const ctx = Utils.android.getApplicationContext();
+      const sm = ctx.getSystemService(android.content.Context.SHORTCUT_SERVICE); // API 25+ string const
+      if (!sm) return;
+      const launchClass = (Application.android.foregroundActivity ?? Application.android.startActivity)?.getClass();
+      const shortcuts = new java.util.ArrayList();
+      for (const i of list) {
+        const intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
+        if (launchClass) intent.setClassName(ctx, launchClass.getName());
+        intent.putExtra('appwrap_shortcut', String(i.id));
+        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK | android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        const b = new android.content.pm.ShortcutInfo.Builder(ctx, String(i.id))
+          .setShortLabel(String(i.title))
+          .setLongLabel(String(i.subtitle ?? i.title))
+          .setIntent(intent);
+        shortcuts.add(b.build());
+      }
+      sm.setDynamicShortcuts(shortcuts);
+    }
+  });
+
+  // Privacy screen — hide content in the app-switcher / block screenshots. iOS: cover the key window
+  // with a blur while inactive/backgrounded (wired via the app lifecycle below). Android: FLAG_SECURE.
+  bridge.register('screen.setPrivacy', ({ enabled }: { enabled: boolean }) => {
+    setPrivacyScreen(!!enabled);
+  });
+
   bridge.register('browser.open', ({ url, toolbarColor }: { url: string; toolbarColor?: string }) => {
     const target = String(url ?? '');
     if (!target) throw err('NATIVE_ERROR', 'browser.open: empty url');
@@ -138,4 +202,61 @@ export function registerSystemHandlers(): void {
       });
     }
   });
+}
+
+// ── privacy screen ────────────────────────────────────────────────────
+// iOS keeps the enabled flag + lazily wires the lifecycle hooks once. The cover MUST go on at
+// `willResignActive` — that fires BEFORE the app-switcher snapshot, whereas NS's suspendEvent
+// (≈ didEnterBackground) fires AFTER it, so suspendEvent alone would leak the first snapshot. We
+// observe the raw UIApplicationWillResignActiveNotification for the cover, removing it on
+// becomeActive. Android flips FLAG_SECURE immediately (also blocks screenshots).
+let privacyEnabled = false;
+let privacyCover: UIView | null = null;
+let privacyLifecycleWired = false;
+
+function setPrivacyScreen(enabled: boolean): void {
+  privacyEnabled = enabled;
+  if (isIOS) {
+    wireIosPrivacyLifecycle();
+    if (!enabled) Utils.dispatchToMainThread(removeIosPrivacyCover); // disabling mid-foreground
+  } else if (isAndroid) {
+    Utils.dispatchToMainThread(() => {
+      const activity = Application.android.foregroundActivity ?? Application.android.startActivity;
+      const FLAG_SECURE = android.view.WindowManager.LayoutParams.FLAG_SECURE;
+      const window = activity?.getWindow();
+      if (!window) return;
+      if (enabled) window.setFlags(FLAG_SECURE, FLAG_SECURE);
+      else window.clearFlags(FLAG_SECURE);
+    });
+  }
+}
+
+function wireIosPrivacyLifecycle(): void {
+  if (privacyLifecycleWired) return;
+  privacyLifecycleWired = true;
+  const center = NSNotificationCenter.defaultCenter;
+  // willResignActive → cover BEFORE the OS captures the app-switcher snapshot (the critical timing).
+  center.addObserverForNameObjectQueueUsingBlock(
+    UIApplicationWillResignActiveNotification, null, null, () => { if (privacyEnabled) addIosPrivacyCover(); }
+  );
+  // didBecomeActive → reveal again once the user returns.
+  center.addObserverForNameObjectQueueUsingBlock(
+    UIApplicationDidBecomeActiveNotification, null, null, () => removeIosPrivacyCover()
+  );
+}
+
+function addIosPrivacyCover(): void {
+  const window = UIApplication.sharedApplication.keyWindow;
+  if (!window || privacyCover) return;
+  const effect = UIBlurEffect.effectWithStyle(UIBlurEffectStyle.SystemMaterial);
+  const blur = UIVisualEffectView.alloc().initWithEffect(effect);
+  blur.frame = window.bounds;
+  blur.autoresizingMask = UIViewAutoresizing.FlexibleWidth | UIViewAutoresizing.FlexibleHeight;
+  window.addSubview(blur);
+  privacyCover = blur;
+}
+
+function removeIosPrivacyCover(): void {
+  privacyCover?.removeFromSuperview();
+  privacyCover = null;
 }

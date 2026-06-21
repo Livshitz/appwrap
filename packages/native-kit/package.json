@@ -1,6 +1,6 @@
 {
   "name": "@livx.cc/native-kit",
-  "version": "0.29.0",
+  "version": "0.30.0",
   "description": "Isomorphic native-capabilities kit for PWAs \u2014 same API in browser and in an appwrap native shell. Zero dependencies.",
   "license": "MIT",
   "author": "Elya Livshitz",

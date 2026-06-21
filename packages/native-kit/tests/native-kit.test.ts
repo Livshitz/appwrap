@@ -565,6 +565,95 @@ describe('App badge', () => {
   });
 });
 
+describe('App — canOpenUrl + shortcuts (Loop B)', () => {
+  test('canOpenUrl + setShortcuts route namespaced; onShortcut forwards the id', async () => {
+    const calls: Array<[string, unknown]> = [];
+    const handlers = new Map<string, (p: unknown) => void>();
+    const kit = new NativeKit({
+      adapters: [fakeAdapter({
+        handshake: async () => ({ ...HS, capabilities: { app: 'native', shortcuts: 'native' } }),
+        invoke: async <T,>(m: string, p?: unknown) => { calls.push([m, p]); return (m === 'app.canOpenUrl' ? true : undefined) as T; },
+        on: (e, cb) => { handlers.set(e, cb); return () => {}; },
+      })],
+    });
+    await kit.ready();
+    expect(kit.app.shortcutsCapability).toBe('native');
+
+    expect(await kit.app.canOpenUrl('whatsapp://send')).toBe(true);
+    await kit.app.setShortcuts([{ id: 'new', title: 'New', subtitle: 'Create' }]);
+    expect(calls).toEqual([
+      ['app.canOpenUrl', { url: 'whatsapp://send' }],
+      ['app.setShortcuts', { items: [{ id: 'new', title: 'New', subtitle: 'Create' }] }],
+    ]);
+
+    const ids: string[] = [];
+    kit.app.onShortcut((id) => ids.push(id));
+    handlers.get('app.shortcut')!({ id: 'search' });
+    expect(ids).toEqual(['search']);
+  });
+
+  test('web: canOpenUrl is honestly false; setShortcuts is a no-op; caps report none', async () => {
+    const { WebAdapter } = await import('../src/core/web-adapter');
+    (globalThis as any).window = { Notification: function () {} };
+    (globalThis as any).navigator = {};
+    (globalThis as any).screen = {};
+    (globalThis as any).location = { hostname: 'x' };
+    (globalThis as any).document = { title: 't' };
+    try {
+      const caps = (await new WebAdapter().handshake()).capabilities;
+      expect(caps.shortcuts).toBe('none');
+      expect(await new WebAdapter().invoke('app.canOpenUrl', { url: 'whatsapp://x' })).toBe(false);
+      expect(await new WebAdapter().invoke('app.setShortcuts', { items: [{ id: 'a', title: 'A' }] })).toBeUndefined();
+    } finally {
+      for (const k of ['window', 'navigator', 'screen', 'location', 'document']) delete (globalThis as any)[k];
+    }
+  });
+});
+
+describe('Screen — privacy screen (Loop B)', () => {
+  test('setPrivacy routes namespaced with the enabled flag; capability gates', async () => {
+    const calls: Array<[string, unknown]> = [];
+    const kit = new NativeKit({
+      adapters: [fakeAdapter({
+        handshake: async () => ({ ...HS, capabilities: { privacyScreen: 'native' } }),
+        invoke: async <T,>(m: string, p?: unknown) => { calls.push([m, p]); return undefined as T; },
+      })],
+    });
+    await kit.ready();
+    expect(kit.screen.privacyCapability).toBe('native');
+    await kit.screen.setPrivacy(true);
+    await kit.screen.setPrivacy(false);
+    expect(calls).toEqual([
+      ['screen.setPrivacy', { enabled: true }],
+      ['screen.setPrivacy', { enabled: false }],
+    ]);
+  });
+
+  test('web: privacyScreen cap is none; setPrivacy is an honest no-op', async () => {
+    const { WebAdapter } = await import('../src/core/web-adapter');
+    (globalThis as any).window = {};
+    (globalThis as any).navigator = {};
+    (globalThis as any).screen = {};
+    (globalThis as any).location = { hostname: 'x' };
+    (globalThis as any).document = { title: 't' };
+    try {
+      expect((await new WebAdapter().handshake()).capabilities.privacyScreen).toBe('none');
+      expect(await new WebAdapter().invoke('screen.setPrivacy', { enabled: true })).toBeUndefined();
+    } finally {
+      for (const k of ['window', 'navigator', 'screen', 'location', 'document']) delete (globalThis as any)[k];
+    }
+  });
+
+  test('manifest: shortcuts + privacyScreen resolve native on both platforms (core, never stripped)', async () => {
+    const { buildCapabilityMap } = await import('../../../runtime/app/shell/capabilities.manifest');
+    for (const platform of ['ios', 'android'] as const) {
+      const map = buildCapabilityMap(new Set<string>(), platform); // empty active set → core still on
+      expect(map.shortcuts).toBe('native');
+      expect(map.privacyScreen).toBe('native');
+    }
+  });
+});
+
 describe('Billing — swappable validator seam', () => {
   const NATIVE_ENTS = [{ productId: 'pro_monthly', active: true }];
 

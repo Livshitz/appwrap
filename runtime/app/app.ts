@@ -1,5 +1,5 @@
 import { Application, isIOS } from '@nativescript/core';
-import { onDeepLink } from './shell/events';
+import { onDeepLink, onShortcut } from './shell/events';
 import { iosOrientationMask } from './shell/orientation';
 import { installForegroundNotificationDelegate } from './shell/handlers-extended';
 import { onApnsToken, onApnsError, onRemoteMessage } from './shell/handlers-push';
@@ -22,7 +22,20 @@ if (isIOS) {
         installForegroundNotificationDelegate();
         const url = launchOptions?.objectForKey(UIApplicationLaunchOptionsURLKey);
         if (url) onDeepLink(url.absoluteString ?? String(url));
+        // Cold-launch from a home-screen quick action — Apple delivers it ONLY here in launchOptions
+        // (performActionForShortcutItem is NOT called for the launch action). Buffered until handshake.
+        const shortcut = launchOptions?.objectForKey(UIApplicationLaunchOptionsShortcutItemKey);
+        if (shortcut) onShortcut(String(shortcut.type));
         return true;
+      },
+      // Warm activation of a quick action (app already running/backgrounded).
+      applicationPerformActionForShortcutItemCompletionHandler(
+        _app: UIApplication,
+        shortcutItem: UIApplicationShortcutItem,
+        completionHandler: (done: boolean) => void
+      ) {
+        onShortcut(String(shortcutItem.type));
+        completionHandler(true);
       },
       applicationOpenURLOptions(_app: UIApplication, url: NSURL, _options: NSDictionary<string, any>) {
         console.log('AppWrap: openURL', url.absoluteString);

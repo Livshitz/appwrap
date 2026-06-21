@@ -11,12 +11,28 @@ export type OrientationLock =
   | 'landscape-right'
   | 'any';
 
-/** Screen-level controls. Today: orientation; brightness/keepAwake live on `kit.ui`. */
+/** Screen-level controls. Today: orientation + privacy screen; brightness/keepAwake live on `kit.ui`. */
 export class ScreenModule {
   readonly orientation: OrientationController;
 
-  constructor(kit: NativeKit) {
+  constructor(private kit: NativeKit) {
     this.orientation = new OrientationController(kit);
+  }
+
+  /** 'native' on a shell · else 'none' — the browser can't hide content in the app-switcher or block
+   *  screenshots. Branch on this, not try/catch. */
+  get privacyCapability() {
+    return this.kit.capability('privacyScreen');
+  }
+
+  /**
+   * Privacy screen — hide app content in the app-switcher / on backgrounding and block screenshots.
+   * `true` enables, `false` disables (the state persists across background/foreground until changed).
+   * iOS covers the window with a blur while inactive/backgrounded; Android sets `FLAG_SECURE` (which
+   * also blocks screenshots and screen recording — expected). Web is an honest no-op.
+   */
+  setPrivacy(enabled: boolean): Promise<void> {
+    return this.kit.invoke('screen.setPrivacy', { enabled });
   }
 }
 

@@ -97,3 +97,27 @@ export function stampAndroidOrientation(src: string, value: string): string {
     return stripped.replace(/(android:name="[^"]*")/, `$1\n\t\t\tandroid:screenOrientation="${value}"`);
   });
 }
+
+/**
+ * Rewrite the `<!-- appwrap:queries -->…<!-- /appwrap:queries -->` block in an AndroidManifest string
+ * for `kit.app.canOpenUrl()` visibility probes (API 30+). Both child kinds live in ONE `<queries>`:
+ *  - each `queryPackages` entry → explicit `<package android:name="…"/>` (Android-only package probe);
+ *  - each `queryUrlSchemes` entry → a VIEW `<intent>` on that scheme, so a custom-scheme probe is
+ *    symmetric with iOS's `LSApplicationQueriesSchemes` (no hand-mapping scheme→package needed).
+ * Pure + idempotent: always rewrites the marker block, so a re-sync never duplicates. No-op (empty
+ * block) when both lists are absent.
+ */
+export function stampAndroidQueries(src: string, queryPackages?: string[], queryUrlSchemes?: string[]): string {
+  const children = [
+    ...(queryPackages ?? []).map((p) => `\t\t<package android:name="${p}"/>`),
+    ...(queryUrlSchemes ?? []).map(
+      (s) => `\t\t<intent><action android:name="android.intent.action.VIEW"/><data android:scheme="${s}"/></intent>`
+    ),
+  ];
+  return src.replace(
+    /<!-- appwrap:queries -->[\s\S]*?<!-- \/appwrap:queries -->/,
+    children.length
+      ? `<!-- appwrap:queries -->\n\t<queries>\n${children.join('\n')}\n\t</queries>\n\t<!-- /appwrap:queries -->`
+      : `<!-- appwrap:queries -->\n\t<!-- /appwrap:queries -->`
+  );
+}
