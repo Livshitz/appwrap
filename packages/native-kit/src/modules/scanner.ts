@@ -53,7 +53,9 @@ export class ScannerModule {
 
   /** Open the scanner; resolve the first code, or `{ cancelled: true }` if dismissed. */
   scan(opts: ScanOptions = {}): Promise<ScanResult | ScanCancelled> {
-    return this.kit.invoke('scanner.scan', opts);
+    // Open-ended: the camera stays up until a code is found or the user cancels — lining up a QR
+    // routinely takes longer than the 10s invoke default, which would abandon the scan mid-aim.
+    return this.kit.invoke('scanner.scan', opts, { timeoutMs: 300_000 });
   }
 
   /** Dismiss an in-progress {@link scan} (its promise then resolves `{ cancelled: true }`). */

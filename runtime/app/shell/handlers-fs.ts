@@ -57,13 +57,17 @@ function registerIosFs(): void {
     if (!fm().fileExistsAtPath(full)) throw err('NATIVE_ERROR', `No such file: ${path}`);
     const data = NSData.dataWithContentsOfFile(full);
     if (!data) throw err('NATIVE_ERROR', `Read failed: ${path}`);
-    if (encoding === 'base64') return data.base64EncodedStringWithOptions(0 as unknown as NSDataBase64EncodingOptions);
-    return NSString.alloc().initWithDataEncoding(data, 4 /* NSUTF8StringEncoding */) as unknown as string;
+    // String(...) FORCES a JS string. Without it the NSString proxy goes over the bridge and
+    // JSON-serializes to `{}` — `as unknown as string` is a compile-time no-op, not a conversion.
+    if (encoding === 'base64') return String(data.base64EncodedStringWithOptions(0 as unknown as NSDataBase64EncodingOptions));
+    return String(NSString.alloc().initWithDataEncoding(data, 4 /* NSUTF8StringEncoding */));
   });
 
-  bridge.register('fs.write', ({ path, data, dir = 'data', encoding = 'utf8', recursive }: any) => {
+  bridge.register('fs.write', ({ path, data, dir = 'data', encoding = 'utf8' }: any) => {
     const full = iosResolve(path, dir);
-    if (recursive) ensureParentIos(full);
+    // Always create the parent dir — writing to a sub-path (e.g. 'demo/note.txt') otherwise fails
+    // ("Write failed"), which is a footgun. fs.append already does this; match it.
+    ensureParentIos(full);
     const blob = encoding === 'base64'
       ? NSData.alloc().initWithBase64EncodedStringOptions(data, 0 as unknown as NSDataBase64DecodingOptions)
       : (NSString.stringWithString(String(data ?? '')) as any).dataUsingEncoding(4);
@@ -245,9 +249,10 @@ function registerAndroidFs(): void {
     return new java.lang.String(bytes, 'UTF-8').toString();
   });
 
-  bridge.register('fs.write', ({ path, data, dir = 'data', encoding = 'utf8', recursive }: any) => {
+  bridge.register('fs.write', ({ path, data, dir = 'data', encoding = 'utf8' }: any) => {
     const file = androidFile(path, dir);
-    if (recursive) file.getParentFile()?.mkdirs();
+    // Always create the parent dir (match fs.append + iOS) — writing to a sub-path otherwise fails.
+    file.getParentFile()?.mkdirs();
     writeAndroid(file, data, encoding, false);
     return { uri: android.net.Uri.fromFile(file).toString() };
   });

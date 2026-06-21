@@ -17,7 +17,11 @@ declare const AVCaptureDevicePositionBack: any;
 declare const AVCaptureDeviceDiscoverySession: any;
 declare const AVMediaTypeVideo: any;
 declare const AVCaptureDeviceTypeBuiltInWideAngleCamera: any;
-declare const dispatch_get_main_queue: any;
+declare const AVCaptureMetadataOutputObjectsDelegate: any;
+// `dispatch_get_main_queue()` is a C macro, NOT a bridged symbol — NativeScript can't see it
+// ("is not defined" at runtime). `dispatch_queue_create` IS a real bridged libdispatch function;
+// a dedicated serial queue is the correct delegate queue for AVCaptureMetadataOutput anyway.
+declare function dispatch_queue_create(label: string, attr: any): any;
 declare const android: any, com: any;
 
 const err = (code: string, message: string) => Object.assign(new Error(message), { code });
@@ -79,7 +83,9 @@ function registerIos(): void {
     const p = pending;
     pending = null;
     dismiss();
-    p?.resolve(value);
+    // The metadata delegate now fires on a background serial queue; the bridge reply drives
+    // WKWebView.evaluateJavaScript, which must run on the main thread — so hop back to resolve.
+    Utils.dispatchToMainThread(() => p?.resolve(value));
   };
 
   bridge.register('scanner.cancel', () => { if (pending) settle({ cancelled: true }); });
@@ -110,7 +116,8 @@ function registerIos(): void {
           if (!session.canAddOutput(output)) { pending = null; reject(err('NATIVE_ERROR', 'Cannot add metadata output')); return; }
           session.addOutput(output);
 
-          // Delegate fires on the main queue → settle directly (WKWebView response must be main-thread).
+          // Delegate fires on a dedicated serial queue (see dispatch_queue_create below); settle()
+          // hops back to the main thread for the WKWebView bridge reply.
           const DelegateClass = (NSObject as any).extend(
             {
               captureOutputDidOutputMetadataObjectsFromConnection(_out: any, objects: any, _conn: any) {
@@ -121,10 +128,14 @@ function registerIos(): void {
                 settle({ value: String(value), format: iosFormatName(obj.type) });
               },
             },
-            { protocols: [] }
+            // The protocol MUST be declared: NativeScript uses it to map the camelCase JS method to the
+            // colonated selector `captureOutput:didOutputMetadataObjects:fromConnection:`. With an empty
+            // protocols list the method registers under the wrong selector and AVFoundation never calls
+            // it — the scanner opens but never decodes.
+            { protocols: [AVCaptureMetadataOutputObjectsDelegate] }
           );
           activeDelegate = DelegateClass.new();
-          output.setMetadataObjectsDelegateQueue(activeDelegate, dispatch_get_main_queue());
+          output.setMetadataObjectsDelegateQueue(activeDelegate, dispatch_queue_create('cc.livx.scanner.metadata', null));
           // metadataObjectTypes must be set AFTER addOutput (the available set is session-derived).
           output.metadataObjectTypes = iosFormatTypes(params?.formats) as any;
 

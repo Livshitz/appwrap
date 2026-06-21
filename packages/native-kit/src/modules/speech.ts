@@ -68,7 +68,9 @@ export class SpeechModule {
 
   /** Speak `text` aloud; resolves when the utterance finishes (or is stopped). */
   speak(text: string, opts: SpeakOptions = {}): Promise<void> {
-    return this.kit.invoke('speech.speak', { text, ...opts });
+    // Resolves only when the utterance (or its queue) finishes — easily exceeds the 10s invoke
+    // default for longer text or back-to-back speak() calls, dropping the result. Give it room.
+    return this.kit.invoke('speech.speak', { text, ...opts }, { timeoutMs: 120_000 });
   }
 
   /** Cancel the current/queued utterance immediately. */
@@ -84,7 +86,9 @@ export class SpeechModule {
   /** Start capturing the mic; resolves the FINAL transcript. With `{ partial:true }`, interim
    *  results stream via {@link onPartial}. Throws `KitError('UNSUPPORTED')` where STT is absent. */
   listen(opts: ListenOptions = {}): Promise<string> {
-    return this.kit.invoke('speech.listen', opts);
+    // Open-ended: resolves on the final result or when stopListening() is called — a person may take
+    // a while to speak, so it must not be cut off by the 10s invoke default.
+    return this.kit.invoke('speech.listen', opts, { timeoutMs: 600_000 });
   }
 
   /** Stop capture early; the pending {@link listen} resolves with the best transcript so far. */
