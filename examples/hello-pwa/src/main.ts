@@ -25,6 +25,9 @@ const $ = (id: string) => document.getElementById(id)!;
 function log(msg: string) {
   const lines = $('loglines');
   lines.textContent = `${new Date().toTimeString().slice(0, 8)} ${msg}\n` + lines.textContent;
+  // Also emit to the console so the native shell forwards it (`appwrap logs ios`) — lets every
+  // tile result be verified on-device headlessly, not just read off the screen.
+  console.log('[demo]', msg);
 }
 
 /** Single-line "last result" — replaced atomically so native a11y re-reads it reliably. */
