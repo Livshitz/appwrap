@@ -24,6 +24,9 @@ interface PushToken { platform: 'apns' | 'fcm'; token: string; }
 /** iOS AppDelegate → APNs device token arrived. Resolve any pending register() + cache. */
 export function onApnsToken(hexToken: string): void {
   cachedToken = hexToken;
+  // Log the FULL token so it's readable headlessly (`appwrap logs ios`) to send a test push —
+  // mirrors the Android FCM boot-log. The token alone isn't a secret (you still need the APNs key).
+  console.log('[push] APNs token: ' + hexToken);
   if (pendingRegister) {
     pendingRegister.resolve({ platform: 'apns', token: hexToken });
     pendingRegister = null;
