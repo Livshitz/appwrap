@@ -3,6 +3,11 @@ import { bridge } from './bridge';
 import { SHELL_CONFIG } from './config';
 import { setPendingBackgroundTaskId } from './background-context';
 import { CustomWebView } from './custom-webview';
+// Android-only WorkManager Worker (@JavaProxy + `extends androidx.work.Worker`). Kept in a `.android.ts`
+// file so it's NEVER evaluated on iOS — a top-level Android native class in a shared module dereferences
+// `@JavaProxy`/`androidx` at module load, which are undefined on iOS → the whole ES module graph fails to
+// instantiate → hard launch crash. iOS resolves the `.ios.ts` stub; registerAndroid() is the only user.
+import { AppwrapBackgroundWorker } from './background-worker';
 
 // BackgroundTasks (iOS), NSDate, and the `android`/`java` namespaces resolve from the full SDK
 // (@nativescript/types-ios + types-android) — no declares needed.
@@ -58,7 +63,7 @@ const pendingRuns = new Map<string, PendingRun>();
 /** Build an offscreen WebView, attach the bridge, and load the app so its handshake reports `id`. The
  * returned promise resolves when the JS handler calls `backgroundTask.finish` (or `abort()` fires).
  * REUSES `CustomWebView` (scheme handler + bridge injection) — no duplicated transport. */
-function runHeadless(id: string): Promise<boolean> {
+export function runHeadless(id: string): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     setPendingBackgroundTaskId(id); // the next handshake reports this wake id
     const webView = new CustomWebView();
@@ -109,7 +114,7 @@ function loadAppInto(webView: CustomWebView, id: string, attempt = 0): void {
 
 /** Resolve an in-flight headless run (called by `backgroundTask.finish`, the safety abort, or a load
  * failure). Tears the offscreen WebView's bridge attachment down. Idempotent. */
-function finishRun(id: string, success: boolean): void {
+export function finishRun(id: string, success: boolean): void {
   const run = pendingRuns.get(id);
   if (!run) return;
   pendingRuns.delete(id);
@@ -222,7 +227,7 @@ function registerAndroid(): void {
     // WorkManager periodic floor is 15 min; clamp a smaller hint up so enqueue doesn't reject it.
     const ms = Math.max(15 * 60_000, Number(p?.minIntervalMs ?? 15 * 60_000));
     const builder = new androidx.work.PeriodicWorkRequest.Builder(
-      AppwrapBackgroundWorker.class,
+      (AppwrapBackgroundWorker as any).class,
       ms, java.util.concurrent.TimeUnit.MILLISECONDS
     );
     // The id rides as input data → the Worker reads it to drive the matching JS handler.
@@ -249,42 +254,5 @@ function registerAndroid(): void {
   });
 }
 
-/**
- * WorkManager headless Worker — created by WorkManager on a background launch. `doWork()` posts to the
- * MAIN looper (the WebView must be built + driven on the UI thread), runs the headless WebView loop for
- * the input task id, and blocks the worker thread on a `CountDownLatch` until `backgroundTask.finish`
- * (or a timeout). Returns success/failure; WorkManager handles periodic rescheduling.
- *
- * ⚠ DEVICE-UNVERIFIED — compiles only (see the file header).
- */
-@NativeClass()
-@JavaProxy('cc.livx.appwrap.AppwrapBackgroundWorker')
-export class AppwrapBackgroundWorker extends androidx.work.Worker {
-  constructor(context: any, params: any) {
-    super(context, params);
-  }
-
-  doWork(): any {
-    const id = this.getInputData().getString('appwrap.taskId') ?? '';
-    if (!id) return androidx.work.ListenableWorker.Result.failure();
-
-    const latch = new java.util.concurrent.CountDownLatch(1);
-    const result = { success: false };
-    Utils.dispatchToMainThread(() => {
-      runHeadless(id)
-        .then((ok: boolean) => { result.success = ok; latch.countDown(); })
-        .catch(() => { latch.countDown(); });
-    });
-    // Block the worker thread (bounded — below the WorkManager 10-min ceiling) until the JS handler
-    // finishes. A timeout returns failure so WorkManager retries on its schedule.
-    const completed = latch.await(9, java.util.concurrent.TimeUnit.MINUTES);
-    if (!completed) finishRun(id, false);
-    return completed && result.success
-      ? androidx.work.ListenableWorker.Result.success()
-      : androidx.work.ListenableWorker.Result.failure();
-  }
-}
-
-// Reference the Worker class so the bundler/NS metadata retains the JavaProxy (mirrors how the FCM
-// service is kept alive via its import side-effect). Without a reference the class can be tree-shaken.
-void AppwrapBackgroundWorker;
+// The WorkManager headless Worker (@JavaProxy `AppwrapBackgroundWorker`) lives in
+// `background-worker.android.ts` — see the import at the top of this file for WHY it can't be here.
