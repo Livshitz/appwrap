@@ -15,9 +15,9 @@ jobs:
   testflight:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with: { node-version: 22 }
       - run: bun install && bun run build.ts
       # Pin global tools — unpinned installs can grab a breaking release mid-flight. Bump deliberately.
