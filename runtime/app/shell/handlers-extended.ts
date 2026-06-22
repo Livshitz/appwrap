@@ -174,11 +174,11 @@ export function registerExtendedHandlers(): void {
   bridge.register('storage.secure.get', async ({ key }: { key: string }) =>
     (await secure.get({ key: `kit:${key}` })) ?? null
   );
-  bridge.register('storage.secure.set', ({ key, value }: { key: string; value: string }) =>
-    secure.set({ key: `kit:${key}`, value: String(value ?? '') }).then(() => undefined)
+  bridge.register('storage.secure.set', ({ key, value }: { key: string; value: string }): Promise<void> =>
+    secure.set({ key: `kit:${key}`, value: String(value ?? '') }).then((): void => undefined)
   );
-  bridge.register('storage.secure.remove', ({ key }: { key: string }) =>
-    secure.remove({ key: `kit:${key}` }).then(() => undefined)
+  bridge.register('storage.secure.remove', ({ key }: { key: string }): Promise<void> =>
+    secure.remove({ key: `kit:${key}` }).then((): void => undefined)
   );
 
   // ── notifications (UNUserNotificationCenter, iOS) ──────────────────

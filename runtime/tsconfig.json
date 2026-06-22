@@ -5,6 +5,7 @@
     "moduleResolution": "bundler",
     "lib": ["es2021", "dom"],
     "experimentalDecorators": true,
+    "noImplicitAny": true,
     "removeComments": false,
     "noEmitHelpers": true,
     "noEmitOnError": true,
