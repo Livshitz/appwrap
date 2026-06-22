@@ -1,6 +1,6 @@
 {
   "name": "@livx.cc/appwrap",
-  "version": "0.28.2",
+  "version": "0.29.0",
   "description": "Wrap any PWA into a native app with native capabilities (appwrap runtime + @livx.cc/native-kit).",
   "license": "MIT",
   "author": "Elya Livshitz",
