@@ -500,6 +500,11 @@ async function main() {
       const c = await kit.contacts.pick();
       return c.picked ? `${c.name} ${c.phones?.[0] ?? ''}`.trim() : c;
     }],
+    ['scan all (getAll)', async () => {
+      const { contacts } = await kit.contacts.getAll(); // full address book (needs Contacts permission)
+      const first = contacts[0];
+      return `${contacts.length} contacts${first ? ` · e.g. ${first.name ?? '?'} ${first.phones?.[0] ?? ''}`.trim() : ''}`;
+    }],
   ]);
 
   tile('Calendar', kit.calendar.capability, [
