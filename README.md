@@ -186,7 +186,8 @@ kit.ui.syncThemeColor();                          // <meta name=theme-color> →
 await kit.reviews.requestReview();                // in-app review (opt-in `reviews` module): iOS StoreKit · Android Play In-App Review (surfaces only on a Play-track install; sideload/emulator no-ops)
 const stopGeo = await kit.geo.watch((pos) => {}); // streaming position
 const stopMotion = await kit.motion.watch((s) => {}); // accelerometer+gyro ~10Hz
-await kit.contacts.pick();                        // CNContactPicker (no permission needed)
+await kit.contacts.pick();                        // CNContactPicker — pick ONE (no permission prompt)
+await kit.contacts.getAll();                       // full address book (needs Contacts permission); { contacts: [{name,phones,emails}] }
 await kit.calendar.createEvent({ title: 'Demo' }); // EventKit (needs `calendar` permission)
 await kit.photos.capture();                       // camera (UNSUPPORTED on simulator)
 await kit.photos.pick({ dataUrl: true });          // also returns a downscaled JPEG data URL
