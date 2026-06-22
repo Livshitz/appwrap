@@ -132,7 +132,10 @@ export class BillingModule {
     if (this.capability !== 'native') {
       throw new KitError('UNSUPPORTED', 'The in-app subscriptions sheet is iOS-only (StoreKit 2). Use manageSubscriptions() on web/Android.');
     }
-    return this.kit.invoke('billing.manageSubscriptionsSheet');
+    // The sheet resolves only when the USER dismisses it (seconds to minutes), so the default 10s
+    // invoke timeout would fire mid-sheet and make the caller think it failed → a spurious fallback.
+    // Give it a long window; a dismissed-but-unreported sheet just leaves the promise pending (harmless).
+    return this.kit.invoke('billing.manageSubscriptionsSheet', undefined, { timeoutMs: 600_000 });
   }
 
   /** Out-of-band transactions (renewals, Ask-to-Buy, cross-device). Native streams only. */
