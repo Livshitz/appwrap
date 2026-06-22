@@ -46,7 +46,13 @@ platform :ios do
 
     # Wait for App Store Connect to finish processing and FAIL if it doesn't — Apple can accept the
     # upload yet silently drop the build (e.g. an out-of-range CFBundleVersion). skip:true hides that.
-    upload_to_testflight(api_key: api_key, skip_waiting_for_build_processing: false, wait_processing_timeout_duration: 1800)
+    # APPWRAP_TF_WAIT_TIMEOUT (seconds) tunes the wait: real builds can exceed 30 min under Apple
+    # processing load and crash the lane (BuildWatcher exceeded) — default to 1h, raise it if needed.
+    # Guard BOTH unset (nil) and empty/blank env: nil.to_i and "".to_i are 0, which would crash the
+    # lane instantly (BuildWatcher exceeded '0'). Only a positive integer overrides the 3600 default.
+    tf_wait_env = ENV['APPWRAP_TF_WAIT_TIMEOUT'].to_s.strip
+    tf_wait_timeout = tf_wait_env.to_i > 0 ? tf_wait_env.to_i : 3600
+    upload_to_testflight(api_key: api_key, skip_waiting_for_build_processing: false, wait_processing_timeout_duration: tf_wait_timeout)
   end
 end
 

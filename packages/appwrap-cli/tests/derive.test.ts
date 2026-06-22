@@ -3,14 +3,60 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
   androidScreenOrientation,
+  deriveBuild,
   iosOrientations,
   mergeManifest,
   normalizeOrientation,
+  resolveBuildNumber,
   stampAndroidOrientation,
   stampAndroidQueries,
   stampPlistBackgroundTasks,
   stampPlistOrientations,
 } from '../src/derive';
+
+describe('resolveBuildNumber — named strategies + precedence', () => {
+  const NOW = new Date(Date.UTC(2026, 5, 22, 14, 5)); // 2026-06-22 14:05 UTC
+  const UINT32_MAX = 4294967295;
+
+  test("'timestamp' → 10-digit YYMMDDHHMM, ≤ UInt32 (iOS CFBundleVersion safe)", () => {
+    const n = resolveBuildNumber({ version: '1.2.3', buildNumber: 'timestamp' }, undefined, NOW);
+    expect(n).toBe(2606221405);
+    expect(String(n)).toHaveLength(10);
+    expect(n).toBeLessThanOrEqual(UINT32_MAX);
+  });
+
+  test("'epoch' → unix seconds (~1.78e9, Android-safe)", () => {
+    const n = resolveBuildNumber({ version: '1.2.3', buildNumber: 'epoch' }, undefined, NOW);
+    expect(n).toBe(Math.floor(NOW.getTime() / 1000));
+    expect(n).toBeGreaterThan(1.7e9);
+    expect(n).toBeLessThan(1.8e9);
+  });
+
+  test('explicit number passes through (number or numeric string)', () => {
+    expect(resolveBuildNumber({ version: '1.2.3', buildNumber: 4242 }, undefined, NOW)).toBe(4242);
+    expect(resolveBuildNumber({ version: '1.2.3', buildNumber: '4242' }, undefined, NOW)).toBe(4242);
+  });
+
+  test('env override WINS over a strategy', () => {
+    expect(resolveBuildNumber({ version: '1.2.3', buildNumber: 'timestamp' }, '999', NOW)).toBe(999);
+  });
+
+  test('unknown string falls back to deriveBuild (never crashes)', () => {
+    expect(resolveBuildNumber({ version: '1.4.12', buildNumber: 'bogus' }, undefined, NOW)).toBe(
+      deriveBuild('1.4.12')
+    );
+  });
+
+  test('absent buildNumber → deriveBuild default', () => {
+    expect(resolveBuildNumber({ version: '0.2.1' }, undefined, NOW)).toBe(201);
+  });
+
+  test('empty/whitespace env is ignored (does not win)', () => {
+    expect(resolveBuildNumber({ version: '0.2.1', buildNumber: 'epoch' }, '', NOW)).toBe(
+      Math.floor(NOW.getTime() / 1000)
+    );
+  });
+});
 
 describe('mergeManifest — precedence (config > manifest > default)', () => {
   const MF = {

@@ -113,8 +113,12 @@ export interface AppwrapConfig {
   >;
   /** Monotonic build identifier. Stores reject a re-upload unless this is HIGHER than the last:
    * iOS `CFBundleVersion`, Android `versionCode` (the marketing `version` stays the user-facing
-   * string). Default: an integer derived from `version` (0.2.1 → 201). Set explicitly from a CI
-   * run number for fleet builds of the same marketing version. */
+   * string). Default: an integer derived from `version` (0.2.1 → 201). Set an explicit number from a
+   * CI run for fleet builds of one marketing version, OR a named strategy string (resolved by the
+   * framework so it can't drift across branches):
+   *   - `'timestamp'` — YYMMDDHHMM UTC (e.g. 2606221405). iOS-ONLY: exceeds Android's versionCode cap.
+   *   - `'epoch'` — unix seconds. Android-safe.
+   * (`APPWRAP_BUILD_NUMBER` env always wins; an unknown string falls back to the derived default.) */
   buildNumber?: string | number;
   /** iOS export-compliance. `ITSAppUsesNonExemptEncryption` — stamped `false` by default (skips the
    * per-upload prompt). Set `true` only if the app uses non-exempt encryption. */

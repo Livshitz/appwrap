@@ -47,6 +47,56 @@ export function mergeManifest<
   return cfg;
 }
 
+/** Marketing version → a monotonic integer build (0.2.1 → 201; 1.4.12 → 10412). Stable & increasing
+ * across semver bumps so store re-uploads are always accepted without a manual bump. */
+export function deriveBuild(version: string): number {
+  const [maj = 0, min = 0, patch = 0] = version.split('.').map((n) => parseInt(n, 10) || 0);
+  return maj * 10000 + min * 100 + patch;
+}
+
+/** Named build-number strategies. Live ONCE here so apps opt into a name instead of copying the
+ * stamping logic into their config (which drifts across branches). All return a single integer.
+ *  - `timestamp`: human-readable YYMMDDHHMM (UTC), e.g. 2026-06-22 14:05 → 2606221405. ≈2.6e9, ≤ the
+ *    iOS CFBundleVersion UInt32 cap (4294967295) until ~2042 — but it EXCEEDS Android versionCode's
+ *    2.1e9 cap, so this strategy is iOS-ONLY.
+ *  - `epoch`: unix seconds (Math.floor(Date.now()/1000)), ≈1.78e9 — Android-safe. */
+const BUILD_STRATEGIES: Record<string, (now: Date) => number> = {
+  timestamp: (now) => {
+    const p = (n: number) => String(n).padStart(2, '0');
+    const yy = now.getUTCFullYear() % 100;
+    return Number(
+      `${p(yy)}${p(now.getUTCMonth() + 1)}${p(now.getUTCDate())}${p(now.getUTCHours())}${p(now.getUTCMinutes())}`
+    );
+  },
+  epoch: (now) => Math.floor(now.getTime() / 1000),
+};
+
+/**
+ * Resolve the monotonic build number (iOS CFBundleVersion / Android versionCode). Pure: the CLI
+ * passes the `APPWRAP_BUILD_NUMBER` env value in (no process.env read here, so it unit-tests).
+ * Precedence: env (CI run #) > explicit numeric `buildNumber` > named strategy > derived from version.
+ * An unrecognized strategy string falls back to `deriveBuild` (never crashes).
+ */
+export function resolveBuildNumber(
+  cfg: { version: string; buildNumber?: string | number },
+  envBuildNumber?: string,
+  now: Date = new Date()
+): number {
+  if (envBuildNumber != null && envBuildNumber !== '') {
+    const n = parseInt(envBuildNumber, 10);
+    if (!Number.isNaN(n)) return n;
+  }
+  if (cfg.buildNumber != null) {
+    // A numeric value (number or numeric string) is the literal build number.
+    const n = parseInt(String(cfg.buildNumber), 10);
+    if (!Number.isNaN(n)) return n;
+    // Non-numeric → a strategy NAME. Map it, or fall back to deriveBuild for an unknown string.
+    const strategy = BUILD_STRATEGIES[String(cfg.buildNumber).trim()];
+    if (strategy) return strategy(now);
+  }
+  return deriveBuild(cfg.version);
+}
+
 /**
  * Collapse a PWA web-manifest `orientation` value to our three states. The manifest spec allows
  * `portrait`/`landscape` plus the `-primary`/`-secondary`/`*-up`/`natural` variants — we don't model

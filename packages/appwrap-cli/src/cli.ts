@@ -24,6 +24,7 @@ import {
   androidScreenOrientation,
   iosOrientations,
   mergeManifest,
+  resolveBuildNumber,
   stampAndroidOrientation,
   stampAndroidQueries,
   stampPlistBackgroundTasks,
@@ -45,31 +46,15 @@ const execErrText = (e: unknown): string => {
   return `${err.stdout ?? ''}${err.stderr ?? ''}`;
 };
 
-/** Marketing version → a monotonic integer build (0.2.1 → 201; 1.4.12 → 10412). Stable & increasing
- * across semver bumps so store re-uploads are always accepted without a manual bump. */
-function deriveBuild(version: string): number {
-  const [maj = 0, min = 0, patch = 0] = version.split('.').map((n) => parseInt(n, 10) || 0);
-  return maj * 10000 + min * 100 + patch;
-}
-
 /**
- * Resolved monotonic build number (iOS CFBundleVersion / Android versionCode).
- * Precedence: `APPWRAP_BUILD_NUMBER` env (CI run #) > explicit `cfg.buildNumber` > derived from version.
- * The env override means CI gets a monotonic, collision-free build number for free — no per-app config
- * plumbing — which is the whole point: the derived default is CONSTANT per version, so repeat uploads
- * of the same marketing version would 409 ("build already exists") without it.
+ * Resolved monotonic build number (iOS CFBundleVersion / Android versionCode). Thin env wrapper over
+ * the pure `resolveBuildNumber` (in derive.ts, where it unit-tests). Precedence: `APPWRAP_BUILD_NUMBER`
+ * env (CI run #) > explicit numeric `cfg.buildNumber` > named strategy ('timestamp'|'epoch') > derived
+ * from version. The env override gives CI a monotonic, collision-free build for free; the derived
+ * default is CONSTANT per version, so repeat uploads of one marketing version would 409 without it.
  */
 function buildNumberOf(cfg: AppwrapConfig): number {
-  const env = process.env.APPWRAP_BUILD_NUMBER;
-  if (env != null && env !== '') {
-    const n = parseInt(env, 10);
-    if (!Number.isNaN(n)) return n;
-  }
-  if (cfg.buildNumber != null) {
-    const n = parseInt(String(cfg.buildNumber), 10);
-    if (!Number.isNaN(n)) return n;
-  }
-  return deriveBuild(cfg.version);
+  return resolveBuildNumber(cfg, process.env.APPWRAP_BUILD_NUMBER);
 }
 
 const IOS_PERMISSION_KEYS: Record<string, string[]> = {
