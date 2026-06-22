@@ -141,6 +141,10 @@ export const MODULES: ModuleManifest[] = [
   {
     name: 'billing', group: 'billing',
     capabilities: { billing: { ios: true, android: false } },
+    // iOS-only Swift shim (AppwrapManageSubscriptions.swift) bridging StoreKit 2's Swift-async
+    // showManageSubscriptions(in:) to an @objc completion the ObjC bridge can call. Compiled into
+    // the app target only when `billing` is active (NS auto-compiles App_Resources/iOS/src/*.swift).
+    nativeSrc: 'billing',
   },
 
   // ── reviews — in-app store review prompt — opt-in, STRIPPABLE (own handler + group) ──

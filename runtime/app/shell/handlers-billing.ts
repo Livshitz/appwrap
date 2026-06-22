@@ -1,6 +1,10 @@
 import { Utils, isIOS } from '@nativescript/core';
 import { bridge } from './bridge';
 
+// @objc Swift shim (AppwrapManageSubscriptions.swift, billing nativeSrc) — no NS types; bridges
+// StoreKit 2's Swift-async showManageSubscriptions(in:) to a completion the ObjC bridge can call.
+declare const AppwrapManageSubscriptions: { present(completion: (message: string | null) => void): void };
+
 /**
  * In-app purchases — iOS StoreKit 1 (SKPaymentQueue). StoreKit 2 (Product/Transaction)
  * is Swift-only and unreachable via the ObjC bridge, so we use the delegate-based
@@ -199,8 +203,22 @@ export function registerBillingHandlers(): void {
   });
 
   bridge.register('billing.manageSubscriptions', () => {
-    // StoreKit 2's AppStore.showManageSubscriptions is Swift-only; deep-link instead.
+    // DEFAULT: StoreKit 1 deep-link — correct for production, but leaves the app and doesn't show
+    // sandbox/TestFlight subs. The in-app sheet is the opt-in `billing.manageSubscriptionsSheet` below.
     Utils.openUrl('itms-apps://apps.apple.com/account/subscriptions');
+  });
+
+  // OPT-IN (iOS 15+): StoreKit 2's in-app management sheet via the AppwrapManageSubscriptions Swift
+  // shim — shows the user's subs (incl. sandbox/TestFlight) and lets them cancel without leaving the
+  // app. Reached only when the app calls kit.billing.showManageSubscriptionsSheet(), so the default
+  // deep-link path above is untouched. Rejects on iOS <15, no scene, or a StoreKit error.
+  bridge.register('billing.manageSubscriptionsSheet', () => {
+    return new Promise<void>((resolve, reject) => {
+      AppwrapManageSubscriptions.present((message: string | null) => {
+        if (message) reject(err('NATIVE_ERROR', message));
+        else resolve();
+      });
+    });
   });
 }
 

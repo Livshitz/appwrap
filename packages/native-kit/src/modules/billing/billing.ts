@@ -117,6 +117,24 @@ export class BillingModule {
     return this.kit.invoke('billing.manageSubscriptions');
   }
 
+  /**
+   * iOS 15+ native-only: present StoreKit 2's **in-app** subscription-management sheet
+   * (`AppStore.showManageSubscriptions(in:)`). Unlike {@link manageSubscriptions} (which deep-links
+   * out to the App Store account page, StoreKit 1), this stays inside the app AND shows sandbox /
+   * TestFlight subscriptions — so it's the path to verify/cancel a sub during testing. Opt-in: the
+   * default `manageSubscriptions()` deep-link is unchanged; call this explicitly to use the sheet.
+   *
+   * Throws `UNSUPPORTED` on the web or Android (no StoreKit), and `NATIVE_ERROR` on iOS <15 / no
+   * presentable scene / a StoreKit error. Resolves once the user dismisses the sheet.
+   */
+  async showManageSubscriptionsSheet(): Promise<void> {
+    await this.kit.ready();
+    if (this.capability !== 'native') {
+      throw new KitError('UNSUPPORTED', 'The in-app subscriptions sheet is iOS-only (StoreKit 2). Use manageSubscriptions() on web/Android.');
+    }
+    return this.kit.invoke('billing.manageSubscriptionsSheet');
+  }
+
   /** Out-of-band transactions (renewals, Ask-to-Buy, cross-device). Native streams only. */
   onTransaction(cb: (receipt: PurchaseReceipt) => void): Unsubscribe {
     return this.kit.on('billing.transaction', (p) => cb(p as PurchaseReceipt));
