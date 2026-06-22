@@ -2,7 +2,8 @@
  * Minimal ambient declarations for the Firebase Messaging Android classes the FCM service extends.
  * The full classes are provided at runtime by the `firebase-messaging` AAR (added by the CLI only
  * when push is wired) — the NativeScript Android runtime marshals them. Declare-merges into the
- * `com` namespace from @nativescript/types-android. Mirrors ios-frameworks.d.ts.
+ * `com` namespace from @nativescript/types-android. (iOS SDK frameworks are typed via the
+ * @nativescript/types-ios references in references.d.ts.)
  */
 declare namespace com.google.firebase.messaging {
   class RemoteMessage {

@@ -1,7 +1,8 @@
 import { Application, Utils, isAndroid, isIOS } from '@nativescript/core';
 import { bridge } from './bridge';
 
-// SKStoreReviewController is declared globally in ios-frameworks.d.ts. `com` is the Android namespace.
+// SKStoreReviewController comes from the StoreKit typings referenced in references.d.ts. `com` is the
+// Android namespace.
 declare const com: any;
 
 /**
