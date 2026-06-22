@@ -18,7 +18,7 @@ function demoWebBilling(): BillingProvider {
   };
 }
 
-const BUILD = 'media-diag-8'; // bump on each deploy so a stale bundle is obvious in the log
+const BUILD = 'loopbc-1'; // bump on each deploy so a stale bundle is obvious in the log
 
 // The demo's own public push relay (examples/push-relay). Not a secret — the relay only sends a test
 // push to a token YOU register; the "send" half lives in the app, not the kit. Safe to commit.
@@ -60,9 +60,10 @@ function tile(title: string, cap: string, buttons: Array<[string, () => Promise<
         const r = await fn();
         log(`${title}/${label} ✓${r !== undefined ? ' → ' + JSON.stringify(r) : ''}`);
         setLast(`${title}/${label} OK${r !== undefined ? ' ' + JSON.stringify(r) : ''}`);
-      } catch (e: any) {
-        log(`${title}/${label} ✗ ${e.code ?? ''} ${e.message}`);
-        setLast(`${title}/${label} ERR ${e.code ?? ''}`);
+      } catch (e: unknown) {
+        const err = e as { code?: string; message?: string };
+        log(`${title}/${label} ✗ ${err.code ?? ''} ${err.message ?? ''}`);
+        setLast(`${title}/${label} ERR ${err.code ?? ''}`);
       }
     };
     row.appendChild(b);
@@ -82,7 +83,7 @@ function showPreview(tileEl: HTMLElement): HTMLElement {
   return box;
 }
 
-const AudioCtx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext;
+const AudioCtx = (window.AudioContext || (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext) as typeof AudioContext;
 
 // ── live media helpers (mic / camera / speaker) ──────────────────────
 let camStream: MediaStream | null = null;
@@ -93,7 +94,7 @@ async function toggleCamera(tileEl: HTMLElement): Promise<string> {
   camStream = await kit.media.getUserMedia({ video: { facingMode: 'user' }, audio: false });
   const v = document.createElement('video');
   v.className = 'cam';
-  v.autoplay = true; v.muted = true; (v as any).playsInline = true; v.srcObject = camStream;
+  v.autoplay = true; v.muted = true; v.playsInline = true; v.srcObject = camStream;
   box.innerHTML = ''; box.appendChild(v);
   const s = camStream.getVideoTracks()[0].getSettings();
   return `${s.width}×${s.height} live`;
@@ -140,7 +141,7 @@ async function recordTest(tileEl: HTMLElement): Promise<string> {
       audio.play().catch(() => {});
       resolve(`${Math.round(blob.size / 1024)}KB — playing back`);
     };
-    rec.onerror = (e: any) => reject(e.error ?? new Error('record failed'));
+    rec.onerror = (e: Event) => reject((e as { error?: unknown }).error ?? new Error('record failed'));
     rec.start();
     setTimeout(() => rec.stop(), 3000);
   });
@@ -181,7 +182,7 @@ function ensureVideo(tileEl: HTMLElement): HTMLVideoElement {
     videoEl = document.createElement('video');
     videoEl.className = 'player';
     videoEl.src = VIDEO_URL; videoEl.controls = true; videoEl.loop = true;
-    (videoEl as any).playsInline = true; // stay inline on iOS (no fullscreen takeover)
+    videoEl.playsInline = true; // stay inline on iOS (no fullscreen takeover)
     showPreview(tileEl).appendChild(videoEl);
   }
   return videoEl;
@@ -255,9 +256,10 @@ async function main() {
     log(`handshake ok — capabilities: ${JSON.stringify(hs.capabilities)}`);
     const tap = hs.debug?.lastNotifTap;
     if (tap) log(`lastNotifTap: ${JSON.stringify(tap)}`);
-  } catch (e: any) {
-    $('context').textContent = `handshake failed: ${e.message}`;
-    log(`handshake ✗ ${e.message}`);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    $('context').textContent = `handshake failed: ${msg}`;
+    log(`handshake ✗ ${msg}`);
     return;
   }
 
@@ -516,7 +518,7 @@ async function main() {
   // Live media — getUserMedia bridged into the PWA (mic / camera / speaker).
   const mediaTile = tile('Media (mic·cam·speaker)', kit.media.capability, [
     ['diagnostic', async () => {
-      const info: any = { secureContext: window.isSecureContext, getUserMedia: kit.media.available };
+      const info: Record<string, unknown> = { secureContext: window.isSecureContext, getUserMedia: kit.media.available };
       if (kit.is.native) info.native = await kit.invoke('debug.webviewInfo').catch(() => 'err');
       return info;
     }],
@@ -684,7 +686,8 @@ async function main() {
 
 // PWA bits — only meaningful in real-web context; the native shell serves from the bundle
 // (Android shell origin is https://appwrap.local, so also gate on the native transport).
-const inNativeShell = !!(window as any).appwrapNative || !!(window as any).webkit?.messageHandlers?.appwrap;
+const inNativeShell = !!(window as { appwrapNative?: unknown }).appwrapNative
+  || !!(window as { webkit?: { messageHandlers?: { appwrap?: unknown } } }).webkit?.messageHandlers?.appwrap;
 if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !inNativeShell) {
   navigator.serviceWorker.register('sw.js').catch((e) => log(`sw register failed: ${e.message}`));
 }
