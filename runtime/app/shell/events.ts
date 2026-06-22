@@ -1,4 +1,5 @@
 import { Application, Connectivity, isAndroid } from '@nativescript/core';
+import type { AndroidActivityNewIntentEventData, OrientationChangedEventData } from '@nativescript/core';
 import { bridge } from './bridge';
 import { connectivityStatus } from './handlers-extended';
 
@@ -74,7 +75,7 @@ export function onPwaHandshake(): void {
 export function startEventForwarding(): void {
   Application.on(Application.suspendEvent, () => bridge.emit('app.pause'));
   Application.on(Application.resumeEvent, () => bridge.emit('app.resume'));
-  Application.on(Application.orientationChangedEvent, (args: any) =>
+  Application.on(Application.orientationChangedEvent, (args: OrientationChangedEventData) =>
     bridge.emit('screen.orientation.change', args?.newValue === 'landscape' ? 'landscape' : 'portrait')
   );
 
@@ -86,7 +87,7 @@ export function startEventForwarding(): void {
 /** Intents: launch intent (cold start) + onNewIntent (warm, singleTask). Carries both VIEW deep links
  * and FCM notification-tap extras. */
 function wireAndroidDeepLinks(): void {
-  const emitFromIntent = (intent: any) => {
+  const emitFromIntent = (intent: android.content.Intent | null | undefined) => {
     try {
       const data = intent?.getData?.();
       if (data) onDeepLink(String(data.toString()));
@@ -102,7 +103,7 @@ function wireAndroidDeepLinks(): void {
     }
   };
 
-  Application.android.on(Application.android.activityNewIntentEvent as any, (args: any) =>
+  Application.android.on(Application.android.activityNewIntentEvent, (args: AndroidActivityNewIntentEventData) =>
     emitFromIntent(args.intent)
   );
   emitFromIntent(Application.android.startActivity?.getIntent?.());
@@ -111,7 +112,7 @@ function wireAndroidDeepLinks(): void {
 /** A tapped FCM notification re-launches the activity with the message's data payload as string
  * extras, alongside FCM's own `google.*`/`gcm.*`/`from`/`collapse_key` bookkeeping keys. Detect via
  * those markers; return the app's data keys only. Null when this isn't an FCM-originated intent. */
-function readFcmTapExtras(intent: any): { data: Record<string, string> } | null {
+function readFcmTapExtras(intent: android.content.Intent | null | undefined): { data: Record<string, string> } | null {
   try {
     const extras = intent?.getExtras?.();
     if (!extras || (!extras.containsKey('google.message_id') && !extras.containsKey('from'))) return null;

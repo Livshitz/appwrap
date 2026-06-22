@@ -1,7 +1,5 @@
 import { Application, isAndroid } from '@nativescript/core';
 
-declare const android: any, NSProcessInfo: any, UIAccessibilityIsReduceMotionEnabled: any;
-
 /**
  * Runtime environment hints the page can't reliably detect itself, surfaced natively so a PWA can
  * scale its rendering down inside the shell. Injected at document-start as `window.__APPWRAP__` (see
@@ -36,7 +34,7 @@ export function envGlobalsJs(): string {
 function androidIsEmulator(): boolean {
   try {
     const B = android.os.Build;
-    const has = (v: any, s: string) => String(v || '').toLowerCase().includes(s);
+    const has = (v: string, s: string) => String(v || '').toLowerCase().includes(s);
     return (
       has(B.FINGERPRINT, 'generic') || has(B.FINGERPRINT, 'emulator') || has(B.FINGERPRINT, 'unknown') ||
       has(B.MODEL, 'google_sdk') || has(B.MODEL, 'emulator') || has(B.MODEL, 'android sdk built for') ||

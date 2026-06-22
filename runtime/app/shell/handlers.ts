@@ -80,7 +80,7 @@ export function registerHandlers(): void {
       const items = NSMutableArray.new();
       if (content) items.addObject(content);
       const controller = UIActivityViewController.alloc().initWithActivityItemsApplicationActivities(
-        items as any,
+        items,
         null
       );
       const rootVC = Utils.ios.getRootViewController();
@@ -108,6 +108,7 @@ export function registerHandlers(): void {
       if (text) items.addObject(text);
       const tmp = NSTemporaryDirectory();
       (files ?? []).forEach((f, i) => {
+        // 0 = no decoding options; the enum has no zero member, so cast the raw bitmask value.
         const data = NSData.alloc().initWithBase64EncodedStringOptions(f.base64, 0 as unknown as NSDataBase64DecodingOptions);
         if (!data) return;
         const filePath = tmp + i + '-' + (f.name || 'file'); // index-prefix: avoid same-name collisions in one call
@@ -115,7 +116,7 @@ export function registerHandlers(): void {
         items.addObject(NSURL.fileURLWithPath(filePath));
       });
       const controller = UIActivityViewController.alloc().initWithActivityItemsApplicationActivities(
-        items as any,
+        items,
         null
       );
       const rootVC = Utils.ios.getRootViewController();
@@ -187,6 +188,6 @@ function safeJson(s: string): unknown {
 
 function vibrateAndroid(ms: number): void {
   const context = Utils.android.getApplicationContext();
-  const vibrator = context.getSystemService(android.content.Context.VIBRATOR_SERVICE);
+  const vibrator = context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as android.os.Vibrator;
   vibrator?.vibrate(ms);
 }

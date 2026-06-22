@@ -28,7 +28,7 @@ export function enableAndroidEdgeToEdge(): void {
     try {
       // Explicit transparent status-bar colors (light + dark) so the page background — not the NS
       // page backgroundColor — shows under the status bar. Nav bar keeps NS's default subtle scrim.
-      (Utils as any).android.enableEdgeToEdge(activity, {
+      Utils.android.enableEdgeToEdge(activity, {
         statusBarLightColor: transparent,
         statusBarDarkColor: transparent,
       });
@@ -55,6 +55,7 @@ export function wireAndroidSafeArea(webView: View): void {
   // Un-box the layout that wraps the WebView so it (and its child WebView) fills the window UNDER the
   // bars. 'dont-apply' = NS won't pad it with the system-bar insets.
   const layout = (webView.parent as View) ?? webView;
+  // androidOverflowEdge: not in the public View typings — an NS edge-to-edge layout hint set dynamically.
   (layout as any).androidOverflowEdge = 'dont-apply';
 
   const density = Screen.mainScreen.scale || 1; // physical px per dp
@@ -65,7 +66,8 @@ export function wireAndroidSafeArea(webView: View): void {
       `s.setProperty('--saie-right','${r}px');s.setProperty('--saie-bottom','${b}px');` +
       `})(document.documentElement.style);`;
     try {
-      (webView as any).android?.evaluateJavascript(js, null);
+      // webView.android is typed `any` by NS core; on Android it's an android.webkit.WebView.
+      webView.android?.evaluateJavascript(js, null);
     } catch (e) {
       console.warn('AppWrap: safe-area inject failed', e);
     }
@@ -82,7 +84,7 @@ export function wireAndroidSafeArea(webView: View): void {
       const decor = Application.android?.startActivity?.getWindow()?.getDecorView();
       const wi = decor?.getRootWindowInsets?.();
       if (!wi) return false;
-      const Type = (global as any).android.view.WindowInsets.Type;
+      const Type = android.view.WindowInsets.Type;
       const ins = wi.getInsets(Type.systemBars() | Type.displayCutout());
       inject(dp(ins.left), dp(ins.top), dp(ins.right), dp(ins.bottom));
       return ins.top + ins.bottom + ins.left + ins.right > 0;
@@ -132,12 +134,13 @@ export function applyThemeColor(color: string): void {
 /** 'light' = white icons/text (for dark backgrounds), 'dark' = black. */
 export function setStatusBarStyle(style: 'light' | 'dark'): void {
   if (isIOS) {
+    // statusBarStyle is a CSS-backed Page property, not on the public Page type — set dynamically.
     if (currentPage) (currentPage as any).statusBarStyle = style;
   } else if (isAndroid) {
     const window = Application.android?.startActivity?.getWindow();
     if (!window) return;
     const decorView = window.getDecorView();
-    const controller = (decorView as any).getWindowInsetsController?.();
+    const controller = decorView.getWindowInsetsController?.();
     if (controller) {
       const APPEARANCE_LIGHT_STATUS_BARS = 8; // WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
       // Android "light status bar" = dark icons; invert from our naming

@@ -1,7 +1,7 @@
 import { Application, ApplicationSettings, Color, Utils, isAndroid, isIOS } from '@nativescript/core';
 import { bridge } from './bridge';
 
-declare const android: any, androidx: any, java: any;
+declare const androidx: any; // no NS types: androidx
 
 const err = (code: string, message: string) => Object.assign(new Error(message), { code });
 

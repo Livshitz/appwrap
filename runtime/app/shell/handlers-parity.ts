@@ -5,6 +5,94 @@ import { uiImageToDataUrl } from './ios-image';
 const err = (code: string, message: string) => Object.assign(new Error(message), { code });
 const iosOnly = () => err('UNSUPPORTED', 'iOS only for now');
 
+/** Read a CNContact into the kit-contract shape (name + phone/email string arrays). */
+function readContact(contact: CNContact): { name: string; phones: string[]; emails: string[] } {
+  // CNLabeledValue<T>.value is typed `any` in the SDK, so the per-value map stays loosely typed.
+  const collect = (labeled: NSArray<CNLabeledValue<any>>, map: (v: any) => string): string[] => {
+    const out: string[] = [];
+    for (let i = 0; i < labeled.count; i++) out.push(map(labeled.objectAtIndex(i).value));
+    return out;
+  };
+  return {
+    name: `${contact.givenName ?? ''} ${contact.familyName ?? ''}`.trim(),
+    phones: collect(contact.phoneNumbers, (v) => String(v.stringValue)),
+    emails: collect(contact.emailAddresses, (v) => String(v)),
+  };
+}
+
+// CLLocationManager delegate for the persistent geo.watch stream. Callbacks are wired via instance
+// fields so the closure-captured behavior of the old (NSObject).extend(...) is preserved.
+@NativeClass()
+class GeoWatchDelegate extends NSObject implements CLLocationManagerDelegate {
+  static ObjCProtocols = [CLLocationManagerDelegate];
+  static new(): GeoWatchDelegate {
+    return <GeoWatchDelegate>super.new();
+  }
+  locationManagerDidUpdateLocations(_m: CLLocationManager, locations: NSArray<CLLocation>): void {
+    const loc = locations.lastObject;
+    if (!loc) return;
+    bridge.emit('geo.position', {
+      lat: loc.coordinate.latitude,
+      lng: loc.coordinate.longitude,
+      accuracy: loc.horizontalAccuracy,
+    });
+  }
+  locationManagerDidFailWithError(_m: CLLocationManager, error: NSError): void {
+    console.warn('AppWrap: geo.watch error', error.localizedDescription);
+  }
+  locationManagerDidChangeAuthorization(m: CLLocationManager): void {
+    const st = m.authorizationStatus;
+    if (st === CLAuthorizationStatus.kCLAuthorizationStatusAuthorizedWhenInUse ||
+        st === CLAuthorizationStatus.kCLAuthorizationStatusAuthorizedAlways) {
+      m.startUpdatingLocation();
+    }
+  }
+}
+
+// CNContactPickerViewController delegate. The picker resolution callbacks are set as instance fields
+// after construction (replacing the old closure-captured `resolve`).
+@NativeClass()
+class ContactPickerDelegate extends NSObject implements CNContactPickerDelegate {
+  static ObjCProtocols = [CNContactPickerDelegate];
+  static new(): ContactPickerDelegate {
+    return <ContactPickerDelegate>super.new();
+  }
+  onSelect?: (contact: CNContact) => void;
+  onCancel?: (picker: CNContactPickerViewController) => void;
+  contactPickerDidSelectContact(_picker: CNContactPickerViewController, contact: CNContact): void {
+    this.onSelect?.(contact);
+  }
+  contactPickerDidCancel(picker: CNContactPickerViewController): void {
+    this.onCancel?.(picker);
+  }
+}
+
+// UIImagePickerController delegate (camera.capture). Result/options are set as instance fields after
+// construction, replacing the old closure-captured `resolve`/`dataUrl`/`maxSize`.
+@NativeClass()
+class CameraCaptureDelegate extends NSObject implements UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+  static ObjCProtocols = [UIImagePickerControllerDelegate, UINavigationControllerDelegate];
+  static new(): CameraCaptureDelegate {
+    return <CameraCaptureDelegate>super.new();
+  }
+  wantDataUrl = false;
+  maxSize = 1024;
+  onResult?: (out: { picked: boolean; width?: number; height?: number; dataUrl?: string }) => void;
+  imagePickerControllerDidFinishPickingMediaWithInfo(picker: UIImagePickerController, info: NSDictionary<string, any>): void {
+    picker.dismissViewControllerAnimatedCompletion(true, null);
+    const img = info.objectForKey(UIImagePickerControllerOriginalImage) as UIImage | null;
+    if (!img) return this.onResult?.({ picked: true });
+    const out: { picked: boolean; width?: number; height?: number; dataUrl?: string } =
+      { picked: true, width: img.size.width, height: img.size.height };
+    if (this.wantDataUrl) out.dataUrl = uiImageToDataUrl(img, this.maxSize);
+    this.onResult?.(out);
+  }
+  imagePickerControllerDidCancel(picker: UIImagePickerController): void {
+    picker.dismissViewControllerAnimatedCompletion(true, null);
+    this.onResult?.({ picked: false });
+  }
+}
+
 /**
  * Extended-parity handlers: dialogs, storage.clear, geo watch, theme color,
  * motion, contacts, calendar, camera. iOS-first like handlers-extended.
@@ -50,39 +138,15 @@ export function registerParityHandlers(): void {
   });
 
   // ── geo.watch (persistent CLLocationManager) ───────────────────────
-  let geoManager: any = null;
-  let geoDelegate: any = null;
+  let geoManager: CLLocationManager | null = null;
+  let geoDelegate: GeoWatchDelegate | null = null;
 
   bridge.register('geo.watch.start', () => {
     if (!isIOS) throw iosOnly();
     if (geoManager) return; // already streaming
-    const DelegateClass = (NSObject as any).extend(
-      {
-        locationManagerDidUpdateLocations(_m: CLLocationManager, locations: NSArray<CLLocation>) {
-          const loc = locations.lastObject;
-          if (!loc) return;
-          bridge.emit('geo.position', {
-            lat: loc.coordinate.latitude,
-            lng: loc.coordinate.longitude,
-            accuracy: loc.horizontalAccuracy,
-          });
-        },
-        locationManagerDidFailWithError(_m: CLLocationManager, error: NSError) {
-          console.warn('AppWrap: geo.watch error', error.localizedDescription);
-        },
-        locationManagerDidChangeAuthorization(m: CLLocationManager) {
-          const st = m.authorizationStatus;
-          if (st === CLAuthorizationStatus.kCLAuthorizationStatusAuthorizedWhenInUse ||
-              st === CLAuthorizationStatus.kCLAuthorizationStatusAuthorizedAlways) {
-            m.startUpdatingLocation();
-          }
-        },
-      },
-      { protocols: [CLLocationManagerDelegate] }
-    );
     Utils.dispatchToMainThread(() => {
       geoManager = CLLocationManager.new();
-      geoDelegate = DelegateClass.new();
+      geoDelegate = GeoWatchDelegate.new();
       geoManager.delegate = geoDelegate;
       geoManager.desiredAccuracy = kCLLocationAccuracyHundredMeters;
       const st = geoManager.authorizationStatus;
@@ -105,8 +169,8 @@ export function registerParityHandlers(): void {
   // block: the repeated JS↔Obj-C block is fragile under NativeScript (the handler
   // can silently stop firing on-device). startDeviceMotionUpdates() + reading
   // `mm.deviceMotion` is a plain property read on the main thread — reliable.
-  let motionManager: any = null;
-  let motionTimer: any = null;
+  let motionManager: CMMotionManager | null = null;
+  let motionTimer: ReturnType<typeof setInterval> | null = null;
 
   bridge.register('motion.start', () => {
     if (!isIOS) throw iosOnly();
@@ -143,31 +207,16 @@ export function registerParityHandlers(): void {
     if (!isIOS) throw iosOnly();
     return new Promise((resolve) => {
       Utils.dispatchToMainThread(() => {
-        const DelegateClass = (NSObject as any).extend(
-          {
-            contactPickerDidSelectContact(_picker: any, contact: any) {
-              const collect = (labeled: NSArray<any>, map: (v: any) => string) => {
-                const out: string[] = [];
-                for (let i = 0; i < labeled.count; i++) out.push(map(labeled.objectAtIndex(i).value));
-                return out;
-              };
-              resolve({
-                picked: true,
-                name: `${contact.givenName ?? ''} ${contact.familyName ?? ''}`.trim(),
-                phones: collect(contact.phoneNumbers, (v) => String(v.stringValue)),
-                emails: collect(contact.emailAddresses, (v) => String(v)),
-              });
-            },
-            contactPickerDidCancel(picker: any) {
-              picker.dismissViewControllerAnimatedCompletion(true, null);
-              resolve({ picked: false });
-            },
-          },
-          { protocols: [CNContactPickerDelegate] }
-        );
+        const delegate = ContactPickerDelegate.new();
+        delegate.onSelect = (contact) => {
+          resolve({ picked: true, ...readContact(contact) });
+        };
+        delegate.onCancel = (picker) => {
+          picker.dismissViewControllerAnimatedCompletion(true, null);
+          resolve({ picked: false });
+        };
         const picker = CNContactPickerViewController.new();
-        const delegate = DelegateClass.new();
-        (picker as any)._appwrapDelegate = delegate; // retain
+        (picker as any)._appwrapDelegate = delegate; // retain delegate against ARC; not a typed property
         picker.delegate = delegate;
         Utils.ios.getRootViewController().presentViewControllerAnimatedCompletion(picker, true, null);
       });
@@ -179,30 +228,23 @@ export function registerParityHandlers(): void {
     if (!isIOS) throw iosOnly();
     const store = CNContactStore.new();
     return new Promise((resolve, reject) => {
-      store.requestAccessForEntityTypeCompletionHandler(CNEntityType.Contacts, (granted: boolean, error: NSError | null) => {
+      store.requestAccessForEntityTypeCompletionHandler(CNEntityType.Contacts, (granted: boolean, error: NSError) => {
         if (!granted) {
           return reject(err('DENIED', error?.localizedDescription ?? 'contacts access denied'));
         }
         try {
-          const collect = (labeled: NSArray<any>, map: (v: any) => string) => {
-            const out: string[] = [];
-            for (let i = 0; i < labeled.count; i++) out.push(map(labeled.objectAtIndex(i).value));
-            return out;
-          };
-          const keys = NSArray.arrayWithArray([
+          // Key string constants conform to CNKeyDescriptor (NSString) at runtime; type the array as such.
+          const keys = NSArray.arrayWithArray<CNKeyDescriptor>([
             CNContactGivenNameKey,
             CNContactFamilyNameKey,
             CNContactPhoneNumbersKey,
             CNContactEmailAddressesKey,
-          ] as any);
+          ]);
           const request = CNContactFetchRequest.alloc().initWithKeysToFetch(keys);
           const contacts: Array<{ name: string; phones: string[]; emails: string[] }> = [];
-          store.enumerateContactsWithFetchRequestErrorUsingBlock(request, null as any, (contact: any) => {
-            contacts.push({
-              name: `${contact.givenName ?? ''} ${contact.familyName ?? ''}`.trim(),
-              phones: collect(contact.phoneNumbers, (v) => String(v.stringValue)),
-              emails: collect(contact.emailAddresses, (v) => String(v)),
-            });
+          // null error out-param (ObjC nil) — SDK types it as a non-nullable interop reference.
+          store.enumerateContactsWithFetchRequestErrorUsingBlock(request, null as any, (contact: CNContact) => {
+            contacts.push(readContact(contact));
           });
           resolve({ contacts });
         } catch (e: any) {
@@ -228,8 +270,9 @@ export function registerParityHandlers(): void {
             const startDate = start
               ? NSDate.dateWithTimeIntervalSince1970(Date.parse(start) / 1000)
               : NSDate.dateWithTimeIntervalSinceNow(3600);
-            event.startDate = startDate;
-            event.endDate = startDate.dateByAddingTimeInterval((durationMin ?? 60) * 60);
+            // EKEvent.start/endDate are typed `Date`; NS marshals the NSDate we build here.
+            event.startDate = startDate as unknown as Date;
+            event.endDate = startDate.dateByAddingTimeInterval((durationMin ?? 60) * 60) as unknown as Date;
             if (notes) event.notes = String(notes);
             event.calendar = store.defaultCalendarForNewEvents;
             store.saveEventSpanError(event, EKSpan.ThisEvent, null as any);
@@ -249,34 +292,20 @@ export function registerParityHandlers(): void {
   });
 
   // ── camera capture (UIImagePickerController) ───────────────────────
-  bridge.register('camera.capture', ({ dataUrl, maxSize }: any = {}) => {
+  bridge.register('camera.capture', ({ dataUrl, maxSize }: { dataUrl?: boolean; maxSize?: number } = {}) => {
     if (!isIOS) throw iosOnly();
     if (!UIImagePickerController.isSourceTypeAvailable(UIImagePickerControllerSourceType.Camera)) {
       throw err('UNSUPPORTED', 'No camera on this device (simulator?)');
     }
     return new Promise((resolve) => {
       Utils.dispatchToMainThread(() => {
-        const DelegateClass = (NSObject as any).extend(
-          {
-            imagePickerControllerDidFinishPickingMediaWithInfo(picker: any, info: NSDictionary<string, any>) {
-              picker.dismissViewControllerAnimatedCompletion(true, null);
-              const img = info.objectForKey(UIImagePickerControllerOriginalImage) as UIImage | null;
-              if (!img) return resolve({ picked: true });
-              const out: any = { picked: true, width: img.size.width, height: img.size.height };
-              if (dataUrl) out.dataUrl = uiImageToDataUrl(img, maxSize ?? 1024);
-              resolve(out);
-            },
-            imagePickerControllerDidCancel(picker: any) {
-              picker.dismissViewControllerAnimatedCompletion(true, null);
-              resolve({ picked: false });
-            },
-          },
-          { protocols: [UIImagePickerControllerDelegate, UINavigationControllerDelegate] }
-        );
         const picker = UIImagePickerController.new();
         picker.sourceType = UIImagePickerControllerSourceType.Camera;
-        const delegate = DelegateClass.new();
-        (picker as any)._appwrapDelegate = delegate; // retain
+        const delegate = CameraCaptureDelegate.new();
+        delegate.wantDataUrl = !!dataUrl;
+        delegate.maxSize = maxSize ?? 1024;
+        delegate.onResult = resolve;
+        (picker as any)._appwrapDelegate = delegate; // interop: retain delegate past the present call (no typed slot)
         picker.delegate = delegate;
         Utils.ios.getRootViewController().presentViewControllerAnimatedCompletion(picker, true, null);
       });

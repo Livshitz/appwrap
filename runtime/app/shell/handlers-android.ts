@@ -2,7 +2,8 @@ import { Application, Utils } from '@nativescript/core';
 import { bridge } from './bridge';
 import { requestPermissions, startActivityForResult, uriToDataUrl, bitmapToDataUrl } from './android-helpers';
 
-declare const android: any, java: any, androidx: any;
+// no NS types: android-32 typings omit ContactsContract/MediaStore column + ACTION_PICK_IMAGES constants this file reads
+declare const android: any, androidx: any;
 
 const err = (code: string, message: string) => Object.assign(new Error(message), { code });
 
@@ -125,18 +126,21 @@ export function registerAndroidHandlers(): void {
   // ── geolocation (LocationManager) ──────────────────────────────────
   const GEO_PERMS = ['android.permission.ACCESS_FINE_LOCATION', 'android.permission.ACCESS_COARSE_LOCATION'];
   const locationManager = () => context().getSystemService(android.content.Context.LOCATION_SERVICE);
-  const toPosition = (loc: any) => ({
+  const toPosition = (loc: android.location.Location) => ({
     lat: loc.getLatitude(), lng: loc.getLongitude(), accuracy: loc.getAccuracy(),
   });
-  const makeListener = (onLocation: (loc: any) => void) =>
+  const makeListener = (onLocation: (loc: android.location.Location) => void) =>
     new android.location.LocationListener({
-      // Both overloads dispatch here — newer Android may deliver a List<Location>
-      onLocationChanged(loc: any) {
+      // Both overloads dispatch here — newer Android may deliver a List<Location>.
+      onLocationChanged(arg: android.location.Location | java.util.List<android.location.Location>) {
+        // interop: runtime duck-typing across the two Java overloads; TS can't narrow Java types here
+        let loc: any = arg;
         if (loc && typeof loc.getLatitude !== 'function' && typeof loc.size === 'function') {
           loc = loc.size() > 0 ? loc.get(loc.size() - 1) : null;
         }
         if (loc) onLocation(loc);
       },
+      onFlushComplete() {},
       onStatusChanged() {}, onProviderEnabled() {}, onProviderDisabled() {},
     });
 
@@ -148,7 +152,7 @@ export function registerAndroidHandlers(): void {
         ?? lm.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER);
       if (last) return resolve(toPosition(last));
 
-      let listener: any = null;
+      let listener: android.location.LocationListener | null = null;
       const timer = setTimeout(() => {
         if (listener) lm.removeUpdates(listener);
         reject(err('TIMEOUT', 'location timeout'));
@@ -165,7 +169,7 @@ export function registerAndroidHandlers(): void {
     });
   });
 
-  let geoWatchListener: any = null;
+  let geoWatchListener: android.location.LocationListener | null = null;
   bridge.register('geo.watch.start', async () => {
     if (geoWatchListener) return; // already streaming
     if (!(await requestPermissions(GEO_PERMS))) throw err('DENIED', 'location permission denied');
@@ -249,7 +253,7 @@ export function registerAndroidHandlers(): void {
 
   // ── motion (SensorManager: accelerometer + gyroscope) ──────────────
   const sensorManager = () => context().getSystemService(android.content.Context.SENSOR_SERVICE);
-  let motionListener: any = null;
+  let motionListener: android.hardware.SensorEventListener | null = null;
   const lastMotion = { ax: 0, ay: 0, az: 0, rx: 0, ry: 0, rz: 0 };
 
   bridge.register('motion.start', () => {
@@ -261,7 +265,7 @@ export function registerAndroidHandlers(): void {
     let last = 0;
     motionListener = new android.hardware.SensorEventListener({
       onAccuracyChanged() {},
-      onSensorChanged(event: any) {
+      onSensorChanged(event: android.hardware.SensorEvent) {
         const v = event.values;
         if (event.sensor.getType() === android.hardware.Sensor.TYPE_ACCELEROMETER) {
           // Android accelerometer already reports m/s² incl. gravity — kit contract matches.
@@ -296,7 +300,7 @@ export function registerAndroidHandlers(): void {
     if (resultCode !== android.app.Activity.RESULT_OK || !result?.getData()) return { picked: false };
 
     const cr = context().getContentResolver();
-    const column = (uri: any, col: string, sel: string | null, args: string[] | null): string[] => {
+    const column = (uri: android.net.Uri, col: string, sel: string | null, args: string[] | null): string[] => {
       const out: string[] = [];
       const cursor = cr.query(uri, [col], sel, args, null);
       if (cursor) {
@@ -327,7 +331,7 @@ export function registerAndroidHandlers(): void {
     }
     const CC = android.provider.ContactsContract;
     const cr = context().getContentResolver();
-    const column = (uri: any, col: string, sel: string | null, args: string[] | null): string[] => {
+    const column = (uri: android.net.Uri, col: string, sel: string | null, args: string[] | null): string[] => {
       const out: string[] = [];
       const cursor = cr.query(uri, [col], sel, args, null);
       if (cursor) {
@@ -415,7 +419,7 @@ export function registerAndroidHandlers(): void {
     dir.mkdirs();
     const uris = new java.util.ArrayList();
     const mimes = new java.util.HashSet();
-    (files ?? []).forEach((f: any, i: number) => {
+    (files ?? []).forEach((f: { name: string; mimeType: string; base64: string }, i: number) => {
       const bytes = android.util.Base64.decode(f.base64, android.util.Base64.DEFAULT);
       const out = new java.io.File(dir, i + '-' + (f.name || 'file')); // index-prefix: avoid same-name collisions
       const fos = new java.io.FileOutputStream(out);

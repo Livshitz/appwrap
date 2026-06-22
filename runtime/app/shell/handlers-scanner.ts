@@ -2,29 +2,35 @@ import { Utils, isAndroid, isIOS } from '@nativescript/core';
 import { bridge } from './bridge';
 import { requestPermissions, startActivityForResult } from './android-helpers';
 
-// AVFoundation / UIKit globals (NS auto-links the frameworks via metadata when referenced).
-declare const AVCaptureSession: any;
-declare const AVCaptureDevice: any;
-declare const AVCaptureDeviceInput: any;
-declare const AVCaptureMetadataOutput: any;
-declare const AVCaptureVideoPreviewLayer: any;
-declare const AVMetadataObjectTypeQRCode: any;
-declare const AVMetadataObjectTypeEAN13Code: any;
-declare const AVMetadataObjectTypeCode128Code: any;
-declare const AVLayerVideoGravityResizeAspectFill: any;
-declare const AVCaptureDevicePositionFront: any;
-declare const AVCaptureDevicePositionBack: any;
-declare const AVCaptureDeviceDiscoverySession: any;
-declare const AVMediaTypeVideo: any;
-declare const AVCaptureDeviceTypeBuiltInWideAngleCamera: any;
-declare const AVCaptureMetadataOutputObjectsDelegate: any;
 // `dispatch_get_main_queue()` is a C macro, NOT a bridged symbol — NativeScript can't see it
 // ("is not defined" at runtime). `dispatch_queue_create` IS a real bridged libdispatch function;
 // a dedicated serial queue is the correct delegate queue for AVCaptureMetadataOutput anyway.
 declare function dispatch_queue_create(label: string, attr: any): any;
-declare const android: any, com: any;
+declare const com: any; // no NS types: third-party ZXing (com.google.zxing.integration.android.*)
 
 const err = (code: string, message: string) => Object.assign(new Error(message), { code });
+
+// iOS metadata-output delegate. NativeScript uses the declared protocol to map the camelCase JS
+// method to the colonated selector `captureOutput:didOutputMetadataObjects:fromConnection:`; with an
+// empty protocols list it registers under the wrong selector and AVFoundation never calls it — the
+// scanner opens but never decodes. The first decoded object is forwarded via the `onResult` instance
+// field (assigned after `new()`), replacing the original closure capture.
+@NativeClass()
+class MetadataDelegate extends NSObject implements AVCaptureMetadataOutputObjectsDelegate {
+  static ObjCProtocols = [AVCaptureMetadataOutputObjectsDelegate];
+  onResult?: (obj: AVMetadataObject) => void;
+  static new(): MetadataDelegate {
+    return <MetadataDelegate>super.new();
+  }
+  captureOutputDidOutputMetadataObjectsFromConnection(
+    _output: AVCaptureOutput,
+    metadataObjects: NSArray<AVMetadataObject> | AVMetadataObject[],
+    _connection: AVCaptureConnection
+  ): void {
+    const obj = (metadataObjects as NSArray<AVMetadataObject>)?.firstObject;
+    if (obj) this.onResult?.(obj);
+  }
+}
 
 /**
  * Camera barcode / QR decoding. iOS: AVCaptureMetadataOutput in a full-screen capture VC presented
@@ -41,12 +47,12 @@ export function registerScannerHandlers(): void {
 }
 
 /** Map our small enum → the platform metadata-object types. Empty/`all` = the full supported set. */
-function iosFormatTypes(formats: any): any[] {
+function iosFormatTypes(formats: any): string[] {
   const all = [AVMetadataObjectTypeQRCode, AVMetadataObjectTypeEAN13Code, AVMetadataObjectTypeCode128Code];
   const want = Array.isArray(formats) ? formats : formats ? [formats] : [];
   const sel = want.filter((f: string) => f && f !== 'all');
   if (!sel.length) return all;
-  const map: Record<string, any> = {
+  const map: Record<string, string> = {
     qr: AVMetadataObjectTypeQRCode,
     ean13: AVMetadataObjectTypeEAN13Code,
     code128: AVMetadataObjectTypeCode128Code,
@@ -54,7 +60,7 @@ function iosFormatTypes(formats: any): any[] {
   return sel.map((f: string) => map[f]).filter(Boolean);
 }
 
-function iosFormatName(type: any): string {
+function iosFormatName(type: string): string {
   if (type === AVMetadataObjectTypeQRCode) return 'qr';
   if (type === AVMetadataObjectTypeEAN13Code) return 'ean13';
   if (type === AVMetadataObjectTypeCode128Code) return 'code128';
@@ -98,7 +104,7 @@ function registerIos(): void {
       Utils.dispatchToMainThread(() => {
         try {
           const wantFront = params?.camera === 'front';
-          const position = wantFront ? AVCaptureDevicePositionFront : AVCaptureDevicePositionBack;
+          const position = wantFront ? AVCaptureDevicePosition.Front : AVCaptureDevicePosition.Back;
           const discovery = AVCaptureDeviceDiscoverySession.discoverySessionWithDeviceTypesMediaTypePosition(
             [AVCaptureDeviceTypeBuiltInWideAngleCamera], AVMediaTypeVideo, position
           );
@@ -118,25 +124,17 @@ function registerIos(): void {
 
           // Delegate fires on a dedicated serial queue (see dispatch_queue_create below); settle()
           // hops back to the main thread for the WKWebView bridge reply.
-          const DelegateClass = (NSObject as any).extend(
-            {
-              captureOutputDidOutputMetadataObjectsFromConnection(_out: any, objects: any, _conn: any) {
-                if (!pending) return;
-                const obj = objects?.firstObject;
-                const value = obj?.stringValue;
-                if (value == null) return;
-                settle({ value: String(value), format: iosFormatName(obj.type) });
-              },
-            },
-            // The protocol MUST be declared: NativeScript uses it to map the camelCase JS method to the
-            // colonated selector `captureOutput:didOutputMetadataObjects:fromConnection:`. With an empty
-            // protocols list the method registers under the wrong selector and AVFoundation never calls
-            // it — the scanner opens but never decodes.
-            { protocols: [AVCaptureMetadataOutputObjectsDelegate] }
-          );
-          activeDelegate = DelegateClass.new();
+          const delegate = MetadataDelegate.new();
+          delegate.onResult = (obj) => {
+            if (!pending) return;
+            const value = (obj as AVMetadataMachineReadableCodeObject).stringValue;
+            if (value == null) return;
+            settle({ value: String(value), format: iosFormatName(obj.type) });
+          };
+          activeDelegate = delegate;
           output.setMetadataObjectsDelegateQueue(activeDelegate, dispatch_queue_create('cc.livx.scanner.metadata', null));
           // metadataObjectTypes must be set AFTER addOutput (the available set is session-derived).
+          // interop: JS string[] is accepted at runtime where NSArray<string> is declared.
           output.metadataObjectTypes = iosFormatTypes(params?.formats) as any;
 
           const vc = UIViewController.new();

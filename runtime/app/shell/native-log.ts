@@ -1,7 +1,5 @@
 import { knownFolders, path as nsPath } from '@nativescript/core';
 
-declare const NSString: any;
-
 /**
  * Single debug log sink → Documents/appwrap-web.log. Both the forwarded WebView console
  * (custom-webview) and native shell diagnostics (handlers) write here, because NativeScript's
@@ -15,7 +13,7 @@ export function appwrapNativeLog(line: string): void {
     _log += line + '\n';
     if (_log.length > 160000) _log = _log.slice(-120000);
     const p = nsPath.join(knownFolders.documents().path, 'appwrap-web.log');
-    NSString.stringWithString(_log).writeToFileAtomicallyEncodingError(p, true, 4 /*NSUTF8*/, null as any);
+    NSString.stringWithString(_log).writeToFileAtomicallyEncodingError(p, true, 4 /*NSUTF8*/);
   } catch {
     /* best-effort */
   }

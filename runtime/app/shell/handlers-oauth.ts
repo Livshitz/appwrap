@@ -2,17 +2,28 @@ import { Application, Utils, isAndroid, isIOS } from '@nativescript/core';
 import { bridge } from './bridge';
 import { setDeepLinkInterceptor } from './events';
 
-// AuthenticationServices globals (NS auto-links the framework via metadata when referenced).
-declare const ASWebAuthenticationSession: any;
-declare const ASWebAuthenticationPresentationContextProviding: any;
-declare const android: any, androidx: any;
+declare const androidx: any; // no NS types: androidx
 
 const err = (code: string, message: string) => Object.assign(new Error(message), { code });
 
 // Keep strong refs while the sheet is up — ARC frees the session + its context provider the moment
 // the JS locals fall out of scope, which silently cancels the flow mid-handshake.
-let activeSession: any = null;
-let activeProvider: any = null;
+let activeSession: ASWebAuthenticationSession | null = null;
+let activeProvider: ASWebAuthenticationPresentationContextProviding | null = null;
+
+@NativeClass()
+class OAuthPresentationContextProvider extends NSObject implements ASWebAuthenticationPresentationContextProviding {
+  static ObjCProtocols = [ASWebAuthenticationPresentationContextProviding];
+  static new(): OAuthPresentationContextProvider {
+    return <OAuthPresentationContextProvider>super.new();
+  }
+  presentationAnchorForWebAuthenticationSession(_session: ASWebAuthenticationSession): UIWindow {
+    return (
+      Utils.ios.getRootViewController()?.view?.window ??
+      UIApplication.sharedApplication.keyWindow
+    );
+  }
+}
 
 /**
  * System-browser OAuth (iOS ASWebAuthenticationSession). Runs the provider's auth page in the
@@ -37,7 +48,7 @@ export function registerOAuthHandlers(): void {
           const session = ASWebAuthenticationSession.alloc().initWithURLCallbackURLSchemeCompletionHandler(
             NSURL.URLWithString(target),
             scheme,
-            (callbackURL: any, error: any) => {
+            (callbackURL: NSURL, error: NSError) => {
               activeSession = null;
               activeProvider = null;
               if (error) {
@@ -50,18 +61,7 @@ export function registerOAuthHandlers(): void {
             }
           );
 
-          const ProviderClass = (NSObject as any).extend(
-            {
-              presentationAnchorForWebAuthenticationSession(_session: any): any {
-                return (
-                  Utils.ios.getRootViewController()?.view?.window ??
-                  UIApplication.sharedApplication.keyWindow
-                );
-              },
-            },
-            { protocols: [ASWebAuthenticationPresentationContextProviding] }
-          );
-          activeProvider = ProviderClass.new();
+          activeProvider = OAuthPresentationContextProvider.new();
           session.presentationContextProvider = activeProvider;
           session.prefersEphemeralWebBrowserSession = !!ephemeral;
           activeSession = session;

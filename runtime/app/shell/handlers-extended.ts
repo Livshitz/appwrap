@@ -5,6 +5,118 @@ import { onRemoteMessage } from './handlers-push';
 import { uiImageToDataUrl } from './ios-image';
 import { maskForLock, setIosOrientationMask } from './orientation';
 
+interface GeoResult { lat: number; lng: number; accuracy: number; }
+
+// CLLocationManager delegate. Closure-captured callbacks (resolve/reject/cleanup) are assigned as
+// instance fields after new() — same pattern as handlers-speech/oauth.
+@NativeClass()
+class GeoDelegate extends NSObject implements CLLocationManagerDelegate {
+  static ObjCProtocols = [CLLocationManagerDelegate];
+  onResult?: (r: GeoResult) => void;
+  onError?: (e: Error) => void;
+  onCleanup?: () => void;
+  static new(): GeoDelegate {
+    return <GeoDelegate>super.new();
+  }
+  locationManagerDidUpdateLocations(_m: CLLocationManager, locations: NSArray<CLLocation>): void {
+    const loc = locations.lastObject;
+    if (!loc) return;
+    const result = {
+      lat: loc.coordinate.latitude,
+      lng: loc.coordinate.longitude,
+      accuracy: loc.horizontalAccuracy,
+    };
+    this.onCleanup?.();
+    this.onResult?.(result);
+  }
+  locationManagerDidFailWithError(_m: CLLocationManager, error: NSError): void {
+    this.onCleanup?.();
+    this.onError?.(Object.assign(new Error(error.localizedDescription), { code: 'DENIED' }));
+  }
+  locationManagerDidChangeAuthorization(m: CLLocationManager): void {
+    const st = m.authorizationStatus;
+    if (st === CLAuthorizationStatus.kCLAuthorizationStatusAuthorizedWhenInUse ||
+        st === CLAuthorizationStatus.kCLAuthorizationStatusAuthorizedAlways) {
+      m.startUpdatingLocation();
+    } else if (st === CLAuthorizationStatus.kCLAuthorizationStatusDenied) {
+      this.onCleanup?.();
+      this.onError?.(Object.assign(new Error('location permission denied'), { code: 'DENIED' }));
+    }
+  }
+}
+
+// PHPickerViewController delegate. Closure-captured opts (dataUrl/maxSize) + resolve assigned post-new().
+@NativeClass()
+class PhotoPickerDelegate extends NSObject implements PHPickerViewControllerDelegate {
+  static ObjCProtocols = [PHPickerViewControllerDelegate];
+  wantDataUrl?: boolean;
+  maxSize?: number;
+  onResult?: (r: { picked: boolean; width?: number; height?: number; dataUrl?: string }) => void;
+  static new(): PhotoPickerDelegate {
+    return <PhotoPickerDelegate>super.new();
+  }
+  pickerDidFinishPicking(picker: PHPickerViewController, results: NSArray<PHPickerResult>): void {
+    picker.dismissViewControllerAnimatedCompletion(true, null);
+    const result = results.count > 0 ? results.objectAtIndex(0) : null;
+    if (!result) return this.onResult?.({ picked: false });
+    result.itemProvider.loadObjectOfClassCompletionHandler(UIImage.class(), (img: UIImage) => {
+      if (!img) return this.onResult?.({ picked: true });
+      const out: { picked: boolean; width?: number; height?: number; dataUrl?: string } =
+        { picked: true, width: img.size.width, height: img.size.height };
+      if (this.wantDataUrl) out.dataUrl = uiImageToDataUrl(img, this.maxSize ?? 1024);
+      this.onResult?.(out);
+    });
+  }
+}
+
+// UNUserNotificationCenter delegate — foreground present + tap routing. Idempotent singleton (notifDelegate).
+@NativeClass()
+class ForegroundNotificationDelegate extends NSObject implements UNUserNotificationCenterDelegate {
+  static ObjCProtocols = [UNUserNotificationCenterDelegate];
+  static new(): ForegroundNotificationDelegate {
+    return <ForegroundNotificationDelegate>super.new();
+  }
+  userNotificationCenterWillPresentNotificationWithCompletionHandler(
+    _center: UNUserNotificationCenter,
+    notification: UNNotification,
+    completionHandler: (opts: UNNotificationPresentationOptions) => void
+  ): void {
+    // Foreground REMOTE push (push trigger) → surface to kit.push.onMessage.
+    if (isRemotePush(notification)) onRemoteMessage(notification.request.content.userInfo, false);
+    // Present banner + list + sound + badge even while foreground (min target iOS 16).
+    completionHandler(
+      UNNotificationPresentationOptions.Banner |
+        UNNotificationPresentationOptions.List |
+        UNNotificationPresentationOptions.Sound |
+        UNNotificationPresentationOptions.Badge
+    );
+  }
+  // Notification tapped → route its deep link through the same path as an external open.
+  userNotificationCenterDidReceiveNotificationResponseWithCompletionHandler(
+    _center: UNUserNotificationCenter,
+    response: UNNotificationResponse,
+    completionHandler: () => void
+  ): void {
+    // Tapped REMOTE push → kit.push.onTap (with payload). Local notifs keep the deep-link path below.
+    if (isRemotePush(response.notification)) onRemoteMessage(response.notification.request.content.userInfo, true);
+    // userInfo may come back as an NSDictionary or an auto-marshalled JS object.
+    // any: dual-path payload (NSDictionary vs marshalled JS object) probed dynamically.
+    const info: any = response.notification.request.content.userInfo;
+    const url = info ? (typeof info.objectForKey === 'function' ? info.objectForKey('url') : info.url) : null;
+    // Diagnostic breadcrumb (persists across the cold relaunch) — surfaced in the handshake's debug field.
+    try {
+      ApplicationSettings.setString(
+        'kit:__notifTap',
+        JSON.stringify({ at: Date.now(), url: url ? String(url) : null, hadInfo: !!info })
+      );
+    } catch {
+      /* diagnostic only */
+    }
+    if (url) onDeepLink(String(url));
+    completionHandler();
+  }
+}
+
 /**
  * Extended capability handlers — iOS-first (Android arrives with the transport upgrade).
  * Each handler is small and self-contained; heavy domains (push, files) come later.
@@ -85,7 +197,7 @@ export function registerExtendedHandlers(): void {
     });
   });
 
-  bridge.register('notifications.schedule', ({ id, title, body, delaySec, deepLink }: any) => {
+  bridge.register('notifications.schedule', ({ id, title, body, delaySec, deepLink }: { id?: number; title?: string; body?: string; delaySec?: number; deepLink?: string }) => {
     if (!isIOS) throw Object.assign(new Error('iOS only for now'), { code: 'UNSUPPORTED' });
     const nid = id ?? Math.floor(Math.random() * 100000);
     return new Promise((resolve, reject) => {
@@ -95,6 +207,7 @@ export function registerExtendedHandlers(): void {
       // Carry the deep-link on the notification; the tap delegate re-emits it.
       // Plain JS object → NativeScript marshals it to NSDictionary (more reliable
       // than dictionaryWithObjectForKey across NS versions).
+      // cast: NS marshals a plain JS object → NSDictionary at the interop boundary (typed NSDictionary).
       if (deepLink) content.userInfo = { url: String(deepLink) } as any;
       const trigger = UNTimeIntervalNotificationTrigger.triggerWithTimeIntervalRepeats(
         Math.max(1, delaySec ?? 1),
@@ -130,7 +243,7 @@ export function registerExtendedHandlers(): void {
           // iOS silently ignores the badge unless notification authorization (incl. .badge) was granted —
           // the completion's error is the ONLY signal, so DON'T swallow it (else the badge just never
           // appears with no explanation). Resolve regardless (the JS call itself didn't fail).
-          (error: any) => { if (error) console.warn('[appwrap] setBadge ignored — notifications not authorized?', String(error)); }
+          (error: NSError) => { if (error) console.warn('[appwrap] setBadge ignored — notifications not authorized?', String(error)); }
         );
         resolve();
       });
@@ -152,8 +265,8 @@ export function registerExtendedHandlers(): void {
       LAPolicy.DeviceOwnerAuthenticationWithBiometrics
     );
     const type =
-      ctx.biometryType === LABiometryType.FaceID ? 'face'
-      : ctx.biometryType === LABiometryType.TouchID ? 'touch'
+      ctx.biometryType === LABiometryType.TypeFaceID ? 'face'
+      : ctx.biometryType === LABiometryType.TypeTouchID ? 'touch'
       : 'none';
     return { available, type };
   });
@@ -183,7 +296,7 @@ export function registerExtendedHandlers(): void {
       }, 15000);
 
       let manager: CLLocationManager | null = null;
-      let delegate: any = null;
+      let delegate: GeoDelegate | null = null;
       const cleanup = () => {
         clearTimeout(timer);
         manager?.stopUpdatingLocation();
@@ -191,40 +304,12 @@ export function registerExtendedHandlers(): void {
         delegate = null;
       };
 
-      const DelegateClass = (NSObject as any).extend(
-        {
-          locationManagerDidUpdateLocations(_m: CLLocationManager, locations: NSArray<CLLocation>) {
-            const loc = locations.lastObject;
-            if (!loc) return;
-            const result = {
-              lat: loc.coordinate.latitude,
-              lng: loc.coordinate.longitude,
-              accuracy: loc.horizontalAccuracy,
-            };
-            cleanup();
-            resolve(result);
-          },
-          locationManagerDidFailWithError(_m: CLLocationManager, error: NSError) {
-            cleanup();
-            reject(Object.assign(new Error(error.localizedDescription), { code: 'DENIED' }));
-          },
-          locationManagerDidChangeAuthorization(m: CLLocationManager) {
-            const st = m.authorizationStatus;
-            if (st === CLAuthorizationStatus.kCLAuthorizationStatusAuthorizedWhenInUse ||
-                st === CLAuthorizationStatus.kCLAuthorizationStatusAuthorizedAlways) {
-              m.startUpdatingLocation();
-            } else if (st === CLAuthorizationStatus.kCLAuthorizationStatusDenied) {
-              cleanup();
-              reject(Object.assign(new Error('location permission denied'), { code: 'DENIED' }));
-            }
-          },
-        },
-        { protocols: [CLLocationManagerDelegate] }
-      );
-
       Utils.dispatchToMainThread(() => {
         manager = CLLocationManager.new();
-        delegate = DelegateClass.new();
+        delegate = GeoDelegate.new();
+        delegate.onResult = resolve;
+        delegate.onError = reject;
+        delegate.onCleanup = cleanup;
         manager.delegate = delegate;
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters;
         const st = manager.authorizationStatus;
@@ -238,31 +323,18 @@ export function registerExtendedHandlers(): void {
   });
 
   // ── photos (PHPickerViewController) ────────────────────────────────
-  bridge.register('photos.pick', ({ dataUrl, maxSize }: any = {}) => {
+  bridge.register('photos.pick', ({ dataUrl, maxSize }: { dataUrl?: boolean; maxSize?: number } = {}) => {
     if (!isIOS) throw Object.assign(new Error('iOS only for now'), { code: 'UNSUPPORTED' });
     return new Promise((resolve) => {
       Utils.dispatchToMainThread(() => {
         const config = PHPickerConfiguration.new();
         config.selectionLimit = 1;
-        const DelegateClass = (NSObject as any).extend(
-          {
-            pickerDidFinishPicking(picker: PHPickerViewController, results: NSArray<PHPickerResult>) {
-              picker.dismissViewControllerAnimatedCompletion(true, null);
-              const result = results.count > 0 ? results.objectAtIndex(0) : null;
-              if (!result) return resolve({ picked: false });
-              result.itemProvider.loadObjectOfClassCompletionHandler(UIImage.class(), (img: UIImage) => {
-                if (!img) return resolve({ picked: true });
-                const out: any = { picked: true, width: img.size.width, height: img.size.height };
-                if (dataUrl) out.dataUrl = uiImageToDataUrl(img, maxSize ?? 1024);
-                resolve(out);
-              });
-            },
-          },
-          { protocols: [PHPickerViewControllerDelegate] }
-        );
         const picker = PHPickerViewController.alloc().initWithConfiguration(config);
-        const delegate = DelegateClass.new();
-        (picker as any)._appwrapDelegate = delegate; // retain
+        const delegate = PhotoPickerDelegate.new();
+        delegate.wantDataUrl = !!dataUrl;
+        delegate.maxSize = maxSize;
+        delegate.onResult = resolve;
+        (picker as any)._appwrapDelegate = delegate; // any: stash extra prop on VC to retain delegate (ARC)
         picker.delegate = delegate;
         Utils.ios.getRootViewController().presentViewControllerAnimatedCompletion(picker, true, null);
       });
@@ -314,14 +386,16 @@ export function registerExtendedHandlers(): void {
 function applyIosOrientation(mask: number): void {
   setIosOrientationMask(mask);
   Utils.dispatchToMainThread(() => {
-    const rootVC: any = Utils.ios.getRootViewController();
+    const rootVC = Utils.ios.getRootViewController();
     rootVC?.setNeedsUpdateOfSupportedInterfaceOrientations?.();
-    const G: any = global as any;
-    const Prefs = G.UIWindowSceneGeometryPreferencesIOS;
-    const scenes: any = UIApplication.sharedApplication.connectedScenes?.allObjects;
+    // any: deliberate runtime probe — reference the iOS-16 geometry class via `global` so PRE-iOS-16
+    // runtimes (where it's absent) hit the early-return instead of a hard symbol miss.
+    const Prefs: any = (global as any).UIWindowSceneGeometryPreferencesIOS;
+    const scenes = UIApplication.sharedApplication.connectedScenes?.allObjects;
     if (!Prefs || !scenes) return; // pre-iOS-16: the mask alone takes effect on next rotation
     for (let i = 0; i < scenes.count; i++) {
-      const scene = scenes.objectAtIndex(i);
+      // any: ObjC errorHandler block is nullable — we pass `null`, which the typed (p1)=>void rejects.
+      const scene: any = scenes.objectAtIndex(i);
       if (scene?.requestGeometryUpdateWithPreferencesErrorHandler) {
         const prefs = Prefs.alloc().initWithInterfaceOrientations(mask);
         scene.requestGeometryUpdateWithPreferencesErrorHandler(prefs, null);
@@ -330,7 +404,7 @@ function applyIosOrientation(mask: number): void {
   });
 }
 
-let notifDelegate: any = null; // retained for the app's lifetime
+let notifDelegate: ForegroundNotificationDelegate | null = null; // retained for the app's lifetime
 /**
  * Install the UNUserNotificationCenter delegate. MUST run before
  * `didFinishLaunching` returns, else a tap that COLD-LAUNCHES the app never
@@ -340,50 +414,7 @@ let notifDelegate: any = null; // retained for the app's lifetime
  */
 export function installForegroundNotificationDelegate(): void {
   if (!isIOS || notifDelegate) return;
-  const DelegateClass = (NSObject as any).extend(
-    {
-      userNotificationCenterWillPresentNotificationWithCompletionHandler(
-        _center: UNUserNotificationCenter,
-        notification: UNNotification,
-        completionHandler: (opts: number) => void
-      ): void {
-        // Foreground REMOTE push (push trigger) → surface to kit.push.onMessage.
-        if (isRemotePush(notification)) onRemoteMessage(notification.request.content.userInfo, false);
-        // Present banner + list + sound + badge even while foreground (min target iOS 16).
-        completionHandler(
-          UNNotificationPresentationOptions.Banner |
-            UNNotificationPresentationOptions.List |
-            UNNotificationPresentationOptions.Sound |
-            UNNotificationPresentationOptions.Badge
-        );
-      },
-      // Notification tapped → route its deep link through the same path as an external open.
-      userNotificationCenterDidReceiveNotificationResponseWithCompletionHandler(
-        _center: UNUserNotificationCenter,
-        response: UNNotificationResponse,
-        completionHandler: () => void
-      ): void {
-        // Tapped REMOTE push → kit.push.onTap (with payload). Local notifs keep the deep-link path below.
-        if (isRemotePush(response.notification)) onRemoteMessage(response.notification.request.content.userInfo, true);
-        // userInfo may come back as an NSDictionary or an auto-marshalled JS object.
-        const info: any = response.notification.request.content.userInfo;
-        const url = info ? (typeof info.objectForKey === 'function' ? info.objectForKey('url') : info.url) : null;
-        // Diagnostic breadcrumb (persists across the cold relaunch) — surfaced in the handshake's debug field.
-        try {
-          ApplicationSettings.setString(
-            'kit:__notifTap',
-            JSON.stringify({ at: Date.now(), url: url ? String(url) : null, hadInfo: !!info })
-          );
-        } catch {
-          /* diagnostic only */
-        }
-        if (url) onDeepLink(String(url));
-        completionHandler();
-      },
-    },
-    { protocols: [UNUserNotificationCenterDelegate] }
-  );
-  notifDelegate = DelegateClass.new();
+  notifDelegate = ForegroundNotificationDelegate.new();
   UNUserNotificationCenter.currentNotificationCenter().delegate = notifDelegate;
 }
 

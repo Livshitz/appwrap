@@ -4,7 +4,7 @@ import { Utils, isAndroid, isIOS } from '@nativescript/core';
 export function showToast(message: string, duration: 'short' | 'long' = 'short'): void {
   const ms = duration === 'long' ? 3500 : 2000;
   if (isAndroid) {
-    const Toast = (android as any).widget.Toast;
+    const Toast = android.widget.Toast;
     Toast.makeText(
       Utils.android.getApplicationContext(),
       message,

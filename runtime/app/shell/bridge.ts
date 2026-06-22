@@ -1,6 +1,8 @@
 import { isAndroid, isIOS } from '@nativescript/core';
 import { CustomWebView } from './custom-webview';
 
+// params: any — the bridge payload is an untyped JSON object decoded from the WebView; each handler
+// narrows it to its own param shape at the call site.
 export type HandlerFn = (params: any) => unknown | Promise<unknown>;
 
 interface RequestEnvelope {

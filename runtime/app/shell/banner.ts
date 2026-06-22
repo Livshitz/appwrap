@@ -9,7 +9,7 @@ import { bridge } from './bridge';
 
 let currentId: string | null = null;
 let iosBanner: UIView | null = null;
-let iosTapHandler: any = null;
+let iosTapHandler: any = null; // runtime-built ObjC gesture target (see iosGestureHandlerClass)
 let androidBanner: android.view.View | null = null;
 
 function onTap(): void {
@@ -41,8 +41,13 @@ export function dismissBanner(): void {
 }
 
 // ── iOS ──────────────────────────────────────────────────────────────
-// Built lazily (and only on iOS) — `NSObject`/`interop` don't exist on Android, and this file is
-// imported on both platforms via handlers.ts, so a top-level `.extend` would crash the Android shell.
+// Target/action handler for the banner's tap + swipe-down gestures (bare selectors exposed via
+// `exposedMethods`, no ObjC protocol). Built lazily INSIDE this iOS-only path — `interop` and
+// `NSObject` don't exist on Android, and this file is imported on both platforms via handlers.ts, so
+// a top-level `@NativeClass` with a `static ObjCExposedMethods = { … interop.types.void }` initializer
+// would touch `interop` at module load and crash the Android shell (same reason handlers-scanner keeps
+// its `exposedMethods` cancel-button target as a runtime `.extend` inside its iOS-only registrar).
+// any — runtime-built ObjC subclass; an exposedMethods (non-protocol) target has no static type.
 let IOSGestureHandler: any = null;
 function iosGestureHandlerClass(): any {
   if (!IOSGestureHandler) {
@@ -117,7 +122,7 @@ function showAndroidBanner(message: string): void {
   const SWIPE = 40 * density;
   let downX = 0, downY = 0, downT = 0;
   tv.setOnTouchListener(new android.view.View.OnTouchListener({
-    onTouch(_v: any, e: any) {
+    onTouch(_v: android.view.View, e: android.view.MotionEvent) {
       switch (e.getActionMasked()) {
         case android.view.MotionEvent.ACTION_DOWN:
           downX = e.getRawX(); downY = e.getRawY(); downT = e.getEventTime();

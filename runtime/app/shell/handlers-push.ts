@@ -62,7 +62,7 @@ export function onApnsError(message: string): void {
 }
 
 /** iOS AppDelegate / UN delegate → a remote notification arrived (tapped = user opened it). */
-export function onRemoteMessage(userInfo: any, tapped: boolean): void {
+export function onRemoteMessage(userInfo: any, tapped: boolean): void { // any: APNs userInfo is NSDictionary or auto-marshalled JS object (dual-path)
   bridge.emit(tapped ? 'push.tap' : 'push.message', parseApnsPayload(userInfo));
 }
 
@@ -74,6 +74,7 @@ export function onFcmMessage(data: Record<string, string>, title?: string, body?
 }
 
 /** APNs userInfo (NSDictionary or auto-marshalled object) → { data, title?, body? }. */
+// any: dual-path payload (NSDictionary vs marshalled JS object) probed dynamically below.
 function parseApnsPayload(userInfo: any): { data: Record<string, unknown>; title?: string; body?: string } {
   const data: Record<string, unknown> = {};
   let title: string | undefined;
@@ -181,7 +182,7 @@ function unsupported(): Error {
 }
 
 // ── Android (Firebase Messaging) — guarded; classes exist only when FCM is wired ──
-function fcm(): any {
+function fcm(): any { // no NS types: third-party firebase (com.google.firebase.messaging)
   const FM = (global as any).com?.google?.firebase?.messaging?.FirebaseMessaging;
   if (!FM) throw Object.assign(new Error('FCM not configured — wire google-services.json + the messaging plugin'), { code: 'UNSUPPORTED' });
   return FM.getInstance();
@@ -198,6 +199,7 @@ function androidRequestPermission(): Promise<string> {
       const granted = ctx.checkSelfPermission('android.permission.POST_NOTIFICATIONS') === pm.PERMISSION_GRANTED;
       if (granted) return resolve('granted');
       const activity = Application.android.foregroundActivity || Application.android.startActivity;
+      // any: NS activity-result event payload (grantResults/requestCode) is untyped in core's event bus.
       Application.android.on(Application.android.activityRequestPermissionsEvent as any, (args: any) => {
         if (args.requestCode !== 7613) return;
         const ok = args.grantResults?.length && args.grantResults[0] === pm.PERMISSION_GRANTED;
@@ -229,7 +231,7 @@ function androidGetToken(): Promise<PushToken> {
       const OnCompleteListener = (global as any).com.google.android.gms.tasks.OnCompleteListener;
       const task = fcm().getToken();
       task.addOnCompleteListener(new OnCompleteListener({
-        onComplete(t: any) {
+        onComplete(t: any) { // no NS types: play-services gms Task<String> (FCM token)
           if (t.isSuccessful()) {
             const tok = String(t.getResult());
             registerTokenWithBackend('android', tok); // parity with iOS onApnsToken

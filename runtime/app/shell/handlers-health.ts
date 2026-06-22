@@ -2,9 +2,7 @@ import { Utils, isAndroid, isIOS } from '@nativescript/core';
 import { bridge } from './bridge';
 import { requestPermissions, startActivityForResult } from './android-helpers';
 
-declare const android: any;
-declare const cc: any; // generated from the HealthConnectBridge.kt shim (overrides/)
-declare const CMPedometer: any; // CoreMotion (already linked via CMMotionManager in handlers-parity)
+declare const cc: any; // no NS types: generated Kotlin HealthConnectBridge (HealthConnectBridge.kt shim, overrides/)
 
 const err = (code: string, message: string) => Object.assign(new Error(message), { code });
 
@@ -39,7 +37,8 @@ function registerIos(): void {
     new Promise((resolve) => {
       if (!HKHealthStore.isHealthDataAvailable()) { resolve(false); return; }
       const readSet = NSSet.setWithObject(stepType);
-      store.requestAuthorizationToShareTypesReadTypesCompletion(null, readSet, (ok: boolean, e: any) => {
+      // null typesToShare (read-only request) — SDK types the param as a non-nullable NSSet.
+      store.requestAuthorizationToShareTypesReadTypesCompletion(null as any, readSet, (ok: boolean, e: NSError) => {
         Utils.dispatchToMainThread(() => resolve(!!ok && !e));
       });
     })
@@ -54,9 +53,12 @@ function registerIos(): void {
   // WKWebView response delivery (evaluateJavaScript) is main-thread.
   bridge.register('health.count', () =>
     new Promise((resolve, reject) => {
-      const predicate = HKQuery.predicateForSamplesWithStartDateEndDateOptions(startOfToday(), NSDate.date(), 0);
+      // NS marshals NSDate→the SDK's `Date` param type; options 0 = HKQueryOptions.None.
+      const predicate = HKQuery.predicateForSamplesWithStartDateEndDateOptions(
+        startOfToday() as unknown as Date, NSDate.date() as unknown as Date, HKQueryOptions.None
+      );
       const q = HKStatisticsQuery.alloc().initWithQuantityTypeQuantitySamplePredicateOptionsCompletionHandler(
-        stepType, predicate, HKStatisticsOptions.CumulativeSum, (_q: any, stats: any, e: any) => {
+        stepType, predicate, HKStatisticsOptions.CumulativeSum, (_q: HKStatisticsQuery, stats: HKStatistics, e: NSError) => {
           Utils.dispatchToMainThread(() => {
             if (e) { reject(err('NATIVE_ERROR', e.localizedDescription ?? 'health query failed')); return; }
             const sum = stats && stats.sumQuantity ? stats.sumQuantity() : null;
@@ -72,17 +74,19 @@ function registerIos(): void {
   // aggregate. Caller uses HealthKit as the periodic source-of-truth and these live deltas in between.
   // Emits `health.liveStep` { steps } (today's pedometer total since local midnight). iPhone-only
   // (no Watch), which is fine: it's the live driver; HealthKit re-anchors the authoritative total.
-  let pedometer: any = null;
+  let pedometer: CMPedometer | null = null;
   let anchorDay = -1; // local day-of-month the current stream is anchored to (for midnight re-anchor)
   const localDay = () => new Date().getDate();
   const startStream = () => {
+    if (!pedometer) return;
     anchorDay = localDay();
-    pedometer.startPedometerUpdatesFromDateWithHandler(startOfToday(), (data: any, e: any) => {
+    // startOfToday() returns an NSDate; the SDK types `start` as JS Date but NativeScript marshals it.
+    pedometer.startPedometerUpdatesFromDateWithHandler(startOfToday() as unknown as Date, (data: CMPedometerData, e: NSError) => {
       if (e || !data) return;
       // Midnight self-heal: CMPedometer counts since the FIXED anchor date, so after local midnight
       // numberOfSteps still includes yesterday. When the day rolls over, restart from the new
       // midnight (re-anchors to 0) so the live count stays "today only".
-      if (localDay() !== anchorDay) { Utils.dispatchToMainThread(() => { pedometer.stopPedometerUpdates(); startStream(); bridge.emit('health.liveStep', { steps: 0 }); }); return; }
+      if (localDay() !== anchorDay) { Utils.dispatchToMainThread(() => { pedometer?.stopPedometerUpdates(); startStream(); bridge.emit('health.liveStep', { steps: 0 }); }); return; }
       const steps = Math.round(num(data.numberOfSteps));
       Utils.dispatchToMainThread(() => bridge.emit('health.liveStep', { steps }));
     });
@@ -91,9 +95,12 @@ function registerIos(): void {
     if (typeof CMPedometer === 'undefined' || !CMPedometer.isStepCountingAvailable())
       throw err('UNSUPPORTED', 'Pedometer (live step counting) unavailable on this device');
     // Motion & Fitness denied/restricted → surface it so the caller can fall back to HealthKit instead
-    // of silently receiving no events. (2 = denied, 1 = restricted per CMAuthorizationStatus.)
-    const auth = typeof CMPedometer.authorizationStatus === 'function' ? CMPedometer.authorizationStatus() : 0;
-    if (auth === 2 || auth === 1) throw err('DENIED', 'Motion & Fitness access is off for live step counting');
+    // of silently receiving no events.
+    const auth = typeof CMPedometer.authorizationStatus === 'function'
+      ? CMPedometer.authorizationStatus()
+      : CMAuthorizationStatus.NotDetermined;
+    if (auth === CMAuthorizationStatus.Denied || auth === CMAuthorizationStatus.Restricted)
+      throw err('DENIED', 'Motion & Fitness access is off for live step counting');
     if (pedometer) return; // already streaming
     pedometer = CMPedometer.new();
     startStream();
@@ -117,29 +124,30 @@ function registerAndroid(): void {
   };
 
   // ── sensor fallback (TYPE_STEP_COUNTER) — when Health Connect isn't available ──
-  let sensorManager: any = null;
-  let listener: any = null;
+  let sensorManager: android.hardware.SensorManager | null = null;
+  let listener: android.hardware.SensorEventListener | null = null;
   let baseline: number | null = null;
   let latest: number | null = null;
   let registered = false;
   const ensureSensor = () => {
-    if (!sensorManager) sensorManager = ctx().getSystemService(android.content.Context.SENSOR_SERVICE);
+    // getSystemService is typed `any` by the SDK; narrow to the concrete manager.
+    if (!sensorManager) sensorManager = ctx().getSystemService(android.content.Context.SENSOR_SERVICE) as android.hardware.SensorManager;
   };
   const stopSensor = () => {
-    if (registered) { sensorManager.unregisterListener(listener); registered = false; }
+    if (registered && sensorManager && listener) { sensorManager.unregisterListener(listener); registered = false; }
   };
   const startSensor = () => {
     ensureSensor();
-    const sensor = sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_STEP_COUNTER);
+    const sensor = sensorManager!.getDefaultSensor(android.hardware.Sensor.TYPE_STEP_COUNTER);
     if (!sensor) throw err('UNSUPPORTED', 'No step-counter sensor on this device');
     stopSensor();
     baseline = null;
     latest = null;
     listener = new android.hardware.SensorEventListener({
-      onSensorChanged: (ev: any) => { const v = num(ev.values[0]); latest = v; if (baseline == null) baseline = v; },
+      onSensorChanged: (ev: android.hardware.SensorEvent) => { const v = num(ev.values[0]); latest = v; if (baseline == null) baseline = v; },
       onAccuracyChanged: () => {},
     });
-    sensorManager.registerListener(listener, sensor, android.hardware.SensorManager.SENSOR_DELAY_NORMAL);
+    sensorManager!.registerListener(listener, sensor, android.hardware.SensorManager.SENSOR_DELAY_NORMAL);
     registered = true;
   };
   const sensorCount = () => ({ steps: baseline != null && latest != null ? Math.max(0, Math.round(latest - baseline)) : 0 });

@@ -4,15 +4,9 @@ import { SHELL_CONFIG } from './config';
 import { setPendingBackgroundTaskId } from './background-context';
 import { CustomWebView } from './custom-webview';
 
-// ── BackgroundTasks (iOS) — NS auto-links the framework via metadata when these are referenced.
-// Not in the default @nativescript/types-ios set, so declared `any` (repo idiom; see handlers-speech).
-declare const BGTaskScheduler: any;
-declare const BGAppRefreshTaskRequest: any;
-declare const BGProcessingTaskRequest: any;
-declare const NSDate: any;
-declare const android: any;
-declare const androidx: any;
-declare const java: any;
+// BackgroundTasks (iOS), NSDate, and the `android`/`java` namespaces resolve from the full SDK
+// (@nativescript/types-ios + types-android) — no declares needed.
+declare const androidx: any; // no NS types: androidx (not in types-android)
 
 const err = (code: string, message: string) => Object.assign(new Error(message), { code });
 
@@ -154,18 +148,22 @@ function registerIos(): void {
  * else a lighter app-refresh request. `minIntervalMs` → earliestBeginDate floor. */
 function submitIosRequest(id: string, p: any): void {
   const needsProcessing = !!p?.requiresNetwork || !!p?.requiresCharging;
-  const req = needsProcessing
-    ? BGProcessingTaskRequest.alloc().initWithIdentifier(id)
-    : BGAppRefreshTaskRequest.alloc().initWithIdentifier(id);
+  let req: BGProcessingTaskRequest | BGAppRefreshTaskRequest;
   if (needsProcessing) {
-    req.requiresNetworkConnectivity = !!p?.requiresNetwork;
-    req.requiresExternalPower = !!p?.requiresCharging;
+    const proc = BGProcessingTaskRequest.alloc().initWithIdentifier(id);
+    proc.requiresNetworkConnectivity = !!p?.requiresNetwork;
+    proc.requiresExternalPower = !!p?.requiresCharging;
+    req = proc;
+  } else {
+    req = BGAppRefreshTaskRequest.alloc().initWithIdentifier(id);
   }
   if (p?.minIntervalMs) {
-    req.earliestBeginDate = NSDate.dateWithTimeIntervalSinceNow(Number(p.minIntervalMs) / 1000);
+    // earliestBeginDate is a JS Date (NS marshals it to NSDate) — `now + interval`.
+    req.earliestBeginDate = new Date(Date.now() + Number(p.minIntervalMs));
   }
   // submitTaskRequestError throws via the out-error; NS surfaces it as a thrown JS error.
-  BGTaskScheduler.sharedScheduler.submitTaskRequestError(req, null);
+  // (out-error param omitted — NS marshals the ObjC error into a thrown JS exception.)
+  BGTaskScheduler.sharedScheduler.submitTaskRequestError(req);
 }
 
 /**
@@ -176,27 +174,40 @@ function submitIosRequest(id: string, p: any): void {
  */
 export function registerBackgroundTaskLaunchHandlers(): void {
   if (!isIOS) return;
+  // This runs INSIDE applicationDidFinishLaunchingWithOptions, so ANY throw here crashes app launch.
+  // Guard hard: a background-task convenience must NEVER take down boot. If BGTaskScheduler is
+  // unavailable (framework not resolved) or a registration throws (Apple's strict rules), log and
+  // continue WITHOUT background wakes rather than crash. Each id is isolated so one bad id can't stop
+  // the rest. (`typeof` is a safe undefined-check — no ReferenceError on an absent native global.)
+  if (typeof BGTaskScheduler === 'undefined' || !BGTaskScheduler) {
+    console.log('[backgroundTask] BGTaskScheduler unavailable — skipping launch-handler registration');
+    return;
+  }
   for (const id of permittedIosIds()) {
-    // The launch handler runs on the queue we pass (null = a default background queue). It receives the
-    // BGTask; we drive the JS handler, then complete + reschedule.
-    BGTaskScheduler.sharedScheduler.registerForTaskWithIdentifierUsingQueueLaunchHandler(
-      id,
-      null,
-      (task: any) => {
-        // The OS budget is nearly spent → abort the run (the kit also self-aborts at ~25s). Reporting
-        // failure lets the OS learn the task overran.
-        task.expirationHandler = () => finishRun(id, false);
-        runHeadless(id)
-          .then((success) => {
-            try { submitIosRequest(id, {}); } catch { /* a failed resubmit shouldn't crash the wake */ }
-            task.setTaskCompletedWithSuccess(success);
-          })
-          .catch(() => {
-            try { submitIosRequest(id, {}); } catch { /* noop */ }
-            task.setTaskCompletedWithSuccess(false);
-          });
-      }
-    );
+    try {
+      // The launch handler runs on the queue we pass (null = a default background queue). It receives the
+      // BGTask; we drive the JS handler, then complete + reschedule.
+      BGTaskScheduler.sharedScheduler.registerForTaskWithIdentifierUsingQueueLaunchHandler(
+        id,
+        null as any, // interop: pass nil queue → OS default background queue (param is non-optional)
+        (task: BGTask) => {
+          // The OS budget is nearly spent → abort the run (the kit also self-aborts at ~25s). Reporting
+          // failure lets the OS learn the task overran.
+          task.expirationHandler = () => finishRun(id, false);
+          runHeadless(id)
+            .then((success) => {
+              try { submitIosRequest(id, {}); } catch { /* a failed resubmit shouldn't crash the wake */ }
+              task.setTaskCompletedWithSuccess(success);
+            })
+            .catch(() => {
+              try { submitIosRequest(id, {}); } catch { /* noop */ }
+              task.setTaskCompletedWithSuccess(false);
+            });
+        }
+      );
+    } catch (e: any) {
+      console.log(`[backgroundTask] launch-handler registration failed for '${id}': ${e?.message ?? e}`);
+    }
   }
 }
 

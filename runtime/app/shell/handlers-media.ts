@@ -1,30 +1,22 @@
 import { Utils, isIOS } from '@nativescript/core';
 import { bridge } from './bridge';
 
-// AVAudioSession globals (NS resolves these from the AVFoundation metadata at runtime).
-declare const AVAudioSession: any;
-declare const AVAudioSessionCategoryPlayAndRecord: string;
-declare const AVAudioSessionPortBuiltInReceiver: string;
-declare const AVAudioSessionRouteChangeNotification: string;
-declare const AVAudioSessionPortOverride: any;
-declare const NSNotificationCenter: any;
-
 let routeObserverArmed = false;
 
 /** List the current output port types (e.g. "Receiver", "Speaker", "BluetoothA2DP"). */
-function outputPortTypes(session: any): string[] {
+function outputPortTypes(session: AVAudioSession): string[] {
   const outputs = session.currentRoute?.outputs;
   const types: string[] = [];
   for (let i = 0; i < (outputs?.count ?? 0); i++) types.push(String(outputs.objectAtIndex(i).portType));
   return types;
 }
 
-function isOnBuiltInReceiver(session: any): boolean {
+function isOnBuiltInReceiver(session: AVAudioSession): boolean {
   return outputPortTypes(session).indexOf(AVAudioSessionPortBuiltInReceiver) !== -1;
 }
 
 /** Whether the session can record (PlayAndRecord) — i.e. we're (or about to be) in a call. */
-function isRecordCategory(session: any): boolean {
+function isRecordCategory(session: AVAudioSession): boolean {
   return String(session.category) === String(AVAudioSessionCategoryPlayAndRecord);
 }
 
@@ -33,7 +25,7 @@ function forceSpeakerIfReceiverDuringCall(): void {
   const session = AVAudioSession.sharedInstance();
   if (!isRecordCategory(session) || !isOnBuiltInReceiver(session)) return; // not a call, or already speaker/headset/BT
   try {
-    session.overrideOutputAudioPortError(AVAudioSessionPortOverride.Speaker, null);
+    session.overrideOutputAudioPortError(AVAudioSessionPortOverride.Speaker);
   } catch {
     /* benign — route may have changed again under us */
   }
@@ -60,6 +52,7 @@ function observeAudioRouteForSpeaker(): void {
  */
 export function registerMediaHandlers(): void {
   // DIAGNOSTIC: surface the WKWebView UIDelegate status to the page (on-screen log).
+  // no NS types: __appwrapWebviewDiag is an ad-hoc diagnostic stashed on global by the WKWebView UIDelegate.
   bridge.register('debug.webviewInfo', () => ({ diag: (global as any).__appwrapWebviewDiag ?? 'n/a (android/web)' }));
 
   // Auto loudspeaker for in-WebView WebRTC calls. When getUserMedia is live, WebKit drives the
@@ -120,7 +113,8 @@ export function registerMediaHandlers(): void {
     } else {
       category = AVAudioSessionCategoryPlayback; // ignores the silent switch
     }
-    session.setCategoryModeOptionsError(category, avMode, options as any, null as any);
-    session.setActiveError(true, null as any);
+    // options is an OR-combined flag mask; the bitwise result widens to number, so cast back to the enum.
+    session.setCategoryModeOptionsError(category, avMode, options as AVAudioSessionCategoryOptions);
+    session.setActiveError(true);
   });
 }

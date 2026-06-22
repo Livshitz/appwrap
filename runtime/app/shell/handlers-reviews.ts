@@ -1,9 +1,8 @@
 import { Application, Utils, isAndroid, isIOS } from '@nativescript/core';
 import { bridge } from './bridge';
 
-// SKStoreReviewController comes from the StoreKit typings referenced in references.d.ts. `com` is the
-// Android namespace.
-declare const com: any;
+// SKStoreReviewController comes from the StoreKit typings referenced in references.d.ts.
+declare const com: any; // no NS types: third-party play-core review (com.google.android.play.core.review)
 
 /**
  * In-app store review prompt — opt-in, strippable (its own handler file + group). Lives apart from
@@ -28,8 +27,8 @@ function registerIos(): void {
   bridge.register('reviews.requestReview', () => {
     Utils.dispatchToMainThread(() => {
       const scene = UIApplication.sharedApplication.keyWindow?.windowScene;
-      if (scene && SKStoreReviewController.requestReviewInWindowScene) {
-        SKStoreReviewController.requestReviewInWindowScene(scene);
+      if (scene && SKStoreReviewController.requestReviewInScene) {
+        SKStoreReviewController.requestReviewInScene(scene);
       } else {
         SKStoreReviewController.requestReview();
       }
@@ -50,7 +49,7 @@ function registerAndroid(): void {
           // Both tasks COMPLETE even when the OS shows nothing (no Play track / rate-limited), so we
           // resolve on completion regardless — never block, never fabricate a "shown" signal.
           request.addOnCompleteListener(new com.google.android.gms.tasks.OnCompleteListener({
-            onComplete(infoTask: any) {
+            onComplete(infoTask: any) { // no NS types: play-services gms Task<ReviewInfo>
               if (!infoTask.isSuccessful()) { resolve(); return; }
               try {
                 const flow = manager.launchReviewFlow(activity, infoTask.getResult());

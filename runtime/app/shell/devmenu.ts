@@ -19,7 +19,7 @@ export function startDevMenu(): void {
 
 // ── shake detection (total acceleration magnitude in g incl. gravity, debounced) ──
 const SHAKE_G = 1.8; // spike vs. ~1g rest
-let shakeMm: any = null; // hold a ref so CoreMotion isn't GC'd
+let shakeMm: CMMotionManager | null = null; // hold a ref so CoreMotion isn't GC'd
 let firstSpikeAt = 0;
 let spikes = 0;
 let lastMenuAt = 0;
@@ -68,7 +68,7 @@ function startAndroidShake(): void {
   const G = 9.80665;
   const listener = new android.hardware.SensorEventListener({
     onAccuracyChanged() {},
-    onSensorChanged(e: any) {
+    onSensorChanged(e: android.hardware.SensorEvent) {
       const v = e.values;
       onAccelMagnitude(Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) / G);
     },

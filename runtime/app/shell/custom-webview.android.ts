@@ -5,7 +5,8 @@ import { APPWRAP_GLOBALS_JS, NATIVE_FEEL_JS, serviceWorkerGuardJs, externalNavGu
 import { envGlobalsJs } from './env';
 import { requestPermissions } from './android-helpers';
 
-declare const android: any, java: any, androidx: any;
+// `android` + `java` resolve to the real types-android namespaces (no declare needed).
+declare const androidx: any; // no NS types: androidx.webkit.* (WebViewFeature/WebViewCompat) not in the android-32 platform typings
 
 /** Stable in-app origin — secure context, ES modules work (file:// blocks them). */
 export const APP_ORIGIN = 'https://appwrap.local';
@@ -42,7 +43,8 @@ export class CustomWebView extends WebView {
 
   initNativeView(): void {
     super.initNativeView();
-    const wv = this.android;
+    // NS core types the `.android` getter as `any`; narrow to the real WebView for this scope.
+    const wv = this.android as android.webkit.WebView;
     if (!wv) return;
 
     // Debug mode only: debuggable via chrome://inspect (full console + network) + keep the screen
@@ -77,7 +79,7 @@ export class CustomWebView extends WebView {
    * is process-wide but harmless with our single WebView. iOS suspends rAF on its own (no-op there).
    */
   setRenderingActive(active: boolean): void {
-    const wv = this.android;
+    const wv = this.android as android.webkit.WebView;
     if (!wv) return;
     try {
       if (active) { wv.onResume(); wv.resumeTimers(); }
@@ -87,11 +89,11 @@ export class CustomWebView extends WebView {
     }
   }
 
-  private installDocumentStartShim(wv: any): void {
+  private installDocumentStartShim(wv: android.webkit.WebView): void {
     try {
       const wkt = androidx.webkit;
       if (wkt.WebViewFeature.isFeatureSupported(wkt.WebViewFeature.DOCUMENT_START_SCRIPT)) {
-        const rules = new java.util.HashSet();
+        const rules = new java.util.HashSet<string>();
         rules.add(APP_ORIGIN);
         wkt.WebViewCompat.addDocumentStartJavaScript(wv, buildBootstrapJs(), rules);
         return;
@@ -102,13 +104,20 @@ export class CustomWebView extends WebView {
     }
   }
 
-  private createTransportChromeClient(): any {
+  private createTransportChromeClient(): android.webkit.WebChromeClient {
     const owner = new WeakRef<CustomWebView>(this);
+    // NS runtime adds `.extend` on Java classes; it's not in the static typings, hence the cast.
     const ChromeClient = (android.webkit.WebChromeClient as any).extend({
-      onJsPrompt(_view: any, _url: string, message: string, _defaultValue: string, result: any): boolean {
+      onJsPrompt(
+        _view: android.webkit.WebView,
+        _url: string,
+        message: string,
+        _defaultValue: string,
+        result: android.webkit.JsPromptResult
+      ): boolean {
         if (typeof message === 'string' && message.startsWith(PROMPT_PREFIX)) {
           result.confirm('');
-          const view = owner.get ? owner.get() : (owner as any).deref();
+          const view = owner.get ? owner.get() : (owner as { deref(): CustomWebView }).deref();
           view?.onAppwrapMessage?.(message.slice(PROMPT_PREFIX.length));
           return true;
         }
@@ -117,7 +126,7 @@ export class CustomWebView extends WebView {
 
       // getUserMedia: grant the WebView's per-origin capture after ensuring the
       // app holds the matching OS runtime permission (CAMERA / RECORD_AUDIO).
-      onPermissionRequest(request: any): void {
+      onPermissionRequest(request: android.webkit.PermissionRequest): void {
         const PR = android.webkit.PermissionRequest;
         const resources: string[] = Array.from(request.getResources());
         const perms = new Set<string>();
@@ -139,14 +148,15 @@ export class CustomWebView extends WebView {
 }
 
 /** https://appwrap.local/<path> → file under www/; SPA fallback to the entry for extension-less misses. */
-function createAssetServingClient(): any {
+function createAssetServingClient(): android.webkit.WebViewClient {
   const wwwPath = nsPath.join(knownFolders.currentApp().path, 'www');
 
-  const respond = (filePath: string, ext: string) => {
+  const respond = (filePath: string, ext: string): android.webkit.WebResourceResponse => {
     const stream = new java.io.FileInputStream(filePath);
     return new android.webkit.WebResourceResponse(mimeFor(ext, filePath), 'utf-8', stream);
   };
 
+  // (Array as any).create is the NS interop helper for native byte[]; not in lib typings.
   const emptyStream = () => new java.io.ByteArrayInputStream((Array as any).create('byte', 0));
 
   /**
@@ -164,10 +174,16 @@ function createAssetServingClient(): any {
    * (GET/HEAD) are proxied — POST/PUT/PATCH return 501 rather than silently sending an empty body.
    * (BodDB writes ride the WS, not HTTP POST, so this is rarely hit.)
    */
-  const proxyToBackend = (rel: string, query: string, ext: string, method: string, headers: any): any => {
+  const proxyToBackend = (
+    rel: string,
+    query: string,
+    ext: string,
+    method: string,
+    headers: java.util.Map<string, string> | null
+  ): android.webkit.WebResourceResponse => {
     if (method !== 'GET' && method !== 'HEAD') {
       return new android.webkit.WebResourceResponse(
-        'text/plain', 'utf-8', 501, 'Not Implemented', new java.util.HashMap(),
+        'text/plain', 'utf-8', 501, 'Not Implemented', new java.util.HashMap<string, string>(),
         new java.io.ByteArrayInputStream(new java.lang.String(
           'appwrap Android shell cannot proxy request bodies (shouldInterceptRequest limitation)'
         ).getBytes('UTF-8'))
@@ -178,9 +194,10 @@ function createAssetServingClient(): any {
     const target = `${SHELL_CONFIG.backendOrigin.replace(/\/+$/, '')}/${rel}${query}`;
     const pump = new java.lang.Runnable({
       run() {
-        let is: any = null;
+        let is: java.io.InputStream | null = null;
         try {
-          const conn = new java.net.URL(target).openConnection();
+          // openConnection() statically returns URLConnection; for http(s) it's an HttpURLConnection.
+          const conn = new java.net.URL(target).openConnection() as java.net.HttpURLConnection;
           conn.setRequestMethod(method);
           conn.setInstanceFollowRedirects(true);
           conn.setConnectTimeout(15000);
@@ -209,17 +226,22 @@ function createAssetServingClient(): any {
       },
     });
     new java.lang.Thread(pump).start();
-    const outHeaders = new java.util.HashMap();
+    const outHeaders = new java.util.HashMap<string, string>();
     outHeaders.put('Access-Control-Allow-Origin', '*');
     outHeaders.put('Cache-Control', 'no-cache');
     // mime/charset best-effort from the path; status 200 (real status is unknown until the bg read).
     return new android.webkit.WebResourceResponse(mimeFor(ext, rel), 'utf-8', 200, 'OK', outHeaders, pin);
   };
 
+  // NS runtime adds `.extend` on Java classes; it's not in the static typings, hence the cast.
   const Client = (android.webkit.WebViewClient as any).extend({
-    shouldInterceptRequest(_view: any, request: any): any {
-      const isObj = typeof request !== 'string';
-      const url: string = isObj ? String(request.getUrl().toString()) : request;
+    // Modern (API 21+) overload passes a WebResourceRequest; the legacy overload passed a string URL.
+    // We defensively handle both, so the param is the union.
+    shouldInterceptRequest(
+      _view: android.webkit.WebView,
+      request: android.webkit.WebResourceRequest | string
+    ): android.webkit.WebResourceResponse | null {
+      const url: string = typeof request !== 'string' ? String(request.getUrl().toString()) : request;
       if (!url.startsWith(APP_ORIGIN)) return null; // external — let WebView handle it
 
       const tail = url.slice(APP_ORIGIN.length);
@@ -239,25 +261,30 @@ function createAssetServingClient(): any {
       // Not a local asset → proxy to the backend (mirror of iOS), making relative
       // backend/vendor requests same-origin under app://appwrap.local.
       if (SHELL_CONFIG.backendOrigin) {
+        const isObj = typeof request !== 'string';
         const method = (isObj && request.getMethod && String(request.getMethod())) || 'GET';
         const headers = isObj && request.getRequestHeaders ? request.getRequestHeaders() : null;
         return proxyToBackend(rel, query, ext, method.toUpperCase(), headers);
       }
       return new android.webkit.WebResourceResponse(
-        'text/plain', 'utf-8', 404, 'Not Found', new java.util.HashMap(), emptyStream()
+        'text/plain', 'utf-8', 404, 'Not Found', new java.util.HashMap<string, string>(), emptyStream()
       );
     },
 
-    onPageStarted(view: any, _url: string, _favicon: any): void {
+    onPageStarted(view: android.webkit.WebView, _url: string, _favicon: android.graphics.Bitmap): void {
       // Fallback injection — no-op when the document-start scripts already ran
-      view.evaluateJavascript(buildBootstrapJs(), null);
+      view.evaluateJavascript(buildBootstrapJs(), null as unknown as android.webkit.ValueCallback<string>);
     },
 
     // `appwrap dev` points at a LAN dev server that almost always uses a self-signed / mkcert TLS
     // cert the device's trust store doesn't know — the WebView would otherwise hard-fail with
     // ERR_CERT_AUTHORITY_INVALID. Proceed past it ONLY in a debug build AND only when actually in
     // server-loader (dev) mode. Production app:// builds never reach this (local assets, no TLS).
-    onReceivedSslError(_view: any, handler: any, error: any): void {
+    onReceivedSslError(
+      _view: android.webkit.WebView,
+      handler: android.webkit.SslErrorHandler,
+      error: android.net.http.SslError
+    ): void {
       if (SHELL_CONFIG.debug && SHELL_CONFIG.loader === 'server') {
         console.warn('AppWrap: proceeding past dev-server SSL error (debug+server only):', String(error));
         handler.proceed();

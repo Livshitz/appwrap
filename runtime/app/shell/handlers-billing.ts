@@ -9,16 +9,6 @@ import { bridge } from './bridge';
  * separate handler (Play Billing) and is currently unimplemented (capability 'none').
  */
 
-declare const SKPaymentQueue: any;
-declare const SKPayment: any;
-declare const SKProductsRequest: any;
-declare const SKProductsRequestDelegate: any;
-declare const SKPaymentTransactionObserver: any;
-declare const NSSet: any;
-declare const NSBundle: any;
-declare const NSData: any;
-declare const NSNumberFormatter: any;
-
 const PERIOD_UNIT = ['D', 'W', 'M', 'Y']; // SKProductPeriodUnit: Day/Week/Month/Year
 const STATE = { Purchasing: 0, Purchased: 1, Failed: 2, Restored: 3, Deferred: 4 };
 const SK_ERR_CANCELLED = 2; // SKErrorPaymentCancelled
@@ -35,10 +25,11 @@ function appReceipt(): string {
   const url = NSBundle.mainBundle.appStoreReceiptURL;
   if (!url) return '';
   const data = NSData.dataWithContentsOfURL(url);
-  return data ? data.base64EncodedStringWithOptions(0) : '';
+  // 0 = NSDataBase64Encoding default (no options); enum-cast for the typed selector.
+  return data ? data.base64EncodedStringWithOptions(0 as unknown as NSDataBase64EncodingOptions) : '';
 }
 
-function mapProduct(p: any) {
+function mapProduct(p: SKProduct) {
   const f = NSNumberFormatter.new();
   f.numberStyle = 2; // CurrencyStyle
   f.locale = p.priceLocale;
@@ -48,7 +39,8 @@ function mapProduct(p: any) {
     title: String(p.localizedTitle ?? ''),
     description: String(p.localizedDescription ?? ''),
     price: p.price ? p.price.doubleValue : 0,
-    displayPrice: String(f.stringFromNumber(p.price) ?? ''),
+    // stringFromNumber takes an NSNumber* at runtime; the .d.ts types it as number, so cast the NSDecimalNumber.
+    displayPrice: String(f.stringFromNumber(p.price as unknown as number) ?? ''),
     currency: String(p.priceLocale?.currencyCode ?? ''),
     type: sp ? 'autoRenewable' : 'unknown',
     subscriptionPeriod: sp ? `P${sp.numberOfUnits}${PERIOD_UNIT[sp.unit] ?? 'D'}` : undefined,
@@ -62,82 +54,98 @@ function receiptFor(productId: string, transactionId?: string) {
 // In-flight resolvers, keyed so the single queue observer can route callbacks.
 const purchaseWaiters = new Map<string, { resolve: (r: any) => void; reject: (e: any) => void }>();
 let restoreWaiter: { receipts: any[]; resolve: (r: any[]) => void; reject: (e: any) => void } | null = null;
-const productRequests = new Set<any>(); // keep strong refs to in-flight requests + delegates
-let observer: any = null;
+const productRequests = new Set<{ request: SKProductsRequest; delegate: ProductsDelegate }>(); // keep strong refs to in-flight requests + delegates
+let observer: PaymentObserver | null = null;
 
-function buildObserver() {
-  const ObserverClass = (NSObject as any).extend(
-    {
-      paymentQueueUpdatedTransactions(queue: any, transactions: any): void {
-        const n = transactions.count;
-        for (let i = 0; i < n; i++) {
-          const t = transactions.objectAtIndex(i);
-          const pid = String(t.payment.productIdentifier);
-          switch (t.transactionState) {
-            case STATE.Purchased: {
-              queue.finishTransaction(t);
-              const r = receiptFor(pid, String(t.transactionIdentifier ?? ''));
-              bridge.emit('billing.transaction', r);
-              purchaseWaiters.get(pid)?.resolve(r);
-              purchaseWaiters.delete(pid);
-              break;
-            }
-            case STATE.Restored: {
-              queue.finishTransaction(t);
-              const r = receiptFor(pid, String(t.transactionIdentifier ?? ''));
-              if (restoreWaiter) restoreWaiter.receipts.push(r);
-              bridge.emit('billing.transaction', r);
-              break;
-            }
-            case STATE.Failed: {
-              queue.finishTransaction(t);
-              const cancelled = t.error && t.error.code === SK_ERR_CANCELLED;
-              const e = err(cancelled ? 'DENIED' : 'NATIVE_ERROR', t.error?.localizedDescription ?? 'Purchase failed');
-              purchaseWaiters.get(pid)?.reject(e);
-              purchaseWaiters.delete(pid);
-              break;
-            }
-            // Purchasing / Deferred: nothing to do.
-          }
+// SKPaymentQueue transaction observer. State (purchaseWaiters/restoreWaiter) lives at module
+// scope, so the delegate needs no instance fields.
+@NativeClass()
+class PaymentObserver extends NSObject implements SKPaymentTransactionObserver {
+  static ObjCProtocols = [SKPaymentTransactionObserver];
+  static new(): PaymentObserver {
+    return <PaymentObserver>super.new();
+  }
+  paymentQueueUpdatedTransactions(queue: SKPaymentQueue, transactions: NSArray<SKPaymentTransaction>): void {
+    const n = transactions.count;
+    for (let i = 0; i < n; i++) {
+      const t = transactions.objectAtIndex(i);
+      const pid = String(t.payment.productIdentifier);
+      switch (t.transactionState) {
+        case STATE.Purchased: {
+          queue.finishTransaction(t);
+          const r = receiptFor(pid, String(t.transactionIdentifier ?? ''));
+          bridge.emit('billing.transaction', r);
+          purchaseWaiters.get(pid)?.resolve(r);
+          purchaseWaiters.delete(pid);
+          break;
         }
-      },
-      paymentQueueRestoreCompletedTransactionsFinished(): void {
-        restoreWaiter?.resolve(restoreWaiter.receipts);
-        restoreWaiter = null;
-      },
-      paymentQueueRestoreCompletedTransactionsFailedWithError(_q: any, error: any): void {
-        restoreWaiter?.reject(err('NATIVE_ERROR', error?.localizedDescription ?? 'Restore failed'));
-        restoreWaiter = null;
-      },
-    },
-    { protocols: [SKPaymentTransactionObserver] }
-  );
-  return ObserverClass.new();
+        case STATE.Restored: {
+          queue.finishTransaction(t);
+          const r = receiptFor(pid, String(t.transactionIdentifier ?? ''));
+          if (restoreWaiter) restoreWaiter.receipts.push(r);
+          bridge.emit('billing.transaction', r);
+          break;
+        }
+        case STATE.Failed: {
+          queue.finishTransaction(t);
+          const cancelled = t.error && t.error.code === SK_ERR_CANCELLED;
+          const e = err(cancelled ? 'DENIED' : 'NATIVE_ERROR', t.error?.localizedDescription ?? 'Purchase failed');
+          purchaseWaiters.get(pid)?.reject(e);
+          purchaseWaiters.delete(pid);
+          break;
+        }
+        // Purchasing / Deferred: nothing to do.
+      }
+    }
+  }
+  paymentQueueRestoreCompletedTransactionsFinished(_queue: SKPaymentQueue): void {
+    restoreWaiter?.resolve(restoreWaiter.receipts);
+    restoreWaiter = null;
+  }
+  paymentQueueRestoreCompletedTransactionsFailedWithError(_queue: SKPaymentQueue, error: NSError): void {
+    restoreWaiter?.reject(err('NATIVE_ERROR', error?.localizedDescription ?? 'Restore failed'));
+    restoreWaiter = null;
+  }
+}
+
+function buildObserver(): PaymentObserver {
+  return PaymentObserver.new();
+}
+
+// SKProductsRequest delegate. Closure-captured state (resolve/reject + the strong-ref holder)
+// is held as instance fields, assigned after new().
+@NativeClass()
+class ProductsDelegate extends NSObject implements SKProductsRequestDelegate {
+  static ObjCProtocols = [SKProductsRequestDelegate];
+  onResolve?: (products: SKProduct[]) => void;
+  onReject?: (e: Error) => void;
+  holder?: { request: SKProductsRequest; delegate: ProductsDelegate };
+  static new(): ProductsDelegate {
+    return <ProductsDelegate>super.new();
+  }
+  productsRequestDidReceiveResponse(_request: SKProductsRequest, response: SKProductsResponse): void {
+    const out: SKProduct[] = [];
+    const products = response.products;
+    for (let i = 0; i < products.count; i++) out.push(products.objectAtIndex(i));
+    if (this.holder) productRequests.delete(this.holder);
+    this.onResolve?.(out);
+  }
+  requestDidFailWithError(_request: SKRequest, error: NSError): void {
+    if (this.holder) productRequests.delete(this.holder);
+    this.onReject?.(err('NATIVE_ERROR', error?.localizedDescription ?? 'Products request failed'));
+  }
 }
 
 /** One SKProductsRequest → resolves the raw SKProduct objects (used by both products + purchase). */
-function requestSKProducts(ids: string[]): Promise<any[]> {
+function requestSKProducts(ids: string[]): Promise<SKProduct[]> {
   return new Promise((resolve, reject) => {
-    const set = NSSet.setWithArray(ids as any);
+    const set = NSSet.setWithArray<string>(ids);
     const request = SKProductsRequest.alloc().initWithProductIdentifiers(set);
-    const DelegateClass = (NSObject as any).extend(
-      {
-        productsRequestDidReceiveResponse(_req: any, response: any): void {
-          const out: any[] = [];
-          const products = response.products;
-          for (let i = 0; i < products.count; i++) out.push(products.objectAtIndex(i));
-          productRequests.delete(holder);
-          resolve(out);
-        },
-        requestDidFailWithError(_req: any, error: any): void {
-          productRequests.delete(holder);
-          reject(err('NATIVE_ERROR', error?.localizedDescription ?? 'Products request failed'));
-        },
-      },
-      { protocols: [SKProductsRequestDelegate] }
-    );
-    const delegate = DelegateClass.new();
+    const delegate = ProductsDelegate.new();
     const holder = { request, delegate };
+    delegate.onResolve = resolve;
+    delegate.onReject = reject;
+    delegate.holder = holder;
     productRequests.add(holder); // strong ref until the callback fires
     request.delegate = delegate;
     request.start();

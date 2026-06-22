@@ -2,8 +2,6 @@ import { Utils, isAndroid, isIOS } from '@nativescript/core';
 import { bridge } from './bridge';
 import { startActivityForResult } from './android-helpers';
 
-declare const android: any, java: any;
-
 const err = (code: string, message: string) => Object.assign(new Error(message), { code });
 
 type Dir = 'documents' | 'data' | 'cache';
@@ -153,6 +151,46 @@ function iosStat(full: string, name: string): any {
 }
 
 /**
+ * Delegate for UIDocumentPickerViewController. Captures the resolve callback as an instance field
+ * (the original closed over `resolve`); both selectors funnel into it.
+ */
+@NativeClass()
+class DocumentPickerDelegate extends NSObject implements UIDocumentPickerDelegate {
+  static ObjCProtocols = [UIDocumentPickerDelegate];
+  onPick!: (out: any[]) => void;
+
+  static new(): DocumentPickerDelegate {
+    return <DocumentPickerDelegate>super.new();
+  }
+
+  documentPickerDidPickDocumentsAtURLs(_controller: UIDocumentPickerViewController, urls: NSArray<NSURL>): void {
+    const out: any[] = [];
+    for (let i = 0; i < urls.count; i++) {
+      const url = urls.objectAtIndex(i);
+      const scoped = url.startAccessingSecurityScopedResource?.();
+      try {
+        const data = NSData.dataWithContentsOfURL(url);
+        if (data) {
+          out.push({
+            name: url.lastPathComponent,
+            mimeType: mimeForUrlIos(url),
+            size: data.length,
+            base64: data.base64EncodedStringWithOptions(0 as unknown as NSDataBase64EncodingOptions),
+          });
+        }
+      } finally {
+        if (scoped) url.stopAccessingSecurityScopedResource?.();
+      }
+    }
+    this.onPick(out);
+  }
+
+  documentPickerWasCancelled(_controller: UIDocumentPickerViewController): void {
+    this.onPick([]);
+  }
+}
+
+/**
  * iOS document picker via UIDocumentPickerViewController. Reads each chosen URL's bytes (under a
  * security-scoped access window) and returns them base64-inline. DEVICE-GATED — the delegate
  * callbacks (didPickDocumentsAtURLs / wasCancelled) are not exercised in this session.
@@ -163,6 +201,7 @@ function pickFileIos(types: string[] | undefined, multiple: boolean): Promise<an
       try {
         const utis = NSMutableArray.new();
         // Map common MIME/extension hints to UTTypes; default to "any item".
+        // interop: UTType/UTTypeItem live in UniformTypeIdentifiers, not referenced by references.d.ts.
         (types ?? []).forEach((t) => {
           const ut = (UTType as any).typeWithMIMEType?.(t) ?? (UTType as any).typeWithFilenameExtension?.(t.replace(/^\./, ''));
           if (ut) utis.addObject(ut);
@@ -172,37 +211,9 @@ function pickFileIos(types: string[] | undefined, multiple: boolean): Promise<an
         const picker = UIDocumentPickerViewController.alloc().initForOpeningContentTypes(utis as any);
         picker.allowsMultipleSelection = multiple;
 
-        const DelegateClass = (NSObject as any).extend(
-          {
-            documentPickerDidPickDocumentsAtURLs(_p: any, urls: any) {
-              const out: any[] = [];
-              for (let i = 0; i < urls.count; i++) {
-                const url = urls.objectAtIndex(i);
-                const scoped = url.startAccessingSecurityScopedResource?.();
-                try {
-                  const data = NSData.dataWithContentsOfURL(url);
-                  if (data) {
-                    out.push({
-                      name: url.lastPathComponent,
-                      mimeType: mimeForUrlIos(url),
-                      size: data.length,
-                      base64: data.base64EncodedStringWithOptions(0 as unknown as NSDataBase64EncodingOptions),
-                    });
-                  }
-                } finally {
-                  if (scoped) url.stopAccessingSecurityScopedResource?.();
-                }
-              }
-              resolve(out);
-            },
-            documentPickerWasCancelled() {
-              resolve([]);
-            },
-          },
-          { protocols: [UIDocumentPickerDelegate] }
-        );
-        const delegate = DelegateClass.new();
-        (picker as any)._appwrapDelegate = delegate; // retain past the present call
+        const delegate = DocumentPickerDelegate.new();
+        delegate.onPick = resolve;
+        (picker as any)._appwrapDelegate = delegate; // interop: retain delegate past the present call (no typed slot)
         picker.delegate = delegate;
         Utils.ios.getRootViewController().presentViewControllerAnimatedCompletion(picker, true, null);
       } catch (e: any) {
@@ -212,25 +223,26 @@ function pickFileIos(types: string[] | undefined, multiple: boolean): Promise<an
   });
 }
 
-function mimeForUrlIos(url: any): string {
+function mimeForUrlIos(url: NSURL): string {
+  // interop: UTType lives in UniformTypeIdentifiers, not referenced by references.d.ts.
   const ut = (UTType as any).typeWithFilenameExtension?.(url.pathExtension);
   return ut?.preferredMIMEType ?? 'application/octet-stream';
 }
 
 // ───────────────────────────── Android ─────────────────────────────
 
-function androidBaseDir(dir: Dir): any {
+function androidBaseDir(dir: Dir): java.io.File {
   const ctx = Utils.android.getApplicationContext();
   if (dir === 'cache') return ctx.getCacheDir();
   if (dir === 'documents') return ctx.getExternalFilesDir(null) ?? ctx.getFilesDir();
   return ctx.getFilesDir(); // 'data'
 }
 
-function androidFile(path: string, dir: Dir): any {
+function androidFile(path: string, dir: Dir): java.io.File {
   return new java.io.File(androidBaseDir(dir), safeRelPath(path));
 }
 
-function readBytesAndroid(file: any): any {
+function readBytesAndroid(file: java.io.File): androidNative.Array<number> {
   const fis = new java.io.FileInputStream(file);
   const baos = new java.io.ByteArrayOutputStream();
   const buf = Array.create('byte', 8192);
@@ -298,7 +310,7 @@ function registerAndroidFs(): void {
   bridge.register('fs.pickFile', ({ types, multiple }: any) => pickFileAndroid(types, !!multiple));
 }
 
-function writeAndroid(file: any, data: string, encoding: string, append: boolean): void {
+function writeAndroid(file: java.io.File, data: string, encoding: string, append: boolean): void {
   const bytes = encoding === 'base64'
     ? android.util.Base64.decode(String(data ?? ''), android.util.Base64.DEFAULT)
     : new java.lang.String(String(data ?? '')).getBytes('UTF-8');
@@ -307,7 +319,7 @@ function writeAndroid(file: any, data: string, encoding: string, append: boolean
   fos.close();
 }
 
-function androidStat(file: any, name: string): any {
+function androidStat(file: java.io.File, name: string): any {
   const isDir = file.isDirectory();
   return {
     name,
@@ -338,7 +350,7 @@ async function pickFileAndroid(types: string[] | undefined, multiple: boolean): 
   const { resultCode, intent: result } = await startActivityForResult(intent);
   if (resultCode !== android.app.Activity.RESULT_OK || !result) return [];
 
-  const uris: any[] = [];
+  const uris: android.net.Uri[] = [];
   const clip = result.getClipData?.();
   if (clip) for (let i = 0; i < clip.getItemCount(); i++) uris.push(clip.getItemAt(i).getUri());
   else if (result.getData()) uris.push(result.getData());
@@ -361,7 +373,7 @@ async function pickFileAndroid(types: string[] | undefined, multiple: boolean): 
   });
 }
 
-function queryDisplayName(cr: any, uri: any): string {
+function queryDisplayName(cr: android.content.ContentResolver, uri: android.net.Uri): string {
   const cursor = cr.query(uri, [android.provider.OpenableColumns.DISPLAY_NAME], null, null, null);
   let name = 'file';
   if (cursor) {

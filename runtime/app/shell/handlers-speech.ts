@@ -2,22 +2,24 @@ import { Utils, isAndroid, isIOS } from '@nativescript/core';
 import { bridge } from './bridge';
 import { requestPermissions } from './android-helpers';
 
-// AVFoundation / Speech globals (NS auto-links the frameworks via metadata when referenced).
-declare const AVSpeechSynthesizer: any;
-declare const AVSpeechUtterance: any;
-declare const AVSpeechSynthesisVoice: any;
-declare const AVAudioEngine: any;
-declare const AVAudioSession: any;
-declare const AVAudioSessionCategoryPlayAndRecord: any;
-declare const AVAudioSessionModeMeasurement: any;
-declare const SFSpeechRecognizer: any;
-declare const SFSpeechAudioBufferRecognitionRequest: any;
-declare const SFSpeechRecognizerAuthorizationStatusAuthorized: any;
-declare const NSLocale: any;
-declare const android: any;
-declare const java: any;
-
 const err = (code: string, message: string) => Object.assign(new Error(message), { code });
+
+// iOS speech-synthesizer delegate — both finish & cancel settle the pending speak (the JS
+// `speakPending` is captured via the `onSettle` instance field, assigned after `new()`).
+@NativeClass()
+class SpeakDelegate extends NSObject implements AVSpeechSynthesizerDelegate {
+  static ObjCProtocols = [AVSpeechSynthesizerDelegate];
+  onSettle?: () => void;
+  static new(): SpeakDelegate {
+    return <SpeakDelegate>super.new();
+  }
+  speechSynthesizerDidFinishSpeechUtterance(_s: AVSpeechSynthesizer, _u: AVSpeechUtterance): void {
+    this.onSettle?.();
+  }
+  speechSynthesizerDidCancelSpeechUtterance(_s: AVSpeechSynthesizer, _u: AVSpeechUtterance): void {
+    this.onSettle?.();
+  }
+}
 
 /**
  * Voice I/O. TTS: iOS AVSpeechSynthesizer / Android TextToSpeech — speak resolves on finish.
@@ -37,15 +39,15 @@ export function registerSpeechHandlers(): void {
 function registerIos(): void {
   // Strong refs while a session is live — ARC would otherwise free the synthesizer/engine/delegate
   // the moment the JS locals fall out of scope (same hazard as handlers-scanner/oauth).
-  let synth: any = null;
-  let speakDelegate: any = null;
+  let synth: AVSpeechSynthesizer | null = null;
+  let speakDelegate: SpeakDelegate | null = null;
   let speakPending: { resolve: () => void } | null = null;
 
-  let engine: any = null;
-  let recognizer: any = null;
-  let request: any = null;
-  let task: any = null;
-  let listenPending: { resolve: (v: string) => void; reject: (e: any) => void } | null = null;
+  let engine: AVAudioEngine | null = null;
+  let recognizer: SFSpeechRecognizer | null = null;
+  let request: SFSpeechAudioBufferRecognitionRequest | null = null;
+  let task: SFSpeechRecognitionTask | null = null;
+  let listenPending: { resolve: (v: string) => void; reject: (e: Error) => void } | null = null;
   let best = '';
 
   const teardownListen = () => {
@@ -71,18 +73,8 @@ function registerIos(): void {
         try {
           if (!synth) {
             synth = AVSpeechSynthesizer.new();
-            const DelegateClass = (NSObject as any).extend(
-              {
-                speechSynthesizerDidFinishSpeechUtterance(_s: any, _u: any) {
-                  const p = speakPending; speakPending = null; p?.resolve();
-                },
-                speechSynthesizerDidCancelSpeechUtterance(_s: any, _u: any) {
-                  const p = speakPending; speakPending = null; p?.resolve();
-                },
-              },
-              { protocols: [] }
-            );
-            speakDelegate = DelegateClass.new();
+            speakDelegate = SpeakDelegate.new();
+            speakDelegate.onSettle = () => { const p = speakPending; speakPending = null; p?.resolve(); };
             synth.delegate = speakDelegate;
           }
           // A new speak resolves any prior pending (its utterance is being superseded).
@@ -136,8 +128,8 @@ function registerIos(): void {
       best = '';
       listenPending = { resolve, reject };
 
-      SFSpeechRecognizer.requestAuthorization((status: any) => {
-        if (status !== SFSpeechRecognizerAuthorizationStatusAuthorized) {
+      SFSpeechRecognizer.requestAuthorization((status: SFSpeechRecognizerAuthorizationStatus) => {
+        if (status !== SFSpeechRecognizerAuthorizationStatus.Authorized) {
           const p = listenPending; listenPending = null;
           p?.reject(err('DENIED', 'Speech recognition not authorized'));
           return;
@@ -167,17 +159,18 @@ function registerIos(): void {
 
             const session = AVAudioSession.sharedInstance();
             session.setCategoryModeOptionsError(AVAudioSessionCategoryPlayAndRecord, AVAudioSessionModeMeasurement, 1 /* duckOthers */, null);
-            session.setActiveWithOptionsError(true, 0, null);
+            // 0 = no activation flags; not a named member of the options enum, so cast (preserve value).
+            session.setActiveWithOptionsError(true, 0 as AVAudioSessionSetActiveOptions, null);
 
             engine = AVAudioEngine.new();
             request = SFSpeechAudioBufferRecognitionRequest.new();
             request.shouldReportPartialResults = !!params?.partial;
 
-            task = recognizer.recognitionTaskWithRequestResultHandler(request, (result: any, error: any) => {
+            task = recognizer.recognitionTaskWithRequestResultHandler(request, (result: SFSpeechRecognitionResult, error: NSError) => {
               if (result) {
                 best = String(result.bestTranscription?.formattedString ?? best);
-                if (params?.partial && !result.isFinal) bridge.emit('speech.partial', { transcript: best });
-                if (result.isFinal && listenPending) settleListen();
+                if (params?.partial && !result.final) bridge.emit('speech.partial', { transcript: best });
+                if (result.final && listenPending) settleListen();
               }
               if (error && listenPending) {
                 const p = listenPending; listenPending = null;
@@ -188,7 +181,7 @@ function registerIos(): void {
 
             const input = engine.inputNode;
             const format = input.outputFormatForBus(0);
-            input.installTapOnBusBufferSizeFormatBlock(0, 1024, format, (buffer: any, _when: any) => {
+            input.installTapOnBusBufferSizeFormatBlock(0, 1024, format, (buffer: AVAudioPCMBuffer, _when: AVAudioTime) => {
               request?.appendAudioPCMBuffer(buffer);
             });
             engine.prepare();
@@ -206,11 +199,11 @@ function registerIos(): void {
 
 function registerAndroid(): void {
   // TextToSpeech + SpeechRecognizer are plain Java → direct interop, no kotlin flag, no gradle dep.
-  let tts: any = null;
+  let tts: android.speech.tts.TextToSpeech | null = null;
   let ttsReady = false;
   const ctx = () => Utils.android.getApplicationContext();
 
-  const ensureTts = (): Promise<any> =>
+  const ensureTts = (): Promise<android.speech.tts.TextToSpeech | null> =>
     new Promise((resolve) => {
       if (tts && ttsReady) { resolve(tts); return; }
       tts = new android.speech.tts.TextToSpeech(
@@ -236,7 +229,8 @@ function registerAndroid(): void {
     const id = 'u' + Date.now();
     return new Promise<void>((resolve) => {
       engine.setOnUtteranceProgressListener(
-        new android.speech.tts.UtteranceProgressListener({
+        // NS interop: subclass the abstract Java class via object-literal ctor (untypeable — cast base).
+        new (android.speech.tts.UtteranceProgressListener as any)({
           onStart() {},
           onDone() { resolve(); },
           onError() { resolve(); }, // resolve regardless — speak() promises completion, not success
@@ -264,8 +258,8 @@ function registerAndroid(): void {
   });
 
   // STT — SpeechRecognizer must be created + driven on the main (UI) thread.
-  let recognizer: any = null;
-  let listenPending: { resolve: (v: string) => void; reject: (e: any) => void } | null = null;
+  let recognizer: android.speech.SpeechRecognizer | null = null;
+  let listenPending: { resolve: (v: string) => void; reject: (e: Error) => void } | null = null;
   let best = '';
 
   const settle = () => {
@@ -295,7 +289,7 @@ function registerAndroid(): void {
             return;
           }
           recognizer = android.speech.SpeechRecognizer.createSpeechRecognizer(ctx());
-          const pickText = (b: any): string => {
+          const pickText = (b: android.os.Bundle): string => {
             const arr = b?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION);
             return arr && arr.size() ? String(arr.get(0)) : '';
           };
@@ -303,12 +297,12 @@ function registerAndroid(): void {
             new android.speech.RecognitionListener({
               onReadyForSpeech() {}, onBeginningOfSpeech() {}, onRmsChanged() {},
               onBufferReceived() {}, onEndOfSpeech() {}, onEvent() {},
-              onPartialResults(b: any) {
+              onPartialResults(b: android.os.Bundle) {
                 if (!params?.partial) return;
                 const t = pickText(b);
                 if (t) { best = t; bridge.emit('speech.partial', { transcript: t }); }
               },
-              onResults(b: any) {
+              onResults(b: android.os.Bundle) {
                 const t = pickText(b);
                 if (t) best = t;
                 if (listenPending) settle();
