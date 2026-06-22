@@ -32,7 +32,8 @@ export class HttpValidatorOptions {
   /** Static headers or a thunk (e.g. to inject a fresh bearer token). */
   headers?: HeaderProvider;
   /** Map the provider's response JSON → `Entitlement[]`. Default expects `{ entitlements: [...] }`. */
-  mapResponse: (json: any) => Entitlement[] = (j) => (j?.entitlements ?? []) as Entitlement[];
+  mapResponse: (json: unknown) => Entitlement[] = (j) =>
+    ((j as { entitlements?: Entitlement[] } | null)?.entitlements ?? []);
   /** Injected for tests / non-DOM runtimes. Defaults to global `fetch`. */
   fetch?: typeof fetch;
 }

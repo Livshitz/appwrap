@@ -156,7 +156,7 @@ export class UpdatesModule {
  * `<meta name="app-version">` tag. '' (unknown) when neither is present — in which case we never
  * raise a false update prompt. */
 function bootVersion(): string {
-  const g = typeof window !== 'undefined' ? (window as any).__APP_VERSION__ : undefined;
+  const g = typeof window !== 'undefined' ? (window as { __APP_VERSION__?: string }).__APP_VERSION__ : undefined;
   if (g) return String(g);
   if (typeof document !== 'undefined') {
     const meta = document.querySelector('meta[name="app-version"]');

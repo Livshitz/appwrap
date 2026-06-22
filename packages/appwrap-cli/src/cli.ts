@@ -29,6 +29,21 @@ import {
   stampPlistBackgroundTasks,
   stampPlistOrientations,
 } from './derive';
+import type { WebManifest } from './derive';
+
+/** What `child_process.execFileSync` attaches to the Error it throws on a non-zero exit
+ * (stdout/stderr are Buffer with the default encoding, string when `encoding` is set). */
+interface ExecError extends Error {
+  stdout?: string | Buffer;
+  stderr?: string | Buffer;
+  status?: number | null;
+}
+const asExecError = (e: unknown): ExecError => (e ?? {}) as ExecError;
+/** Combined stdout+stderr captured on an exec failure (empty string when none). */
+const execErrText = (e: unknown): string => {
+  const err = asExecError(e);
+  return `${err.stdout ?? ''}${err.stderr ?? ''}`;
+};
 
 /** Marketing version → a monotonic integer build (0.2.1 → 201; 1.4.12 → 10412). Stable & increasing
  * across semver bumps so store re-uploads are always accepted without a manual bump. */
@@ -301,15 +316,15 @@ function parseArgs(argv: string[]) {
 }
 
 /** Parse the PWA's web manifest (manifest.json / .webmanifest) from the dist dir, or null. */
-function loadManifest(cwd: string, cfg: AppwrapConfig): Record<string, any> | null {
+function loadManifest(cwd: string, cfg: AppwrapConfig): WebManifest | null {
   const dist = resolve(cwd, cfg.pwaDist);
   for (const name of ['manifest.json', 'manifest.webmanifest']) {
     const mf = join(dist, name);
     if (!existsSync(mf)) continue;
     try {
       return JSON.parse(readFileSync(mf, 'utf8'));
-    } catch (e: any) {
-      console.warn(`⚠ Could not parse ${name}: ${e.message}`);
+    } catch (e: unknown) {
+      console.warn(`⚠ Could not parse ${name}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
   return null;
@@ -876,13 +891,13 @@ function vendorBackendAssets(www: string, cfg: AppwrapConfig): void {
     // Retry a couple times (the backend can briefly reset under deploy/cold-start), and on total
     // failure fall back to the cached copy if one exists rather than breaking the whole sync.
     let ok = false;
-    let lastErr: any;
+    let lastErr: unknown;
     for (let attempt = 0; attempt < 3 && !ok; attempt++) {
       try {
         execFileSync('curl', ['-fsSL', '--retry', '2', url, '-o', tmp], { stdio: 'pipe' });
         cpSync(tmp, dest);
         ok = true;
-      } catch (e: any) {
+      } catch (e: unknown) {
         lastErr = e;
       }
     }
@@ -891,10 +906,12 @@ function vendorBackendAssets(www: string, cfg: AppwrapConfig): void {
       console.log(`  vendor ← ${url}`);
     } else if (existsSync(dest) && readFileSync(dest).length > 0) {
       console.warn(`⚠ vendor fetch failed: ${url} — using cached copy (backend unreachable).`);
-      if (lastErr?.stderr) console.warn(`  ${String(lastErr.stderr).trim()}`);
+      const err = execErrText(lastErr);
+      if (err) console.warn(`  ${err.trim()}`);
     } else {
       console.error(`✖ vendor fetch failed: ${url} (backend reachable? path correct?) — no cached copy to fall back to`);
-      if (lastErr?.stderr) console.error(String(lastErr.stderr).trim());
+      const err = execErrText(lastErr);
+      if (err) console.error(err.trim());
       process.exit(1);
     }
   }
@@ -1121,19 +1138,27 @@ async function build(cwd: string, flags: Record<string, string>, positionals: st
 
 interface DeviceInfo { id: string; name: string; model: string; transport: string }
 
+/** The subset of a `xcrun devicectl list devices --json-output` device entry appwrap reads. */
+interface DevicectlDevice {
+  identifier?: string;
+  deviceProperties?: { name?: string };
+  hardwareProperties?: { platform?: string; marketingName?: string; productType?: string };
+  connectionProperties?: { tunnelState?: string; transportType?: string };
+}
+
 /** Discover usable physical iOS devices via devicectl (USB + network). Excludes 'unavailable'
  * tunnels and non-iOS (watch). Returns [] if none. */
 function listIosDevices(): DeviceInfo[] {
   const out = join(tmpdir(), `appwrap-devices-${process.pid}.json`);
   try {
     execFileSync('xcrun', ['devicectl', 'list', 'devices', '--json-output', out], { stdio: 'pipe' });
-    const j = JSON.parse(readFileSync(out, 'utf8'));
+    const j = JSON.parse(readFileSync(out, 'utf8')) as { result?: { devices?: DevicectlDevice[] } };
     rmSync(out, { force: true });
     return (j?.result?.devices ?? [])
-      .filter((d: any) => d?.hardwareProperties?.platform === 'iOS'
+      .filter((d) => d?.hardwareProperties?.platform === 'iOS'
         && d?.connectionProperties?.tunnelState !== 'unavailable')
-      .map((d: any) => ({
-        id: d.identifier,
+      .map((d) => ({
+        id: d.identifier ?? '',
         name: d?.deviceProperties?.name ?? '(unknown)',
         model: d?.hardwareProperties?.marketingName ?? d?.hardwareProperties?.productType ?? '',
         transport: d?.connectionProperties?.transportType ?? '',
@@ -1160,7 +1185,7 @@ function pickDevice(devices: DeviceInfo[], explicitId?: string): DeviceInfo {
   }
   console.log('Multiple devices connected:');
   devices.forEach((d, i) => console.log(`  ${i + 1}) ${d.name} — ${d.model || 'iPhone'} [${d.transport}]`));
-  const ans = (globalThis as any).prompt(`Select device [1-${devices.length}]: `);
+  const ans = (globalThis as { prompt(msg?: string): string | null }).prompt(`Select device [1-${devices.length}]: `);
   const idx = Number(ans) - 1;
   if (!Number.isInteger(idx) || idx < 0 || idx >= devices.length) {
     console.error('✖ Invalid selection.'); process.exit(1);
@@ -1223,8 +1248,8 @@ async function deploy(cwd: string, flags: Record<string, string>, positionals: s
       execFileSync('xcrun', ['devicectl', 'device', 'install', 'app', '--timeout', '25', '--device', device.id, ipaPath], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'pipe'] })
     );
     process.stdout.write(out);
-  } catch (e: any) {
-    const log = `${e?.stdout ?? ''}${e?.stderr ?? ''}`;
+  } catch (e: unknown) {
+    const log = execErrText(e);
     process.stderr.write(log);
     if (/maximum number of installed apps|MIInstallerErrorDomain error 13|ApplicationVerificationFailed/.test(log)) {
       // Free Apple developer profile caps a device at 3 app IDs — a sibling appwrap/WDA build often eats a slot.
@@ -1286,8 +1311,8 @@ function usbmuxInstall(ipaPath: string): boolean {
     const out = execFileSync('ideviceinstaller', ['install', ipaPath], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'pipe'] });
     process.stdout.write(out);
     return /Complete|Installed/i.test(out);
-  } catch (e: any) {
-    process.stderr.write(`${e?.stdout ?? ''}${e?.stderr ?? ''}`);
+  } catch (e: unknown) {
+    process.stderr.write(execErrText(e));
     return false;
   }
 }
@@ -1300,8 +1325,8 @@ function withUnlockRetry<T>(label: string, run: () => T, tries = 40, delayMs = 3
   for (let i = 0; ; i++) {
     try {
       return run();
-    } catch (e: any) {
-      const log = `${e?.stdout ?? ''}${e?.stderr ?? ''}`;
+    } catch (e: unknown) {
+      const log = execErrText(e);
       if (/maximum number of installed apps|MIInstallerErrorDomain error 13|ApplicationVerificationFailed/.test(log)) throw e;
       // devicectl/CoreDevice tunnel STUCK (it switches to a [wired] path and hangs) is NOT a lock —
       // retrying as "waiting for unlock" is pointless + misleading. Re-throw so the caller can fall back.

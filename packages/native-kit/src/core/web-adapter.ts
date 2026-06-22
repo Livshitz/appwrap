@@ -1,3 +1,4 @@
+/// <reference path="../web-experimental.d.ts" />
 import { Capability, Handshake, KitError, NativeKitAdapter, Unsubscribe } from './types';
 
 /** Decode raw base64 → an ArrayBuffer for File construction (no `data:` prefix expected). */
@@ -17,13 +18,27 @@ function bufferToBase64(buf: ArrayBuffer): string {
 }
 
 /** Map our lock vocabulary to valid ScreenOrientation `OrientationLockType` values. */
-function toWebOrientation(o: string): any {
+function toWebOrientation(o: string): string {
   switch (o) {
     case 'portrait-upside-down': return 'portrait-secondary';
     case 'landscape-left': return 'landscape-primary';
     case 'landscape-right': return 'landscape-secondary';
     default: return o; // 'portrait' | 'landscape' | 'any' are already valid
   }
+}
+
+/** Options accepted by `speech.speak` (a subset of the wire params, all optional). */
+interface SpeakOptions {
+  lang?: string;
+  rate?: number;
+  pitch?: number;
+  voice?: string;
+}
+
+/** Options accepted by `speech.listen`. */
+interface ListenOptions {
+  lang?: string;
+  partial?: boolean;
 }
 
 /**
@@ -34,7 +49,7 @@ function toWebOrientation(o: string): any {
 export class WebAdapter implements NativeKitAdapter {
   readonly kind = 'web' as const;
   private toastEl: HTMLElement | null = null;
-  private wakeLock: any = null;
+  private wakeLock: WakeLockSentinel | null = null;
   private listeners = new Map<string, Set<(payload: unknown) => void>>();
   private geoWatchId: number | null = null;
   private motionHandler: ((e: DeviceMotionEvent) => void) | null = null;
@@ -48,29 +63,29 @@ export class WebAdapter implements NativeKitAdapter {
   }
 
   async handshake(): Promise<Handshake> {
-    const n = navigator as any;
+    const n = navigator;
     const caps: Record<string, Capability> = {
       haptics: 'vibrate' in navigator ? 'web' : 'none',
       share: 'share' in navigator ? 'web' : 'none',
       shareFiles: typeof n.canShare === 'function' ? 'web' : 'none', // navigator.canShare({files}) gates at call time
-      orientation: (screen as any)?.orientation ? 'web' : 'none', // Screen Orientation API (lock needs fullscreen)
+      orientation: screen?.orientation ? 'web' : 'none', // Screen Orientation API (lock needs fullscreen)
       storage: 'web',
       secureStorage: 'none',
       // OPFS (navigator.storage.getDirectory) backs read/write/list; pickFile falls back to
       // <input type=file> even without OPFS, so 'web' whenever either surface exists.
-      fs: n.storage?.getDirectory || typeof document !== 'undefined' ? 'web' : 'none',
+      fs: typeof n.storage?.getDirectory === 'function' || typeof document !== 'undefined' ? 'web' : 'none',
       toast: 'web',
       statusBar: 'none',
       device: 'web',
       clipboard: navigator.clipboard ? 'web' : 'none',
       notifications: 'Notification' in window ? 'web' : 'none',
-      badge: typeof (navigator as any).setAppBadge === 'function' ? 'web' : 'none', // Badging API (PWA icon badge)
+      badge: typeof navigator.setAppBadge === 'function' ? 'web' : 'none', // Badging API (PWA icon badge)
       biometrics: 'none',
       geo: 'geolocation' in navigator ? 'web' : 'none',
       photos: 'web',
       network: 'web',
       screen: 'wakeLock' in n ? 'web' : 'none',
-      keyboard: (window as any).visualViewport ? 'web' : 'none', // VisualViewport resize ≈ keyboard show/hide
+      keyboard: window.visualViewport ? 'web' : 'none', // VisualViewport resize ≈ keyboard show/hide
       dialogs: 'web',
       reviews: 'none',
       themeColor: 'web', // the browser honors <meta name="theme-color"> itself
@@ -78,14 +93,14 @@ export class WebAdapter implements NativeKitAdapter {
       contacts: n.contacts?.select ? 'web' : 'none',
       calendar: 'none',
       camera: 'web', // <input capture> — mobile browsers open the camera
-      media: (navigator as any).mediaDevices?.getUserMedia ? 'web' : 'none',
+      media: typeof navigator.mediaDevices?.getUserMedia === 'function' ? 'web' : 'none',
       // BarcodeDetector (Chrome/Android) decodes; needs a getUserMedia stream to feed it. Both → 'web'.
-      scanner: typeof (window as any).BarcodeDetector !== 'undefined' && (navigator as any).mediaDevices?.getUserMedia ? 'web' : 'none',
+      scanner: typeof window.BarcodeDetector !== 'undefined' && typeof navigator.mediaDevices?.getUserMedia === 'function' ? 'web' : 'none',
       // TTS: SpeechSynthesis API (broad support). STT: SpeechRecognition (Chrome/webkit only).
-      speech: typeof (window as any).speechSynthesis !== 'undefined' ? 'web' : 'none',
+      speech: typeof window.speechSynthesis !== 'undefined' ? 'web' : 'none',
       speechRecognition:
-        typeof (window as any).SpeechRecognition !== 'undefined' ||
-        typeof (window as any).webkitSpeechRecognition !== 'undefined'
+        typeof window.SpeechRecognition !== 'undefined' ||
+        typeof window.webkitSpeechRecognition !== 'undefined'
           ? 'web'
           : 'none',
       app: 'web', // openUrl via window.open; openSettings/canOpenUrl unsupported
@@ -111,6 +126,8 @@ export class WebAdapter implements NativeKitAdapter {
   }
 
   async invoke<T>(method: string, params?: unknown): Promise<T> {
+    // no type: untyped JSON-wire param bag dispatched dynamically — fields flow into ~50 typed sinks
+    // (String()/Notification/etc.); `unknown` would force a cast at every read for zero real safety.
     const p = (params ?? {}) as Record<string, any>;
     switch (method) {
       case 'haptics.impact':
@@ -170,7 +187,7 @@ export class WebAdapter implements NativeKitAdapter {
       case 'ui.brightness.set':
         throw new KitError('UNSUPPORTED', 'No brightness control on web');
       case 'ui.keepAwake': {
-        const wl = (navigator as any).wakeLock;
+        const wl = navigator.wakeLock;
         if (!wl) throw new KitError('UNSUPPORTED', 'Wake Lock API unavailable');
         if (p.on) this.wakeLock = await wl.request('screen');
         else { await this.wakeLock?.release(); this.wakeLock = null; }
@@ -197,7 +214,7 @@ export class WebAdapter implements NativeKitAdapter {
       }
 
       case 'screen.orientation.lock': {
-        const so = (screen as any)?.orientation;
+        const so = screen?.orientation;
         if (!so?.lock) throw new KitError('UNSUPPORTED', 'Screen orientation lock unavailable');
         // Most browsers require fullscreen before locking; surface the real reason.
         await so.lock(toWebOrientation(String(p.orientation))).catch((e: Error) => {
@@ -206,10 +223,10 @@ export class WebAdapter implements NativeKitAdapter {
         return undefined as T;
       }
       case 'screen.orientation.unlock':
-        (screen as any)?.orientation?.unlock?.();
+        screen?.orientation?.unlock?.();
         return undefined as T;
       case 'screen.orientation.current':
-        return (((screen as any)?.orientation?.type ?? '').startsWith('landscape') ? 'landscape' : 'portrait') as T;
+        return ((screen?.orientation?.type ?? '').startsWith('landscape') ? 'landscape' : 'portrait') as T;
 
       case 'keyboard.hide':
         // No programmatic IME on web — blurring the focused field dismisses it.
@@ -220,7 +237,7 @@ export class WebAdapter implements NativeKitAdapter {
         throw new KitError('UNSUPPORTED', 'No in-app review prompt on web');
 
       case 'device.info': {
-        const battery = await (navigator as any).getBattery?.().catch(() => null);
+        const battery = await navigator.getBattery?.().catch(() => null);
         return {
           model: navigator.userAgent.replace(/^Mozilla\/\d+\.\d+\s*/, '').slice(0, 64),
           os: 'web',
@@ -252,7 +269,7 @@ export class WebAdapter implements NativeKitAdapter {
       case 'notifications.pending':
         return 0 as T; // web timers aren't introspectable
       case 'notifications.setBadge': {
-        const setAppBadge = (navigator as any).setAppBadge?.bind(navigator);
+        const setAppBadge = navigator.setAppBadge?.bind(navigator);
         if (!setAppBadge) throw new KitError('UNSUPPORTED', 'Badging API unavailable');
         await setAppBadge(p.count);
         return undefined as T;
@@ -293,7 +310,7 @@ export class WebAdapter implements NativeKitAdapter {
       case 'motion.start': {
         if (typeof DeviceMotionEvent === 'undefined') throw new KitError('UNSUPPORTED', 'No motion sensors on this browser');
         // iOS Safari gates motion behind an explicit permission prompt
-        const req = (DeviceMotionEvent as any).requestPermission;
+        const req = (DeviceMotionEvent as unknown as DeviceMotionEventWithPermission).requestPermission;
         if (req) {
           const state = await req().catch((e: Error) => { throw new KitError('DENIED', e.message); });
           if (state !== 'granted') throw new KitError('DENIED', 'Motion permission not granted');
@@ -323,9 +340,9 @@ export class WebAdapter implements NativeKitAdapter {
         return undefined as T;
 
       case 'contacts.pick': {
-        const select = (navigator as any).contacts?.select;
+        const select = navigator.contacts?.select;
         if (!select) throw new KitError('UNSUPPORTED', 'Contact Picker API unavailable');
-        const picked = await (navigator as any).contacts
+        const picked = await navigator.contacts!
           .select(['name', 'tel', 'email'])
           .catch((e: Error) => { throw new KitError('DENIED', e.message); });
         const c = picked?.[0];
@@ -348,7 +365,7 @@ export class WebAdapter implements NativeKitAdapter {
       case 'speech.speak':
         return this.speak(String(p.text ?? ''), p) as Promise<T>;
       case 'speech.stop':
-        (window as any).speechSynthesis?.cancel?.();
+        window.speechSynthesis?.cancel?.();
         return undefined as T;
       case 'speech.voices':
         return this.listVoices() as Promise<T>;
@@ -387,7 +404,7 @@ export class WebAdapter implements NativeKitAdapter {
         return undefined as T; // browser owns the audio session — nothing to tune
 
       case 'network.status': {
-        const conn = (navigator as any).connection;
+        const conn = navigator.connection;
         return { online: navigator.onLine, type: conn?.type ?? (navigator.onLine ? 'unknown' : 'none') } as T;
       }
 
@@ -454,14 +471,14 @@ export class WebAdapter implements NativeKitAdapter {
       };
     }
     if (event === 'screen.orientation.change') {
-      const so = (screen as any)?.orientation;
+      const so = screen?.orientation;
       if (!so) return () => {};
       const fire = () => cb(String(so.type ?? '').startsWith('landscape') ? 'landscape' : 'portrait');
       so.addEventListener('change', fire);
       return () => so.removeEventListener('change', fire);
     }
     if (event === 'keyboard.show' || event === 'keyboard.hide') {
-      const vv = (window as any).visualViewport;
+      const vv = window.visualViewport;
       if (!vv) return () => {};
       let shown = false;
       const onResize = () => {
@@ -521,9 +538,9 @@ export class WebAdapter implements NativeKitAdapter {
   private scanBarcode(
     formats: string | string[] | undefined,
     facingMode: 'environment' | 'user'
-  ): Promise<{ value: string; format: string; bounds?: any } | { cancelled: true }> {
-    const Detector = (window as any).BarcodeDetector;
-    const getUserMedia = (navigator as any).mediaDevices?.getUserMedia?.bind((navigator as any).mediaDevices);
+  ): Promise<{ value: string; format: string; bounds?: { x: number; y: number; width: number; height: number } } | { cancelled: true }> {
+    const Detector = window.BarcodeDetector;
+    const getUserMedia = navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices);
     if (!Detector || !getUserMedia) throw new KitError('UNSUPPORTED', 'BarcodeDetector / camera unavailable in this browser');
 
     return new Promise(async (resolve, reject) => {
@@ -552,7 +569,7 @@ export class WebAdapter implements NativeKitAdapter {
         video.setAttribute('playsinline', '');
         video.muted = true;
         video.style.cssText = 'flex:1;width:100%;height:100%;object-fit:cover';
-        (video as any).srcObject = stream;
+        video.srcObject = stream;
         const close = document.createElement('button');
         close.textContent = 'Cancel';
         close.style.cssText = 'position:absolute;top:max(12px,env(safe-area-inset-top));right:16px;z-index:1;background:rgba(0,0,0,.5);color:#fff;border:0;border-radius:18px;padding:8px 16px;font:15px system-ui';
@@ -581,9 +598,11 @@ export class WebAdapter implements NativeKitAdapter {
           raf = requestAnimationFrame(tick);
         };
         raf = requestAnimationFrame(tick);
-      } catch (e: any) {
+      } catch (e: unknown) {
         teardown();
-        reject(new KitError(e?.name === 'NotAllowedError' ? 'DENIED' : 'NATIVE_ERROR', e?.message ?? 'scan failed'));
+        const name = e instanceof Error ? e.name : '';
+        const message = e instanceof Error ? e.message : 'scan failed';
+        reject(new KitError(name === 'NotAllowedError' ? 'DENIED' : 'NATIVE_ERROR', message));
       }
     });
   }
@@ -591,29 +610,29 @@ export class WebAdapter implements NativeKitAdapter {
   // ── speech (Web Speech API) ─────────────────────────────────────────
 
   /** Speak via SpeechSynthesis; resolve when the utterance ends (or rejects on synth error). */
-  private speak(text: string, opts: Record<string, any>): Promise<void> {
-    const synth = (window as any).speechSynthesis;
+  private speak(text: string, opts: SpeakOptions): Promise<void> {
+    const synth = window.speechSynthesis;
     if (!synth) throw new KitError('UNSUPPORTED', 'SpeechSynthesis unavailable');
     return new Promise((resolve, reject) => {
-      const u = new (window as any).SpeechSynthesisUtterance(text);
+      const u = new window.SpeechSynthesisUtterance(text);
       if (opts.lang) u.lang = opts.lang;
       if (opts.rate != null) u.rate = opts.rate;
       if (opts.pitch != null) u.pitch = opts.pitch;
       if (opts.voice) {
-        const v = synth.getVoices().find((vc: any) => vc.voiceURI === opts.voice || vc.name === opts.voice);
+        const v = synth.getVoices().find((vc) => vc.voiceURI === opts.voice || vc.name === opts.voice);
         if (v) u.voice = v;
       }
       u.onend = () => resolve();
-      u.onerror = (e: any) => reject(new KitError('NATIVE_ERROR', e?.error ?? 'speech synthesis failed'));
+      u.onerror = (e: SpeechSynthesisErrorEvent) => reject(new KitError('NATIVE_ERROR', e?.error ?? 'speech synthesis failed'));
       synth.speak(u);
     });
   }
 
   /** List synthesizer voices, awaiting the async `voiceschanged` event when the list is empty. */
   private listVoices(): Promise<Array<{ id: string; name: string; lang: string }>> {
-    const synth = (window as any).speechSynthesis;
+    const synth = window.speechSynthesis;
     if (!synth) throw new KitError('UNSUPPORTED', 'SpeechSynthesis unavailable');
-    const map = (vs: any[]) => vs.map((v) => ({ id: v.voiceURI ?? v.name, name: v.name, lang: v.lang }));
+    const map = (vs: SpeechSynthesisVoice[]) => vs.map((v) => ({ id: v.voiceURI ?? v.name, name: v.name, lang: v.lang }));
     const ready = synth.getVoices();
     if (ready.length) return Promise.resolve(map(ready));
     // Chrome populates voices asynchronously — wait once for voiceschanged, with a short fallback.
@@ -630,8 +649,8 @@ export class WebAdapter implements NativeKitAdapter {
   }
 
   /** Capture the mic via SpeechRecognition; resolve the FINAL transcript, stream partials. */
-  private listen(opts: Record<string, any>): Promise<string> {
-    const Rec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+  private listen(opts: ListenOptions): Promise<string> {
+    const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Rec) throw new KitError('UNSUPPORTED', 'SpeechRecognition unavailable (Chrome only)');
     return new Promise((resolve, reject) => {
       const rec = new Rec();
@@ -648,7 +667,7 @@ export class WebAdapter implements NativeKitAdapter {
       };
       const stop = () => { try { rec.stop(); } catch { /* already stopped */ } };
       this.listenStop = stop;
-      rec.onresult = (e: any) => {
+      rec.onresult = (e) => {
         let interim = '';
         let finalText = '';
         for (let i = 0; i < e.results.length; i++) {
@@ -659,7 +678,7 @@ export class WebAdapter implements NativeKitAdapter {
         best = (finalText || interim).trim();
         if (opts.partial && interim) this.emit('speech.partial', { transcript: interim.trim() });
       };
-      rec.onerror = (e: any) => {
+      rec.onerror = (e) => {
         if (settled) return;
         settled = true;
         if (this.listenStop === stop) this.listenStop = null;
@@ -713,10 +732,10 @@ export class WebAdapter implements NativeKitAdapter {
   // OPFS is one private root per origin — our `dir` enum has no meaning here, so paths resolve
   // straight off the root. Slash-separated paths walk nested dirs.
 
-  private async opfsRoot(): Promise<any> {
-    const dir = (navigator as any).storage?.getDirectory;
+  private async opfsRoot(): Promise<FileSystemDirectoryHandle> {
+    const dir = navigator.storage?.getDirectory;
     if (!dir) throw new KitError('UNSUPPORTED', 'No OPFS in this browser');
-    return (navigator as any).storage.getDirectory();
+    return navigator.storage.getDirectory();
   }
 
   /** Split a path into clean segments, rejecting any `..` so it can't escape the OPFS root. */
@@ -727,7 +746,7 @@ export class WebAdapter implements NativeKitAdapter {
   }
 
   /** Walk `path` to its parent dir handle + leaf name. `create` makes intermediate dirs. */
-  private async opfsResolveParent(path: string, create: boolean): Promise<{ parent: any; name: string }> {
+  private async opfsResolveParent(path: string, create: boolean): Promise<{ parent: FileSystemDirectoryHandle; name: string }> {
     const parts = this.opfsSegments(path);
     const name = parts.pop();
     if (!name) throw new KitError('NATIVE_ERROR', 'Empty path');
@@ -764,7 +783,7 @@ export class WebAdapter implements NativeKitAdapter {
     let dir = await this.opfsRoot();
     for (const seg of this.opfsSegments(path)) dir = await dir.getDirectoryHandle(seg);
     const out: Array<{ name: string; type: 'file' | 'dir' }> = [];
-    for await (const [name, handle] of (dir as any).entries()) {
+    for await (const [name, handle] of dir.entries()) {
       out.push({ name, type: handle.kind === 'directory' ? 'dir' : 'file' });
     }
     return out;

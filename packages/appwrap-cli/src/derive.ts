@@ -7,6 +7,13 @@
 /** Normalized appwrap orientation — the three lock states the native shells can express. */
 export type Orientation = 'portrait' | 'landscape' | 'any';
 
+/** A single PWA web-manifest icon entry (the subset appwrap reads). */
+export interface WebManifestIcon {
+  src: string;
+  sizes?: string;
+  purpose?: string;
+}
+
 /** The PWA web-manifest fields appwrap derives from (a subset; everything optional). */
 export interface WebManifest {
   name?: string;
@@ -14,6 +21,7 @@ export interface WebManifest {
   background_color?: string;
   theme_color?: string;
   orientation?: string;
+  icons?: WebManifestIcon[];
 }
 
 /**

@@ -13,8 +13,10 @@ export class HttpBillingProviderOptions {
   redirect: (url: string) => void = (url) => {
     if (typeof window !== 'undefined') window.location.assign(url);
   };
-  mapProducts: (json: any) => Product[] = (j) => (j?.products ?? j ?? []) as Product[];
-  mapEntitlements: (json: any) => Entitlement[] = (j) => (j?.entitlements ?? j ?? []) as Entitlement[];
+  mapProducts: (json: unknown) => Product[] = (j) =>
+    ((j as { products?: Product[] } | null)?.products ?? (j as Product[] | null) ?? []);
+  mapEntitlements: (json: unknown) => Entitlement[] = (j) =>
+    ((j as { entitlements?: Entitlement[] } | null)?.entitlements ?? (j as Entitlement[] | null) ?? []);
 }
 
 /**
@@ -39,8 +41,9 @@ export class HttpBillingProvider implements BillingProvider {
 
   async purchase(productId: string): Promise<Entitlement[]> {
     const json = await httpJson({ ...this.req(), url: `${this.base()}/checkout`, method: 'POST', body: { productId } });
-    if (json?.url) {
-      this.options.redirect(String(json.url)); // hosted checkout — page navigates away
+    const url = (json as { url?: unknown } | null)?.url;
+    if (url) {
+      this.options.redirect(String(url)); // hosted checkout — page navigates away
       return []; // entitlements arrive via entitlements() after redirect-back
     }
     return this.options.mapEntitlements(json); // backend completed inline
@@ -56,7 +59,8 @@ export class HttpBillingProvider implements BillingProvider {
 
   async manageSubscriptions(): Promise<void> {
     const json = await httpJson({ ...this.req(), url: `${this.base()}/portal`, method: 'POST', body: {} });
-    if (json?.url) this.options.redirect(String(json.url)); // Stripe Billing Portal, etc.
+    const url = (json as { url?: unknown } | null)?.url;
+    if (url) this.options.redirect(String(url)); // Stripe Billing Portal, etc.
   }
 
   private base() {

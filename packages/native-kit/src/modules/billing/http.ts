@@ -14,8 +14,8 @@ export interface HttpJsonOptions {
 }
 
 /** POST/GET JSON, throwing on non-2xx. Keeps validators + providers DRY. */
-export async function httpJson(opts: HttpJsonOptions): Promise<any> {
-  const f = opts.fetch ?? (globalThis as any).fetch;
+export async function httpJson(opts: HttpJsonOptions): Promise<unknown> {
+  const f = opts.fetch ?? globalThis.fetch;
   if (!f) throw new Error('billing: no fetch available — pass one via options.fetch');
   const h = typeof opts.headers === 'function' ? await opts.headers() : opts.headers;
   const res = await f(opts.url, {
