@@ -630,22 +630,35 @@ async function main() {
     })],
   ]);
 
-  // Remote push (APNs/FCM). Gated by `push:{enabled}` in appwrap.config (NOT the modules list) because
-  // the iOS aps-environment entitlement needs a PAID team — left off here, so capability is honestly
-  // 'none' and the calls degrade gracefully. register() returns a raw token; sending is your backend's job.
+  // Remote push (APNs/FCM). Gated by `push:{enabled}` in appwrap.config (NOT the modules list) — the iOS
+  // aps-environment entitlement needs a PAID team. register() returns a raw token; sending is your
+  // backend's job. NOTE: a token is NOT permission — register() gets an APNs token even while
+  // authorization is `notDetermined`, but iOS silently DROPS the alert until the user grants
+  // notifications. So you must requestPermission() (shows the prompt) before a push will display.
   kit.push.onMessage((m) => log(`push message → ${JSON.stringify(m).slice(0, 60)}`));
   tile('Push', kit.push.capability, [
+    ['request permission', () => kit.push.requestPermission()],
     ['permission', () => kit.push.permissionStatus()],
     ['register', async () => (await kit.push.register()).token.slice(0, 24) + '…'],
     // The DEMO sends the test push (not the kit): grab the token, then POST it to our relay's /register
     // with test:true. The relay serves CORS + OPTIONS, so this cross-origin WebView fetch reaches it.
     ['send me a push', async () => {
+      // Ensure the user has been prompted — otherwise the push is delivered but never shown.
+      if (await kit.push.permissionStatus() === 'notDetermined') await kit.push.requestPermission();
       const { platform, token } = await kit.push.register();
       const res = await fetch(`${PUSH_RELAY_URL}/register`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, platform: platform === 'apns' ? 'ios' : 'android', test: true }),
+        // `topic` = the iOS bundle id; APNs REQUIRES the apns-topic to match the token's app or it
+        // rejects with `DeviceTokenNotForTopic`. The relay only has a single default, so each app must
+        // send its own id (matches appwrap.config `id`). Harmless/ignored for FCM.
+        body: JSON.stringify({ token, platform: platform === 'apns' ? 'ios' : 'android', topic: 'cc.livx.hellowrap', test: true }),
       });
-      return `relay → HTTP ${res.status}`;
+      // Surface the relay's REAL result (it always returns HTTP 200; the APNs reason is in the body) —
+      // so a failure like DeviceTokenNotForTopic / BadDeviceToken is visible, not masked by the 200.
+      const r = await res.json().catch(() => ({}));
+      return r.sent
+        ? 'sent ✓ (lock the phone / background the app to see the banner)'
+        : `relay ok but APNs rejected → ${r.result?.reason ?? JSON.stringify(r).slice(0, 80)}`;
     }],
   ]);
 
