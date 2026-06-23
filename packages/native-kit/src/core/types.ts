@@ -71,9 +71,19 @@ export class KitError extends Error {
 export type Unsubscribe = () => void;
 
 export interface InvokeOptions {
-  /** Per-call response deadline. Interactive flows (pickers, dialogs, auth
-   * prompts) should pass a generous one — the user may take their time. */
-  timeoutMs?: number;
+  /** Per-call response deadline (default 10_000ms).
+   *
+   * Interactive flows (pickers, dialogs, auth prompts) should pass a generous
+   * value — the user may take their time.
+   *
+   * Pass `'none'` (or `0`) to DISABLE the watchdog entirely. Use this ONLY for
+   * dismiss-bound / present-and-wait calls: native UI that resolves solely when
+   * the user dismisses a sheet/modal (manage-subscriptions sheet,
+   * ASWebAuthenticationSession, share sheet, …). For these there is no
+   * meaningful deadline — a watchdog could only false-timeout mid-interaction
+   * and force a spurious fallback. Do NOT use it for fire-and-fast calls: a
+   * finite timeout is what surfaces a real native hang. */
+  timeoutMs?: number | 'none';
 }
 
 export interface NativeKitAdapter {

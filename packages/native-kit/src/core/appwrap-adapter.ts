@@ -45,6 +45,12 @@ export class AppwrapAdapter implements NativeKitAdapter {
     return this.request<T>(method, params, opts?.timeoutMs ?? 10_000);
   }
 
+  /** `'none'` or `0` → no watchdog (dismiss-bound calls); otherwise the deadline in ms. */
+  private static resolveTimeout(timeoutMs: number | 'none'): number | null {
+    if (timeoutMs === 'none' || timeoutMs === 0) return null;
+    return timeoutMs;
+  }
+
   on(event: string, cb: (payload: unknown) => void): Unsubscribe {
     let set = this.listeners.get(event);
     if (!set) this.listeners.set(event, (set = new Set()));
@@ -52,14 +58,17 @@ export class AppwrapAdapter implements NativeKitAdapter {
     return () => set!.delete(cb);
   }
 
-  private request<T>(method: string, params: unknown, timeoutMs: number): Promise<T> {
+  private request<T>(method: string, params: unknown, timeoutMs: number | 'none'): Promise<T> {
     const id = `k${++this.seq}`;
     const envelope: RequestEnvelope = { v: 1, id, kind: 'request', method, params };
+    const deadline = AppwrapAdapter.resolveTimeout(timeoutMs);
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      // `null` deadline = dismiss-bound call: no watchdog, resolves only on the
+      // native response (e.g. the user closes the sheet).
+      const timer = deadline === null ? undefined : setTimeout(() => {
         this.pending.delete(id);
-        reject(new KitError('TIMEOUT', `${method} timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
+        reject(new KitError('TIMEOUT', `${method} timed out after ${deadline}ms`));
+      }, deadline);
       this.pending.set(id, {
         resolve: (v) => { clearTimeout(timer); resolve(v as T); },
         reject: (e) => { clearTimeout(timer); reject(e); },

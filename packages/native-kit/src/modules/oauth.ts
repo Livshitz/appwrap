@@ -39,9 +39,9 @@ export class OAuthModule {
   }
 
   authorize(params: OAuthAuthorizeParams): Promise<OAuthResult> {
-    // Long timeout: a real sign-in (password + 2FA + consent in the system browser) easily exceeds
-    // the 10s invoke default — without this the kit abandons the request id before the redirect
-    // returns and the login is silently dropped. Matches the other interactive flows (pickers 120s).
-    return this.kit.invoke('oauth.authorize', params as unknown as Record<string, unknown>, { timeoutMs: 300_000 });
+    // Dismiss-bound: the ASWebAuthenticationSession / Custom Tab resolves only when the user
+    // finishes (password + 2FA + consent) or cancels — there is no meaningful deadline. A watchdog
+    // would abandon the request id before the redirect returns and silently drop the login.
+    return this.kit.invoke('oauth.authorize', params as unknown as Record<string, unknown>, { timeoutMs: 'none' });
   }
 }

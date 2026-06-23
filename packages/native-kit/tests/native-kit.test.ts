@@ -864,6 +864,33 @@ describe('AppwrapAdapter wire protocol', () => {
     delete (globalThis as any).window;
     expect(posted.length).toBeGreaterThan(0);
   });
+
+  test('default watchdog rejects with TIMEOUT after the window', async () => {
+    const { adapter, posted, win } = wired();
+    adapter.handshake(1000).catch(() => {}); // installs deliver
+    const p = adapter.invoke('billing.purchase', {}, { timeoutMs: 5 });
+    await expect(p).rejects.toMatchObject({ code: 'TIMEOUT', name: 'KitError' });
+    expect(posted.some((m) => m.method === 'billing.purchase')).toBe(true);
+    delete (globalThis as any).window;
+  });
+
+  test("timeoutMs 'none' / 0 disables the watchdog (dismiss-bound calls)", async () => {
+    for (const timeoutMs of ['none', 0] as const) {
+      const { adapter, posted, win } = wired();
+      adapter.handshake(1000).catch(() => {}); // installs deliver
+      let settled = false;
+      const p = adapter.invoke('billing.manageSubscriptionsSheet', undefined, { timeoutMs })
+        .then((v) => { settled = true; return v; });
+      // Past any default deadline, still pending — only the native response settles it.
+      await new Promise((r) => setTimeout(r, 20));
+      expect(settled).toBe(false);
+      const req = posted.find((m) => m.method === 'billing.manageSubscriptionsSheet')!;
+      win.__appwrapDeliver(JSON.stringify({ v: 1, id: req.id, kind: 'response', result: null }));
+      await p;
+      expect(settled).toBe(true);
+      delete (globalThis as any).window;
+    }
+  });
 });
 
 describe('parity modules (W1–W9 surface)', () => {
