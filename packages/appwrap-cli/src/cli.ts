@@ -950,15 +950,28 @@ function gitRoot(start: string): string {
   }
 }
 
+/** True when `root` is the appwrap framework monorepo itself (not an external consumer project).
+ * Running `appwrap init` on an in-repo example (examples/*) resolves `gitRoot` to the framework root,
+ * so scaffolding consumer CI workflows there pollutes the framework's OWN `.github/workflows` with a
+ * stray app-template workflow each init. The framework manages its own CI — skip the workflow scaffold. */
+export function isFrameworkRepo(root: string): boolean {
+  return existsSync(join(root, 'packages/appwrap-cli/src/cli.ts'));
+}
+
 /** Emit CI scaffolding (GH Actions → git repo root, fastlane → native/). Never overwrites. */
 function copyCiTemplates(cwd: string, outDir: string, cfg: AppwrapConfig): void {
   if (!existsSync(CI_TEMPLATE_DIR)) return;
+  const repoRoot = gitRoot(cwd);
   // GitHub only reads `.github/workflows` at the REPO ROOT — in a monorepo, writing it under the
   // package cwd (e.g. packages/app/.github) is dead config and regenerates a stray workflow each init.
-  const targets: Array<[string, string]> = [
-    [join(CI_TEMPLATE_DIR, 'github/workflows'), join(gitRoot(cwd), '.github/workflows')],
-    [join(CI_TEMPLATE_DIR, 'fastlane'), join(outDir, 'fastlane')],
-  ];
+  const targets: Array<[string, string]> = [[join(CI_TEMPLATE_DIR, 'fastlane'), join(outDir, 'fastlane')]];
+  // …but if the repo root IS the appwrap framework itself (in-repo example), DON'T scaffold consumer
+  // workflows into the framework's .github — that's the stray-workflow-each-init bug.
+  if (isFrameworkRepo(repoRoot)) {
+    console.log('  ci   ← GH Actions scaffold skipped (inside the appwrap framework repo — manages its own CI)');
+  } else {
+    targets.unshift([join(CI_TEMPLATE_DIR, 'github/workflows'), join(repoRoot, '.github/workflows')]);
+  }
   for (const [from, to] of targets) {
     mkdirSync(to, { recursive: true });
     cpSync(from, to, { recursive: true, force: false, errorOnExist: false });
@@ -974,7 +987,10 @@ function copyCiTemplates(cwd: string, outDir: string, cfg: AppwrapConfig): void 
       .replaceAll('__TEAM_ID__', cfg.teamId ?? '');
     writeFileSync(p, stamped);
   }
-  console.log('  ci   ← GH Actions (.github/workflows) + fastlane (native/fastlane, signing stamped) — see secrets contract in workflow headers');
+  const ci = isFrameworkRepo(repoRoot)
+    ? '  ci   ← fastlane (native/fastlane, signing stamped) — see secrets contract in workflow headers'
+    : '  ci   ← GH Actions (.github/workflows) + fastlane (native/fastlane, signing stamped) — see secrets contract in workflow headers';
+  console.log(ci);
 }
 
 /**
