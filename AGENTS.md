@@ -50,7 +50,7 @@ if (kit.haptics.capability === 'native') await kit.haptics.impact('medium');
 - **`appwrap sync`** — refresh `native/` from source (re-stamp config + re-copy built PWA + shell). Routine iteration.
 - **`appwrap dev [--url <url>]`** — point the shell at a live dev server (loader `server`); reverts on the next `sync`. Dev server must bind `0.0.0.0` so a device can reach it.
 - **`appwrap build ios|android [--release] [--aab]`** — release builds. Android signing from env (`APPWRAP_ANDROID_KEYSTORE` + password/alias — never in the config).
-- **`appwrap deploy ios`** — build + install + launch on a connected device via `devicectl` (`ns run`/`ns deploy` can't see a physical device). `--device`, `--no-launch`.
+- **`appwrap deploy ios`** — build + install + launch on a connected device via `devicectl` (`ns run`/`ns deploy` can't see a physical device). `--device`, `--no-launch`, `--resume`/`-r` (skip build if ipa exists and inputs unchanged), `--force`/`-f` (always rebuild, ignoring cache). If `teamId` is unset an arrow-key team picker runs automatically (reads from keychain + provisioning profiles, shows paid/free badge).
 - **`appwrap logs ios`** — stream the WebView console (forwarded to a file, since NativeScript native `console.log` doesn't reach `devicectl`/`idevicesyslog`). `--once`, `--native`.
 
 ## Config (`appwrap.config.ts` / `appwrap.json`)

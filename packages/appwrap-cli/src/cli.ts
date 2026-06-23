@@ -9,7 +9,7 @@
  * Shape: { id, name, version, entry?, backgroundColor?, statusBarStyle?, pwaDist }. See config.ts.
  */
 import { execFileSync } from 'child_process';
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { cpSync, existsSync, mkdirSync, openSync, closeSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync, writeSync } from 'fs';
 import { networkInterfaces, tmpdir } from 'os';
 import { dirname, join, resolve } from 'path';
 import { pathToFileURL } from 'url';
@@ -465,13 +465,15 @@ function stampIOSDisplayName(outDir: string, cfg: AppwrapConfig, req: NativeReqs
 
 function stampTeamId(outDir: string, cfg: AppwrapConfig): void {
   const xcconfig = join(outDir, 'App_Resources/iOS/build.xcconfig');
-  // A placeholder/empty teamId silently produces an unsignable build (DEVELOPMENT_TEAM = YOUR_APPLE_TEAM_ID
-  // → xcodebuild "No Account for Team"). Warn loudly rather than let a long build fail cryptically.
+  // A placeholder/empty teamId → run the enriched interactive picker instead of hard-warning.
+  // This intercepts BEFORE `ns build` runs so NS never shows its plain, unenriched prompt.
   if (!cfg.teamId || /YOUR_APPLE_TEAM_ID|^$/.test(cfg.teamId)) {
-    console.warn(`⚠ teamId is unset/placeholder ("${cfg.teamId ?? ''}") — device builds won't sign.\n` +
-      '  Set it to your Apple Team ID in appwrap.config (Xcode → Settings → Accounts shows it; ' +
-      'Individual = paid, Personal Team = free).');
-    return;
+    if (!process.stdout.isTTY) {
+      console.warn(`⚠ teamId is unset — set it in appwrap.config (run interactively to pick from your teams).`);
+      return;
+    }
+    cfg.teamId = pickTeamIdInteractively();
+    console.log(`  ⓘ  To skip this prompt: set teamId: "${cfg.teamId}" in appwrap.config`);
   }
   if (!existsSync(xcconfig)) return;
   let src = readFileSync(xcconfig, 'utf8');
@@ -1121,6 +1123,7 @@ async function build(cwd: string, flags: Record<string, string>, positionals: st
   }
 }
 
+interface AppleTeam { teamId: string; name: string; email?: string; paid: boolean }
 interface DeviceInfo { id: string; name: string; model: string; transport: string }
 
 /** The subset of a `xcrun devicectl list devices --json-output` device entry appwrap reads. */
@@ -1129,6 +1132,155 @@ interface DevicectlDevice {
   deviceProperties?: { name?: string };
   hardwareProperties?: { platform?: string; marketingName?: string; productType?: string };
   connectionProperties?: { tunnelState?: string; transportType?: string };
+}
+
+/** Read Apple team metadata from provisioning profiles + distribution certs in the keychain.
+ * Provisioning profiles give us the reliable teamId↔teamName mapping; distribution certs
+ * often embed the account email in the display name. */
+function detectAppleTeams(): AppleTeam[] {
+  const teams = new Map<string, AppleTeam>();
+
+  // 1. Provisioning profiles → teamId + teamName (most reliable)
+  const profilesDir = join(process.env.HOME ?? '', 'Library/MobileDevice/Provisioning Profiles');
+  if (existsSync(profilesDir)) {
+    try {
+      const files = readdirSync(profilesDir).filter((f) => f.endsWith('.mobileprovision'));
+      for (const f of files) {
+        try {
+          const raw = execFileSync('security', ['cms', '-D', '-i', join(profilesDir, f)],
+            { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+          const idMatch = raw.match(/<key>TeamIdentifier<\/key>\s*<array>\s*<string>([^<]+)<\/string>/);
+          const nameMatch = raw.match(/<key>TeamName<\/key>\s*<string>([^<]+)<\/string>/);
+          if (idMatch && nameMatch) {
+            const teamId = idMatch[1];
+            const name = nameMatch[1];
+            const free = /personal team/i.test(name);
+            if (!teams.has(teamId)) teams.set(teamId, { teamId, name, paid: !free });
+          }
+        } catch { /* skip unreadable profile */ }
+      }
+    } catch { /* skip if dir unreadable */ }
+  }
+
+  // 2. Keychain distribution/Developer-ID certs → teamId + possible email in name
+  try {
+    const out = execFileSync('security', ['find-identity', '-v', '-p', 'codesigning'],
+      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+    for (const line of out.split('\n')) {
+      const m = line.match(/"(?:Apple Distribution|Developer ID Application): (.+?) \(([A-Z0-9]{10})\)"/);
+      if (!m) continue;
+      const [, label, teamId] = m;
+      const email = label.includes('@') ? label.trim() : undefined;
+      const existing = teams.get(teamId);
+      if (existing) {
+        if (email && !existing.email) existing.email = email;
+      } else {
+        teams.set(teamId, { teamId, name: label.trim(), email, paid: !/personal team/i.test(label) });
+      }
+    }
+  } catch { /* keychain unavailable */ }
+
+  return [...teams.values()];
+}
+
+/** Arrow-key interactive selector. Returns the index of the chosen item. */
+function arrowSelect(prompt: string, items: string[]): number {
+  const tty = openSync('/dev/tty', 'r+');
+  const write = (s: string) => writeSync(tty, s);
+  const ESC = '\x1b';
+
+  write(`${prompt}\n`);
+  let idx = 0;
+  const HINT = '\x1b[2m  ↑↓ / j k to move · Enter to confirm\x1b[0m';
+  const render = (clear: boolean) => {
+    if (clear) write(`\x1b[${items.length + 1}A`); // +1 for the hint line
+    for (let i = 0; i < items.length; i++)
+      write(`\r\x1b[K${i === idx ? '❯ ' : '  '}${items[i]}\n`);
+    write(`\r\x1b[K${HINT}\n`);
+  };
+  render(false);
+
+  // raw mode via stty
+  execFileSync('stty', ['-icanon', '-echo'], { stdio: ['inherit', 'inherit', 'inherit'] });
+  const buf = Buffer.alloc(6);
+  try {
+    for (;;) {
+      const n = readSync(tty, buf, 0, 6, null);
+      const key = buf.slice(0, n).toString();
+      if (key === `${ESC}[A` || key === 'k') { idx = (idx - 1 + items.length) % items.length; render(true); }
+      else if (key === `${ESC}[B` || key === 'j') { idx = (idx + 1) % items.length; render(true); }
+      else if (key === '\r' || key === '\n') break;
+      else if (key === '\x03') { write('\n'); process.exit(1); } // Ctrl-C
+    }
+  } finally {
+    execFileSync('stty', ['icanon', 'echo'], { stdio: ['inherit', 'inherit', 'inherit'] });
+    // Erase the hint line so the selected value prints cleanly after
+    write(`\x1b[1A\r\x1b[K`);
+    write('\n');
+    closeSync(tty);
+  }
+  return idx;
+}
+
+/** Interactively prompt for an Apple team when teamId is unset. Shows enriched metadata
+ * (email, paid/free) sourced from local keychain + provisioning profiles. */
+function pickTeamIdInteractively(): string {
+  const teams = detectAppleTeams();
+  if (teams.length === 0) {
+    console.error('✖ No Apple signing teams found in keychain/provisioning profiles.\n' +
+      '  Sign into Xcode → Settings → Accounts, then re-run.');
+    process.exit(1);
+  }
+  if (teams.length === 1) {
+    const t = teams[0];
+    console.log(`  team ← ${t.name} (${t.teamId})${t.email ? ` <${t.email}>` : ''} [${t.paid ? 'paid' : 'free'}] (only option)`);
+    return t.teamId;
+  }
+  const items = teams.map((t) => {
+    const badge = t.paid ? '✓ paid' : '○ free';
+    const email = t.email ? ` <${t.email}>` : '';
+    return `${t.name} (${t.teamId})${email}  [${badge}]`;
+  });
+  const idx = arrowSelect('Found multiple Apple teams — pick one to use for signing:', items);
+  return teams[idx].teamId;
+}
+
+// ── Build fingerprint for smart resume ───────────────────────────────────────────────────────────
+
+/** Cheap fingerprint of SOURCE build inputs: mtime sum of the PWA dist/ + appwrap config.
+ * App_Resources/ is intentionally excluded — sync() rewrites it every run, so its mtime always
+ * changes and would make the fingerprint permanently stale.
+ * Collision risk is acceptable — a false "match" just skips a redundant build, not a correctness bug. */
+function buildFingerprint(cwd: string, cfg: { pwaDist?: string }, _outDir: string): string {
+  const mtime = (p: string): number => {
+    if (!existsSync(p)) return 0;
+    try {
+      const s = statSync(p);
+      if (s.isDirectory()) {
+        let sum = 0;
+        for (const e of readdirSync(p, { withFileTypes: true }))
+          sum += mtime(join(p, e.name));
+        return sum;
+      }
+      return s.mtimeMs;
+    } catch { return 0; }
+  };
+  const distDir = cfg.pwaDist ? resolve(cwd, cfg.pwaDist) : join(cwd, 'dist');
+  const parts = [mtime(distDir), mtime(join(cwd, 'appwrap.config.ts'))];
+  // Simple djb2-style hash — good enough for a build-skip check (not cryptographic).
+  let h = 5381;
+  for (const n of parts) h = (((h << 5) + h) ^ (n | 0)) >>> 0;
+  return h.toString(36);
+}
+
+const BUILD_CACHE_FILE = '.appwrap-build-cache.json';
+interface BuildCache { fingerprint: string; ipaPath: string; builtAt: string }
+
+function readBuildCache(outDir: string): BuildCache | null {
+  try { return JSON.parse(readFileSync(join(outDir, BUILD_CACHE_FILE), 'utf8')); } catch { return null; }
+}
+function writeBuildCache(outDir: string, cache: BuildCache): void {
+  try { writeFileSync(join(outDir, BUILD_CACHE_FILE), JSON.stringify(cache, null, 2)); } catch { /* non-fatal */ }
 }
 
 /** Discover usable physical iOS devices via devicectl (USB + network). Excludes 'unavailable'
@@ -1199,27 +1351,53 @@ async function deploy(cwd: string, flags: Record<string, string>, positionals: s
   await sync(cwd, flags); // re-stamp config + copy latest PWA dist (+ vendor backend assets)
   // Dev deploy → debug mode: keep-awake + WebView inspector for continuous troubleshooting.
   stampShellConfig(outDir, { ...cfg, debug: true });
-  console.log('▶ ns build ios --for-device  (debug: keep-awake + inspector on)');
-  try {
-    execFileSync('ns', ['build', 'ios', '--for-device'], { cwd: outDir, stdio: 'inherit' });
-  } catch (e) {
-    // The xcodebuild dump above is cryptic; surface the two signing failures we actually hit most.
-    console.error(
-      '\n✖ Device build failed — if the errors above mention signing:\n' +
-        `  • "Failed Registering Bundle Identifier … not available" → the App ID "${cfg.id}" is already\n` +
-        '    registered to another team (e.g. a prior free-team build). Change `id` in appwrap.config to a\n' +
-        '    unique string and re-deploy.\n' +
-        '  • "profile doesn\'t include the … entitlement" (e.g. HealthKit) → that capability needs a PAID\n' +
-        '    team (Individual). A free Personal Team can\'t hold it — switch teamId or drop the module.\n' +
-        '  • "No Account for Team" → sign that Apple ID into Xcode → Settings → Accounts first.'
-    );
-    process.exit(1);
-  }
 
   const ipaDir = join(outDir, 'platforms/ios/build/Debug-iphoneos');
-  const ipa = existsSync(ipaDir) ? readdirSync(ipaDir).find((f) => f.endsWith('.ipa')) : undefined;
+
+  // Smart resume: skip ns build (pod install + xcodebuild) when inputs haven't changed.
+  // --resume (-r): opt in to fingerprint-based skip (same logic as auto, but explicit — useful when
+  //   the auto check has no prior cache yet and you want to force a skip on first run after a manual build).
+  // Auto: always checks fingerprint; never skips if sources/deps changed.
+  const resume = 'resume' in flags || 'r' in flags;
+  const force = 'force' in flags || 'f' in flags;
+  const fp = buildFingerprint(cwd, cfg, outDir);
+  const cache = readBuildCache(outDir);
+  const existingIpa = existsSync(ipaDir)
+    ? readdirSync(ipaDir).find((f) => f.endsWith('.ipa'))
+    : undefined;
+  const fingerprintMatch = !force && existingIpa && cache?.fingerprint === fp && cache?.ipaPath === join(ipaDir, existingIpa);
+  // --resume also accepts a missing cache file (e.g. after a manual Xcode build or first run),
+  // but ONLY when the fingerprint matches what's currently on disk — never skips a needed build.
+  const noCache = existingIpa && !cache;
+  const canSkipBuild = !force && (fingerprintMatch || (resume && noCache));
+
+  if (canSkipBuild) {
+    const reason = fingerprintMatch ? 'inputs unchanged since last build' : '--resume (first run, .ipa present)';
+    console.log(`⚡ Skipping build — ${reason} (${existingIpa})`);
+  } else {
+    console.log(`▶ ns build ios --for-device  (debug: keep-awake + inspector on)${force ? '  [--force: skipping cache]' : ''}`);
+    try {
+      execFileSync('ns', ['build', 'ios', '--for-device'], { cwd: outDir, stdio: 'inherit' });
+    } catch (e) {
+      // The xcodebuild dump above is cryptic; surface the two signing failures we actually hit most.
+      console.error(
+        '\n✖ Device build failed — if the errors above mention signing:\n' +
+          `  • "Failed Registering Bundle Identifier … not available" → the App ID "${cfg.id}" is already\n` +
+          '    registered to another team (e.g. a prior free-team build). Change `id` in appwrap.config to a\n' +
+          '    unique string and re-deploy.\n' +
+          '  • "profile doesn\'t include the … entitlement" (e.g. HealthKit) → that capability needs a PAID\n' +
+          '    team (Individual). A free Personal Team can\'t hold it — switch teamId or drop the module.\n' +
+          '  • "No Account for Team" → sign that Apple ID into Xcode → Settings → Accounts first.'
+      );
+      process.exit(1);
+    }
+  }
+
+  const builtIpa = existsSync(ipaDir) ? readdirSync(ipaDir).find((f) => f.endsWith('.ipa')) : undefined;
+  const ipa = builtIpa;
   if (!ipa) { console.error(`✖ No .ipa produced in ${ipaDir}`); process.exit(1); }
   const ipaPath = join(ipaDir, ipa);
+  if (!canSkipBuild) writeBuildCache(outDir, { fingerprint: fp, ipaPath, builtAt: new Date().toISOString() });
 
   console.log(`▶ installing ${ipa} → ${device.name} [${device.transport}]`);
   let installedViaUsbmux = false;
