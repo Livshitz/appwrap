@@ -74,6 +74,45 @@ export class CustomWebView extends WebView {
     /* OS-managed on iOS */
   }
 
+  /**
+   * Proactively WAKE the WebContent renderer process on foreground (wired to Application.resumeEvent
+   * for iOS in main-page). WHY: when a full-window system surface covers the app — StoreKit's
+   * showManageSubscriptions(in:) (hosted out-of-process by com.apple.ios.StoreKitUIService), the
+   * itms-apps subscriptions deep link, or any backgrounding — the UIScene goes non-foreground and
+   * WebKit THROTTLES/SUSPENDS the WKWebView's WebContent process; its JS stops and the app UI (which
+   * IS the WebView) freezes. On return, WebKit re-acquires the scene assertion lazily (~30-45s),
+   * leaving the page frozen until then. An inbound `evaluateJavaScript` is a foreground WebContent
+   * activity (WebPageProxy::runJavaScriptInFrameInScriptWorld) — it forces WebKit to restore the
+   * process NOW instead of waiting out the throttle. The injected JS also re-fires a synthetic
+   * `visibilitychange`/`pageshow` so a loader:'server' web app reconnects its sockets immediately
+   * (it would otherwise wait for WebKit to deliver the native visibility event late). No-op on Android. */
+  wakeWebContent(): void {
+    const wk = this.nativeViewProtected as WKWebView;
+    if (!wk) return;
+    if (SHELL_CONFIG.debug) appendWebLog(`[native:lifecycle] wakeWebContent run (frame ${wk.frame.size.width}x${wk.frame.size.height})`);
+    // (1) COMPOSITOR NUDGE — force a layout + compositing pass so a WebView that returned from an
+    // occluding system surface (StoreKit sheet, deep link, backgrounding) repaints + re-hit-tests NOW
+    // rather than waiting out WebKit's lazy restore. A 1px frame perturbation, restored in the same
+    // runloop. (For the StoreKit-sheet freeze the primary fix is neutralising the orphaned tracking
+    // window in handlers-billing/the Swift shim; this nudge + the JS wake below complete the resume the
+    // OS never fires for that sheet — see handlers-billing.manageSubscriptionsSheet.)
+    const f = wk.frame;
+    if (f.size.width > 0 && f.size.height > 1) {
+      wk.frame = CGRectMake(f.origin.x, f.origin.y, f.size.width, f.size.height - 1);
+      wk.frame = f;
+      wk.setNeedsLayout();
+      wk.layoutIfNeeded();
+    }
+    // (2) Re-emit visibility so the page's own visibilitychange/pageshow listeners (socket reconnect,
+    // session refresh) run right away. document.hidden is already false on foreground — this just
+    // un-blocks resume handlers that gate on the event rather than polling.
+    wk.evaluateJavaScriptCompletionHandler(
+      `try{document.dispatchEvent(new Event('visibilitychange'));` +
+      `window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true}));}catch(e){}`,
+      () => { /* fire-and-forget; the eval itself is the wake */ }
+    );
+  }
+
   createNativeView(): WKWebView {
     const config = WKWebViewConfiguration.new();
     config.allowsInlineMediaPlayback = true;

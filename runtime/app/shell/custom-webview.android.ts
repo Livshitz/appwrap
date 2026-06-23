@@ -89,6 +89,12 @@ export class CustomWebView extends WebView {
     }
   }
 
+  /** iOS-only renderer-wake (see custom-webview.ios.ts). No-op on Android: onResume()/resumeTimers()
+   * in setRenderingActive already restart the WebView pipeline on foreground. */
+  wakeWebContent(): void {
+    /* iOS-only */
+  }
+
   private installDocumentStartShim(wv: android.webkit.WebView): void {
     try {
       const wkt = androidx.webkit;

@@ -14,4 +14,10 @@ export class CustomWebView extends WebView {
   setRenderingActive(_active: boolean): void {
     /* overridden per-platform */
   }
+
+  /** iOS: wake the WebContent renderer on foreground so a system-sheet/background throttle doesn't
+   * leave the WebView frozen for ~30-45s (see custom-webview.ios.ts). No-op on Android. */
+  wakeWebContent(): void {
+    /* overridden per-platform */
+  }
 }

@@ -1,9 +1,12 @@
 import { Utils, isIOS } from '@nativescript/core';
 import { bridge } from './bridge';
+import { appwrapNativeLog } from './native-log';
+import { SHELL_CONFIG } from './config';
 
 // @objc Swift shim (AppwrapManageSubscriptions.swift, billing nativeSrc) — no NS types; bridges
 // StoreKit 2's Swift-async showManageSubscriptions(in:) to a completion the ObjC bridge can call.
-declare const AppwrapManageSubscriptions: { present(completion: (message: string | null) => void): void };
+// completion(errorMessage, diagnostic): diagnostic is a post-dismiss window-hierarchy dump (DEBUG).
+declare const AppwrapManageSubscriptions: { present(completion: (message: string | null, diagnostic: string | null) => void): void };
 
 /**
  * In-app purchases — iOS StoreKit 1 (SKPaymentQueue). StoreKit 2 (Product/Transaction)
@@ -214,7 +217,14 @@ export function registerBillingHandlers(): void {
   // deep-link path above is untouched. Rejects on iOS <15, no scene, or a StoreKit error.
   bridge.register('billing.manageSubscriptionsSheet', () => {
     return new Promise<void>((resolve, reject) => {
-      AppwrapManageSubscriptions.present((message: string | null) => {
+      AppwrapManageSubscriptions.present((message: string | null, diagnostic: string | null) => {
+        if (SHELL_CONFIG.debug) appwrapNativeLog(`[native:lifecycle] manageSubscriptionsSheet done err=${message ?? 'none'}\n${diagnostic ?? '(no diag)'}`);
+        // The StoreKit sheet presents/dismisses WITHOUT the app scene leaving foregroundActive, so iOS
+        // never fires resumeEvent → the WebView's normal foreground wake (wakeWebContent) doesn't run.
+        // Drive it explicitly here (the only callback that fires) to un-throttle/repaint the WebView.
+        // (The native shim separately neutralises the orphaned StoreKit tracking-window that otherwise
+        // floats above our window and swallows touches — together they clear the post-sheet freeze.)
+        bridge.getWebView()?.wakeWebContent();
         if (message) reject(err('NATIVE_ERROR', message));
         else resolve();
       });

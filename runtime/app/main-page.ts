@@ -17,8 +17,43 @@ import { startDevMenu } from './shell/devmenu';
 import { SHELL_CONFIG } from './shell/config';
 import { bindStatusBarPage, setStatusBarStyle, applyThemeColor, enableAndroidEdgeToEdge, wireAndroidSafeArea } from './shell/status-bar';
 import { CustomWebView } from './shell/custom-webview';
+import { appwrapNativeLog } from './shell/native-log';
 
 let initialized = false;
+
+/** DEBUG iOS lifecycle tracer — logs NS suspend/resume/displayed AND the raw UIApplication
+ * activation notifications (willResignActive/didBecomeActive/didEnterBackground/willEnterForeground)
+ * with each connected scene's activationState, to Documents/appwrap-web.log. Diagnostic for the
+ * StoreKit-sheet freeze: a system sheet that only resigns-active (never backgrounds) produces a
+ * different event sequence than a real background, so the resume/wake path may not fire on dismiss. */
+let _lifecycleTraced = false;
+function traceIosLifecycle(): void {
+  if (_lifecycleTraced) return;
+  _lifecycleTraced = true;
+  const log = (e: string): void => {
+    let states = '';
+    try {
+      const scenes = UIApplication.sharedApplication.connectedScenes.allObjects;
+      for (let i = 0; i < scenes.count; i++) {
+        const s = scenes.objectAtIndex(i) as UIScene;
+        states += ` [${(s as any).session?.role ?? '?'}:act=${s.activationState}]`;
+      }
+    } catch { states = ' (scene-read-err)'; }
+    appwrapNativeLog(`[native:lifecycle] ${e}${states}`);
+  };
+  Application.on(Application.suspendEvent, () => log('NS.suspend'));
+  Application.on(Application.resumeEvent, () => log('NS.resume'));
+  Application.on(Application.displayedEvent, () => log('NS.displayed'));
+  const nc = NSNotificationCenter.defaultCenter;
+  const obs = (name: string, tag: string): void => {
+    nc.addObserverForNameObjectQueueUsingBlock(name, null, null, () => log(tag));
+  };
+  obs(UIApplicationWillResignActiveNotification, 'UIApp.willResignActive');
+  obs(UIApplicationDidBecomeActiveNotification, 'UIApp.didBecomeActive');
+  obs(UIApplicationDidEnterBackgroundNotification, 'UIApp.didEnterBackground');
+  obs(UIApplicationWillEnterForegroundNotification, 'UIApp.willEnterForeground');
+  appwrapNativeLog('[native:lifecycle] tracer armed');
+}
 
 export function onPageLoaded(args: EventData): void {
   const page = args.object as Page;
@@ -62,7 +97,16 @@ export function onPageLoaded(args: EventData): void {
   // Halt the WebView render + JS-timer pipeline while backgrounded so a page running a continuous
   // animation (Android doesn't auto-pause rAF off-screen) stops burning CPU/battery. No-op on iOS.
   Application.on(Application.suspendEvent, () => webView.setRenderingActive(false));
-  Application.on(Application.resumeEvent, () => webView.setRenderingActive(true));
+  Application.on(Application.resumeEvent, () => {
+    webView.setRenderingActive(true);
+    // iOS: wake the WebContent renderer NOW (it stays THROTTLED for ~30-45s after a full-window system
+    // surface — StoreKit manage-subscriptions sheet, itms-apps deep link, backgrounding — froze it).
+    webView.wakeWebContent();
+  });
+
+  // DEBUG: trace the iOS app-lifecycle event sequence to the pullable log sink so we can see WHICH
+  // resume signal does (or doesn't) fire when returning from the StoreKit sheet vs a normal background.
+  if (isIOS && SHELL_CONFIG.debug) traceIosLifecycle();
 
   // Android system back → WebView history (iOS gets this via the edge-swipe
   // gesture). Only swallow the press when there's history to pop; otherwise let
