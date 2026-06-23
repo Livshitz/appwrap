@@ -51,6 +51,9 @@ export function registerOAuthHandlers(): void {
             (callbackURL: NSURL, error: NSError) => {
               activeSession = null;
               activeProvider = null;
+              // ASWebAuthenticationSession can leave the WebView frozen on dismiss the same way the
+              // StoreKit sheet does (orphaned tracking window / no resume) — recover from its completion.
+              bridge.getWebView()?.recoverAfterNativeSurface();
               if (error) {
                 // ASWebAuthenticationSessionErrorCodeCanceledLogin === 1 (user dismissed the sheet).
                 const code = error.code === 1 ? 'CANCELLED' : 'NATIVE_ERROR';

@@ -5,6 +5,20 @@ declare const androidx: any; // no NS types: androidx
 
 const err = (code: string, message: string) => Object.assign(new Error(message), { code });
 
+// SFSafariViewController is a same-app presented surface — on "Done" it can leave the WebView frozen
+// (orphaned tracking window / throttled renderer), so recover from its didFinish. Strong-ref the
+// delegate while the browser is up (ARC would otherwise free it). Mirrors the OAuth delegate pattern.
+let activeSafariDelegate: NSObject | null = null;
+@NativeClass()
+class SafariDelegate extends NSObject implements SFSafariViewControllerDelegate {
+  static ObjCProtocols = [SFSafariViewControllerDelegate];
+  static new(): SafariDelegate { return <SafariDelegate>super.new(); }
+  safariViewControllerDidFinish(_controller: SFSafariViewController): void {
+    activeSafariDelegate = null;
+    bridge.getWebView()?.recoverAfterNativeSurface();
+  }
+}
+
 /** Running on a simulator/emulator? (mirrors env.ts detection; kept local to avoid a cross-import). */
 function detectEmulator(): boolean {
   if (isIOS) {
@@ -190,6 +204,8 @@ export function registerSystemHandlers(): void {
       Utils.dispatchToMainThread(() => {
         const vc = SFSafariViewController.alloc().initWithURL(NSURL.URLWithString(target));
         if (toolbarColor) vc.preferredControlTintColor = new Color(String(toolbarColor)).ios;
+        activeSafariDelegate = SafariDelegate.new();
+        vc.delegate = activeSafariDelegate as SFSafariViewControllerDelegate;
         Utils.ios.getRootViewController().presentViewControllerAnimatedCompletion(vc, true, null);
       });
     } else if (isAndroid) {

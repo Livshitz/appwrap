@@ -88,6 +88,9 @@ export function registerHandlers(): void {
       if (controller.popoverPresentationController) {
         controller.popoverPresentationController.sourceView = rootVC.view;
       }
+      // Recover the WebView on dismiss — a presented sheet can orphan a touch-stealing window / leave
+      // the renderer throttled (see CustomWebView.recoverAfterNativeSurface).
+      controller.completionWithItemsHandler = () => { bridge.getWebView()?.recoverAfterNativeSurface(); };
       rootVC.presentViewControllerAnimatedCompletion(controller, true, null);
     } else if (isAndroid) {
       const intent = new android.content.Intent(android.content.Intent.ACTION_SEND);

@@ -113,6 +113,56 @@ export class CustomWebView extends WebView {
     );
   }
 
+  /** Call after dismissing ANY native surface presented over the WebView (StoreKit sheet, OAuth
+   * ASWebAuthenticationSession, SFSafariViewController, pickers, share, alerts). Such surfaces can
+   * leave the WebView frozen: a same-scene system sheet doesn't fire resumeEvent AND can orphan an
+   * interactive window above ours that swallows touches. We neutralise any stray window FIRST (so the
+   * wake re-attaches over a clean stack), then wake. Deferred so the dismissal animation finalizes the
+   * orphan window first. Idempotent + safe (no stray ⇒ no-op). No-op on Android. */
+  recoverAfterNativeSurface(): void {
+    setTimeout(() => {
+      try { this.neutralizeStrayWindows(); } catch (e) { /* best-effort */ }
+      this.wakeWebContent();
+    }, 350);
+  }
+
+  /** Remove any window sitting ABOVE our main app window (a leftover system-surface window that can
+   * intercept touches): disable interaction, hide, and detach from the scene. Re-key our main window.
+   * Main = lowest-level non-hidden window with a rootViewController. Logs before/after (debug). */
+  private neutralizeStrayWindows(): void {
+    const dbg = SHELL_CONFIG.debug;
+    const scenes = UIApplication.sharedApplication.connectedScenes.allObjects;
+    for (let i = 0; i < scenes.count; i++) {
+      const scene = scenes.objectAtIndex(i);
+      if (!scene.isKindOfClass(UIWindowScene.class())) continue;
+      const ws = scene as UIWindowScene;
+      const windows = ws.windows;
+      let main: UIWindow | null = null;
+      for (let j = 0; j < windows.count; j++) {
+        const w = windows.objectAtIndex(j);
+        if (w.hidden || !w.rootViewController) continue;
+        if (!main || w.windowLevel < main.windowLevel) main = w;
+      }
+      for (let j = 0; j < windows.count; j++) {
+        const w = windows.objectAtIndex(j);
+        if (main && w !== main && w.windowLevel > 0 && !w.hidden) {
+          if (dbg) appendWebLog(`[native:recover] stray win[${j}] lvl=${w.windowLevel} uie=${w.userInteractionEnabled} key=${w.keyWindow}`);
+          w.userInteractionEnabled = false;
+          w.hidden = true;
+          w.windowScene = null; // detach from the scene — strongest removal
+          if (dbg) appendWebLog(`[native:recover]  after set: hidden=${w.hidden} uie=${w.userInteractionEnabled} scene=${w.windowScene ? 'set' : 'nil'}`);
+        }
+      }
+      if (main) main.makeKeyAndVisible();
+      if (dbg) {
+        let s = '';
+        const after = ws.windows;
+        for (let k = 0; k < after.count; k++) { const w = after.objectAtIndex(k); s += ` [${k}]lvl${w.windowLevel}h${w.hidden}k${w.keyWindow}`; }
+        appendWebLog(`[native:recover] post mainKey=${main ? main.keyWindow : '?'} windows:${s}`);
+      }
+    }
+  }
+
   createNativeView(): WKWebView {
     const config = WKWebViewConfiguration.new();
     config.allowsInlineMediaPlayback = true;

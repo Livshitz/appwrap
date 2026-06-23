@@ -20,4 +20,11 @@ export class CustomWebView extends WebView {
   wakeWebContent(): void {
     /* overridden per-platform */
   }
+
+  /** Call after dismissing ANY native surface presented over the WebView (StoreKit sheet, OAuth,
+   * SFSafariViewController, pickers, share, alerts). iOS: neutralises an orphaned touch-stealing
+   * window the surface may leave + wakes the renderer (see custom-webview.ios.ts). No-op on Android. */
+  recoverAfterNativeSurface(): void {
+    /* overridden per-platform */
+  }
 }

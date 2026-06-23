@@ -95,6 +95,12 @@ export class CustomWebView extends WebView {
     /* iOS-only */
   }
 
+  /** iOS-only post-native-surface recovery (see custom-webview.ios.ts). No-op on Android: dismissing a
+   * native screen returns through the normal activity resume, which already restores the WebView. */
+  recoverAfterNativeSurface(): void {
+    /* iOS-only */
+  }
+
   private installDocumentStartShim(wv: android.webkit.WebView): void {
     try {
       const wkt = androidx.webkit;

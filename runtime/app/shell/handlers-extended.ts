@@ -57,6 +57,8 @@ class PhotoPickerDelegate extends NSObject implements PHPickerViewControllerDele
   }
   pickerDidFinishPicking(picker: PHPickerViewController, results: NSArray<PHPickerResult>): void {
     picker.dismissViewControllerAnimatedCompletion(true, null);
+    // Recover the WebView after the picker dismisses (orphaned-window / renderer-throttle guard).
+    bridge.getWebView()?.recoverAfterNativeSurface();
     const result = results.count > 0 ? results.objectAtIndex(0) : null;
     if (!result) return this.onResult?.({ picked: false });
     result.itemProvider.loadObjectOfClassCompletionHandler(UIImage.class(), (img: UIImage) => {
