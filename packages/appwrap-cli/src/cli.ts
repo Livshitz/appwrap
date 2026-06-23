@@ -336,11 +336,17 @@ async function readConfigFile(configPath: string): Promise<AppwrapConfig> {
   return cfg as AppwrapConfig;
 }
 
-async function loadConfig(cwd: string, flags: Record<string, string>): Promise<AppwrapConfig> {
-  // Explicit --config wins; otherwise probe ts → js → json (TS preferred).
-  const configPath = flags.config
+/** Resolve the user's appwrap config file path the CLI loads from: explicit --config wins;
+ * otherwise probe ts → js → json (TS preferred). Single source of discovery (reused by the
+ * team-id pin-to-config writer so it never re-invents the probe). */
+function resolveConfigPath(cwd: string, flags: Record<string, string>): string {
+  return flags.config
     ? resolve(cwd, flags.config)
     : (CONFIG_CANDIDATES.map((f) => resolve(cwd, f)).find(existsSync) ?? resolve(cwd, CONFIG_CANDIDATES[0]));
+}
+
+async function loadConfig(cwd: string, flags: Record<string, string>): Promise<AppwrapConfig> {
+  const configPath = resolveConfigPath(cwd, flags);
   if (!existsSync(configPath)) {
     console.error(`✖ Config not found — looked for ${CONFIG_CANDIDATES.join(' / ')} in ${cwd}`);
     process.exit(1);
@@ -463,17 +469,31 @@ function stampIOSDisplayName(outDir: string, cfg: AppwrapConfig, req: NativeReqs
   writeFileSync(plist, src);
 }
 
-function stampTeamId(outDir: string, cfg: AppwrapConfig): void {
+function stampTeamId(outDir: string, cfg: AppwrapConfig, ctx?: { cwd: string; configPath: string }): void {
   const xcconfig = join(outDir, 'App_Resources/iOS/build.xcconfig');
-  // A placeholder/empty teamId → run the enriched interactive picker instead of hard-warning.
-  // This intercepts BEFORE `ns build` runs so NS never shows its plain, unenriched prompt.
-  if (!cfg.teamId || /YOUR_APPLE_TEAM_ID|^$/.test(cfg.teamId)) {
-    if (!process.stdout.isTTY) {
-      console.warn(`⚠ teamId is unset — set it in appwrap.config (run interactively to pick from your teams).`);
+  // Resolution order: a real (non-placeholder) cfg.teamId wins; else $APPWRAP_TEAM_ID (headless/CI);
+  // else the enriched interactive picker (which then offers to pin its choice to the config). This
+  // intercepts BEFORE `ns build` runs so NS never shows its plain, unenriched prompt.
+  const isPlaceholder = !cfg.teamId || /YOUR_APPLE_TEAM_ID|^$/.test(cfg.teamId);
+  if (isPlaceholder) {
+    const envTeam = process.env.APPWRAP_TEAM_ID?.trim();
+    if (envTeam) {
+      cfg.teamId = envTeam;
+      console.log(`  team ← ${envTeam} (from $APPWRAP_TEAM_ID)`);
+    } else if (!process.stdout.isTTY) {
+      console.warn(`⚠ teamId is unset — set it in appwrap.config, set $APPWRAP_TEAM_ID, or run interactively to pick from your teams.`);
       return;
+    } else {
+      const picked = pickTeamIdInteractively();
+      cfg.teamId = picked.teamId;
+      // Offer to persist the choice so the user isn't re-prompted on every deploy. No-TTY/headless is
+      // already handled above; promptYesNo additionally guards against a non-interactive stdin.
+      if (ctx && promptYesNo(`  Pin "${picked.name} (${picked.teamId})" to appwrap.config so you're not asked again?`, true)) {
+        pinTeamIdToConfig(ctx.configPath, picked.teamId);
+      } else {
+        console.log(`  ⓘ  To skip this prompt: set teamId: "${picked.teamId}" in appwrap.config (or set $APPWRAP_TEAM_ID).`);
+      }
     }
-    cfg.teamId = pickTeamIdInteractively();
-    console.log(`  ⓘ  To skip this prompt: set teamId: "${cfg.teamId}" in appwrap.config`);
   }
   if (!existsSync(xcconfig)) return;
   let src = readFileSync(xcconfig, 'utf8');
@@ -950,7 +970,7 @@ function copyCiTemplates(cwd: string, outDir: string, cfg: AppwrapConfig): void 
  * Excludes the first-time scaffold (managed-guard, CI, .gitignore) + overrides/version-manifest, which the
  * callers sequence around this so overrides win LAST and the marker writes after.
  */
-function regenerateCore(cwd: string, outDir: string, cfg: AppwrapConfig, opts: { firstRun?: boolean } = {}): void {
+function regenerateCore(cwd: string, outDir: string, cfg: AppwrapConfig, opts: { firstRun?: boolean; flags?: Record<string, string> } = {}): void {
   const req = nativeReqs(cfg);
   if (opts.firstRun && !req.explicit) {
     console.log('  ℹ no `modules` in the appwrap config → all capabilities active. Declare `modules` to shrink the store build (strip unused handlers/perms).');
@@ -966,7 +986,7 @@ function regenerateCore(cwd: string, outDir: string, cfg: AppwrapConfig, opts: {
   stampShellConfig(outDir, cfg);
   stampNativeScriptConfig(outDir, cfg);
   stampIOSDisplayName(outDir, cfg, req);
-  stampTeamId(outDir, cfg);
+  stampTeamId(outDir, cfg, { cwd, configPath: resolveConfigPath(cwd, opts.flags ?? {}) });
   stampAndroidAppName(outDir, cfg, req);
   stampAndroidVersion(outDir, cfg);
   stampAndroidGradleDeps(outDir, req.androidGradleDeps);
@@ -1006,7 +1026,7 @@ async function init(cwd: string, flags: Record<string, string>): Promise<void> {
 
   console.log(`🎁 appwrap init → ${outDir}`);
   mkdirSync(outDir, { recursive: true });
-  regenerateCore(cwd, outDir, cfg, { firstRun: true });
+  regenerateCore(cwd, outDir, cfg, { firstRun: true, flags });
   copyCiTemplates(cwd, outDir, cfg); // first-time scaffold (never overwrites)
   writeFileSync(join(outDir, '.gitignore'), 'node_modules/\nplatforms/\nhooks/\n');
   applyOverrides(cwd, outDir, cfg); // escape hatch — last, so custom native code wins
@@ -1024,7 +1044,7 @@ async function sync(cwd: string, flags: Record<string, string>): Promise<void> {
     console.error(`✖ Wrapper not found at ${outDir} — run \`appwrap init\` first`);
     process.exit(1);
   }
-  regenerateCore(cwd, outDir, cfg);
+  regenerateCore(cwd, outDir, cfg, { flags });
   applyOverrides(cwd, outDir, cfg); // overrides win last
   stampVersionManifest(outDir, cfg); // keep the managed-marker / provenance current
   console.log('✓ Synced.');
@@ -1224,7 +1244,7 @@ function arrowSelect(prompt: string, items: string[]): number {
 
 /** Interactively prompt for an Apple team when teamId is unset. Shows enriched metadata
  * (email, paid/free) sourced from local keychain + provisioning profiles. */
-function pickTeamIdInteractively(): string {
+function pickTeamIdInteractively(): { teamId: string; name: string } {
   const teams = detectAppleTeams();
   if (teams.length === 0) {
     console.error('✖ No Apple signing teams found in keychain/provisioning profiles.\n' +
@@ -1234,7 +1254,7 @@ function pickTeamIdInteractively(): string {
   if (teams.length === 1) {
     const t = teams[0];
     console.log(`  team ← ${t.name} (${t.teamId})${t.email ? ` <${t.email}>` : ''} [${t.paid ? 'paid' : 'free'}] (only option)`);
-    return t.teamId;
+    return { teamId: t.teamId, name: t.name };
   }
   const items = teams.map((t) => {
     const badge = t.paid ? '✓ paid' : '○ free';
@@ -1242,7 +1262,69 @@ function pickTeamIdInteractively(): string {
     return `${t.name} (${t.teamId})${email}  [${badge}]`;
   });
   const idx = arrowSelect('Found multiple Apple teams — pick one to use for signing:', items);
-  return teams[idx].teamId;
+  return { teamId: teams[idx].teamId, name: teams[idx].name };
+}
+
+/** Y/n confirmation on the TTY (default-yes here). Reuses the global `prompt` primitive. A
+ * non-interactive / piped stdin returns null → falls back to `def` ONLY when there's a real TTY;
+ * a fully headless run never reaches here (callers gate on `process.stdout.isTTY` first), but be
+ * defensive: if stdin can't be read, do NOT pin (safer to re-ask than to silently mutate config). */
+function promptYesNo(message: string, def: boolean): boolean {
+  if (!process.stdin.isTTY) return false;
+  const suffix = def ? ' [Y/n] ' : ' [y/N] ';
+  const ans = (globalThis as { prompt(msg?: string): string | null }).prompt(message + suffix);
+  if (ans == null) return false;
+  const a = ans.trim().toLowerCase();
+  if (a === '') return def;
+  return a === 'y' || a === 'yes';
+}
+
+/** Persist `teamId` into the user's appwrap config so the interactive picker isn't re-run every
+ * deploy. Pure string surgery (returns the new file content) so it's unit-testable across both
+ * supported formats:
+ *  - `.json` — set/replace the top-level `"teamId"` property (preserves 2-space indent).
+ *  - `.ts`/`.js` — replace an existing `teamId:` field value (incl. the `YOUR_APPLE_TEAM_ID`
+ *    placeholder), else insert a new `teamId: '<id>',` line near the other top-level fields
+ *    (after `id:`, matching its indentation/quote style). If the shape is unexpected, returns
+ *    `null` so the caller skips the write rather than corrupting the file. */
+export function pinTeamIdInConfigSource(src: string, teamId: string, isJson: boolean): string | null {
+  if (isJson) {
+    let obj: Record<string, unknown>;
+    try { obj = JSON.parse(src) as Record<string, unknown>; } catch { return null; }
+    if (typeof obj !== 'object' || obj == null) return null;
+    obj.teamId = teamId;
+    return JSON.stringify(obj, null, 2) + (src.endsWith('\n') ? '\n' : '');
+  }
+  // TS/JS: replace an existing teamId field value, preserving its quote style.
+  const existing = /(\bteamId\s*:\s*)(['"`])[^'"`]*\2/;
+  if (existing.test(src)) {
+    return src.replace(existing, (_m, lead: string, q: string) => `${lead}${q}${teamId}${q}`);
+  }
+  // No teamId field — insert after the `id:` field (mirroring its indentation + quote style).
+  const idLine = /^([ \t]*)id\s*:\s*(['"`])[^'"`]*\2\s*,?[ \t]*$/m;
+  const m = idLine.exec(src);
+  if (!m) return null; // unfamiliar shape — don't risk corrupting it
+  const indent = m[1];
+  const quote = m[2];
+  return src.slice(0, m.index + m[0].length)
+    + `\n${indent}teamId: ${quote}${teamId}${quote},`
+    + src.slice(m.index + m[0].length);
+}
+
+/** Write the pinned teamId to the resolved config file (thin IO wrapper over the pure helper). */
+function pinTeamIdToConfig(configPath: string, teamId: string): void {
+  if (!existsSync(configPath)) {
+    console.warn(`  ⚠ could not pin teamId — config not found at ${configPath}`);
+    return;
+  }
+  const src = readFileSync(configPath, 'utf8');
+  const next = pinTeamIdInConfigSource(src, teamId, configPath.endsWith('.json'));
+  if (next == null) {
+    console.warn(`  ⚠ couldn't safely edit ${configPath} (unexpected shape) — leaving it untouched. Set teamId: '${teamId}' manually.`);
+    return;
+  }
+  writeFileSync(configPath, next);
+  console.log(`  ✓ pinned teamId: '${teamId}' to ${configPath}`);
 }
 
 // ── Build fingerprint for smart resume ───────────────────────────────────────────────────────────
