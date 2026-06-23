@@ -645,13 +645,13 @@ async function main() {
     ['send me a push', async () => {
       // Ensure the user has been prompted — otherwise the push is delivered but never shown.
       if (await kit.push.permissionStatus() === 'notDetermined') await kit.push.requestPermission();
-      const { platform, token } = await kit.push.register();
+      const { platform, token, topic } = await kit.push.register();
       const res = await fetch(`${PUSH_RELAY_URL}/register`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         // `topic` = the iOS bundle id; APNs REQUIRES the apns-topic to match the token's app or it
-        // rejects with `DeviceTokenNotForTopic`. The relay only has a single default, so each app must
-        // send its own id (matches appwrap.config `id`). Harmless/ignored for FCM.
-        body: JSON.stringify({ token, platform: platform === 'apns' ? 'ios' : 'android', topic: 'cc.livx.hellowrap', test: true }),
+        // rejects with `DeviceTokenNotForTopic`. The shell resolves it natively (NSBundle bundle id)
+        // and returns it on the token — no hardcoding. Omitted when undefined (web/FCM ignore it).
+        body: JSON.stringify({ token, platform: platform === 'apns' ? 'ios' : 'android', ...(topic ? { topic } : {}), test: true }),
       });
       // Surface the relay's REAL result (it always returns HTTP 200; the APNs reason is in the body) —
       // so a failure like DeviceTokenNotForTopic / BadDeviceToken is visible, not masked by the 200.

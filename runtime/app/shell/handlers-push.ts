@@ -19,10 +19,24 @@ import { SHELL_CONFIG } from './config';
 let pendingRegister: { resolve: (t: PushToken) => void; reject: (e: Error) => void } | null = null;
 let cachedToken: string | null = null;
 
-interface PushToken { platform: 'apns' | 'fcm'; token: string; }
+interface PushToken { platform: 'apns' | 'fcm'; token: string; topic?: string; }
+
+/** The app's bundle/package id — the APNs `apns-topic` MUST equal it or APNs rejects with
+ * `DeviceTokenNotForTopic`. iOS: NSBundle bundle id; Android: the application package id (FCM
+ * ignores apns-topic, so it's informational there). Resolved natively so consumers never hardcode it. */
+function appTopic(): string | undefined {
+  try {
+    if (isIOS) return NSBundle.mainBundle.bundleIdentifier;
+    if (isAndroid) return Utils.android.getApplicationContext().getPackageName();
+  } catch (e: any) {
+    console.log('[push] bundle-id resolve failed: ' + (e?.message ?? e));
+  }
+  return undefined;
+}
 
 /** POST the device token to the app's configured backend NATIVELY (no WKWebView fetch → no app://
- * cross-origin/CORS wall). The backend stores it + sends pushes. No-op when no URL is configured. */
+ * cross-origin/CORS wall). The backend stores it + sends pushes. No-op when no URL is configured.
+ * Includes `topic` (the bundle/package id) so the backend can set the correct apns-topic header. */
 function registerTokenWithBackend(platform: 'ios' | 'android', token: string): void {
   const url = SHELL_CONFIG.pushRegistrationUrl;
   if (!url) return;
@@ -31,7 +45,7 @@ function registerTokenWithBackend(platform: 'ios' | 'android', token: string): v
   try {
     Http.request({
       url, method: 'POST', headers: { 'Content-Type': 'application/json' },
-      content: JSON.stringify({ token, platform }),
+      content: JSON.stringify({ token, platform, topic: appTopic() }),
     })
       .then((res) => console.log('[push] token registered with backend → ' + res.statusCode))
       .catch((e: any) => console.log('[push] backend register failed: ' + (e?.message ?? e)));
@@ -48,7 +62,7 @@ export function onApnsToken(hexToken: string): void {
   console.log('[push] APNs token: ' + hexToken);
   registerTokenWithBackend('ios', hexToken);
   if (pendingRegister) {
-    pendingRegister.resolve({ platform: 'apns', token: hexToken });
+    pendingRegister.resolve({ platform: 'apns', token: hexToken, topic: appTopic() });
     pendingRegister = null;
   }
 }
@@ -143,7 +157,7 @@ export function registerPushHandlers(): void {
   bridge.register('push.register', () => {
     if (isIOS) {
       return new Promise<PushToken>((resolve, reject) => {
-        if (cachedToken) return resolve({ platform: 'apns', token: cachedToken });
+        if (cachedToken) return resolve({ platform: 'apns', token: cachedToken, topic: appTopic() });
         pendingRegister = { resolve, reject };
         Utils.dispatchToMainThread(() => UIApplication.sharedApplication.registerForRemoteNotifications());
         setTimeout(() => {
@@ -235,7 +249,7 @@ function androidGetToken(): Promise<PushToken> {
           if (t.isSuccessful()) {
             const tok = String(t.getResult());
             registerTokenWithBackend('android', tok); // parity with iOS onApnsToken
-            resolve({ platform: 'fcm', token: tok });
+            resolve({ platform: 'fcm', token: tok, topic: appTopic() });
           } else reject(Object.assign(new Error('FCM token fetch failed'), { code: 'NATIVE_ERROR' }));
         },
       }));

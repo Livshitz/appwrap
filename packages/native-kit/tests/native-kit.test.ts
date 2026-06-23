@@ -62,6 +62,25 @@ describe('NativeKit core', () => {
   });
 });
 
+describe('Push', () => {
+  test('register() returns the shell PushToken verbatim — incl. the bundle-id topic', async () => {
+    const token = { platform: 'apns' as const, token: 'deadbeef', topic: 'cc.livx.test' };
+    const kit = new NativeKit({
+      adapters: [fakeAdapter({ invoke: async <T,>() => token as unknown as T })],
+    });
+    await kit.ready();
+    expect(await kit.push.register()).toEqual(token);
+  });
+
+  test('register() tolerates a topic-less token (older shell / un-provisioned)', async () => {
+    const kit = new NativeKit({
+      adapters: [fakeAdapter({ invoke: async <T,>() => ({ platform: 'fcm', token: 't' }) as unknown as T })],
+    });
+    await kit.ready();
+    expect((await kit.push.register()).topic).toBeUndefined();
+  });
+});
+
 describe('Keyboard', () => {
   test('hide() routes to keyboard.hide; onShow/onHide forward the payload', async () => {
     const calls: string[] = [];

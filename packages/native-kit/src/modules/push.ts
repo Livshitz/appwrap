@@ -9,6 +9,11 @@ export type PushPlatform = 'apns' | 'fcm';
 export interface PushToken {
   platform: PushPlatform;
   token: string;
+  /** The app's bundle/package id. On iOS this is the APNs `apns-topic` your backend MUST send
+   * (APNs rejects a mismatch with `DeviceTokenNotForTopic`); on Android it's the package id —
+   * informational, since FCM doesn't use apns-topic. Optional: absent on web / un-provisioned
+   * builds and older shells that don't supply it (a missing topic is tolerated). */
+  topic?: string;
 }
 
 /** A remote message surfaced to the page. `data` is the sender's custom payload; `title`/`body`
@@ -27,8 +32,9 @@ export interface PushMessage {
  * ```ts
  * if (kit.push.capability === 'native') {
  *   if (await kit.push.requestPermission() === 'granted') {
- *     const { platform, token } = await kit.push.register();
- *     await fetch('/api/push/register', { method:'POST', body: JSON.stringify({ platform, token }) });
+ *     const { platform, token, topic } = await kit.push.register();
+ *     // `topic` = the iOS bundle id → your backend sets it as the APNs apns-topic header.
+ *     await fetch('/api/push/register', { method:'POST', body: JSON.stringify({ platform, token, topic }) });
  *   }
  *   kit.push.onMessage((m) => …);   // foreground delivery
  *   kit.push.onTap((m) => …);       // user opened a notification
