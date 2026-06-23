@@ -113,14 +113,25 @@ export class CustomWebView extends WebView {
     );
   }
 
+  /** Coalesce flag: at most one pending recovery pass at a time (see recoverAfterNativeSurface). */
+  private _recoveryPending = false;
+
   /** Call after dismissing ANY native surface presented over the WebView (StoreKit sheet, OAuth
    * ASWebAuthenticationSession, SFSafariViewController, pickers, share, alerts). Such surfaces can
    * leave the WebView frozen: a same-scene system sheet doesn't fire resumeEvent AND can orphan an
    * interactive window above ours that swallows touches. We neutralise any stray window FIRST (so the
    * wake re-attaches over a clean stack), then wake. Deferred so the dismissal animation finalizes the
-   * orphan window first. Idempotent + safe (no stray ⇒ no-op). No-op on Android. */
+   * orphan window first. Idempotent + safe (no stray ⇒ no-op). No-op on Android.
+   *
+   * COALESCED: a single dismiss fires UIWindowDidBecomeHiddenNotification multiple times and several
+   * windows can hide at once (the global observer in main-page.ts), so we collapse a burst to ONE pass
+   * via _recoveryPending rather than stacking dozens of 350ms timers. The per-handler callers also
+   * route through this, so handler + observer firing for the same dismiss = one recovery. */
   recoverAfterNativeSurface(): void {
+    if (this._recoveryPending) return;
+    this._recoveryPending = true;
     setTimeout(() => {
+      this._recoveryPending = false;
       try { this.neutralizeStrayWindows(); } catch (e) { /* best-effort */ }
       this.wakeWebContent();
     }, 350);

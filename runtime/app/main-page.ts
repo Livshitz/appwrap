@@ -55,6 +55,32 @@ function traceIosLifecycle(): void {
   appwrapNativeLog('[native:lifecycle] tracer armed');
 }
 
+/** iOS-only GLOBAL native-surface freeze recovery. Registers ONE observer on
+ * UIWindowDidBecomeHiddenNotification: whenever ANY window becomes hidden — which happens when ANY
+ * native modal/drawer/sheet dismisses (StoreKit manage-subscriptions sheet, OAuth session, share,
+ * pickers, Safari, alerts) — we run CustomWebView.recoverAfterNativeSurface(). That covers the
+ * pathological case where a same-scene system sheet dismisses with ZERO app-lifecycle events (no
+ * resumeEvent, no background) yet orphans an interactive UITrackingElementWindow above ours that
+ * swallows touches → WebView alive but frozen.
+ *
+ * WHY this generalizes the per-handler wiring: future native surfaces need NO per-handler call —
+ * the dismiss inherently hides a window, so this fires. The 5 existing per-handler calls remain
+ * (proven baseline); they become redundant once this observer is DEVICE-VERIFIED to fire on the
+ * StoreKit-sheet dismiss and catch the orphan at ~350ms.
+ *
+ * SAFE/CONSERVATIVE: recoverAfterNativeSurface is additive + idempotent (no stray window ⇒ no-op),
+ * COALESCES a notification burst (several windows hide per dismiss) into ONE pass, and only acts on a
+ * window's HIDE (dismiss), never on a window appearing — so legitimate window stacking is untouched. */
+let _surfaceRecoveryArmed = false;
+function armNativeSurfaceRecovery(webView: CustomWebView): void {
+  if (_surfaceRecoveryArmed) return;
+  _surfaceRecoveryArmed = true;
+  NSNotificationCenter.defaultCenter.addObserverForNameObjectQueueUsingBlock(
+    UIWindowDidBecomeHiddenNotification, null, null, () => webView.recoverAfterNativeSurface()
+  );
+  if (SHELL_CONFIG.debug) appwrapNativeLog('[native:recover] global UIWindowDidBecomeHidden observer armed');
+}
+
 export function onPageLoaded(args: EventData): void {
   const page = args.object as Page;
   page.bindingContext = { backgroundColor: SHELL_CONFIG.backgroundColor };
@@ -90,6 +116,7 @@ export function onPageLoaded(args: EventData): void {
 
   const webView = page.getViewById<CustomWebView>('webview');
   bridge.attach(webView);
+  if (isIOS) armNativeSurfaceRecovery(webView); // global freeze-recovery on any native modal dismiss
   if (isAndroid) wireAndroidSafeArea(webView); // experimental edge-to-edge (no-op unless config on)
   startEventForwarding();
   loadBundle(webView);

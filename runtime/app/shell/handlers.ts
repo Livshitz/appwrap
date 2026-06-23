@@ -10,7 +10,7 @@ import { ACTIVE_MODULE_NAMES } from './active-modules.generated';
 import { consumePendingBackgroundTaskId } from './background-context';
 
 /** Build identifier for the native shell bundle — bump per deploy to spot stale bundles. */
-export const SHELL_BUILD = 'deeplink-noflash-1';
+export const SHELL_BUILD = 'global-observer-1';
 
 /** Version status the web side (native-kit `kit.updates`) reports via `app.reportWebVersion`. */
 export interface WebVersionInfo { current?: string; latest?: string; build?: string | number; updateAvailable?: boolean; }

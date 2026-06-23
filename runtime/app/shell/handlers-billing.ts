@@ -221,6 +221,9 @@ export function registerBillingHandlers(): void {
         // The sheet dismisses WITHOUT the app scene leaving foregroundActive → no resumeEvent, and it
         // orphans a touch-stealing window above ours. Recover from this completion (the only callback
         // that fires). Shared across all native surfaces; see CustomWebView.recoverAfterNativeSurface.
+        // NOTE: redundant with the global UIWindowDidBecomeHidden observer (armNativeSurfaceRecovery in
+        // main-page.ts) — kept as the proven baseline; remove the per-handler calls once that observer
+        // is device-verified to fire on this dismiss. Double-recovery is safe (coalesced + no-op clean).
         bridge.getWebView()?.recoverAfterNativeSurface();
         if (message) reject(err('NATIVE_ERROR', message));
         else resolve();
