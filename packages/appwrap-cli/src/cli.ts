@@ -29,6 +29,7 @@ import {
   stampAndroidQueries,
   stampPlistBackgroundTasks,
   stampPlistOrientations,
+  stampPrivacyTracking,
 } from './derive';
 import type { WebManifest } from './derive';
 
@@ -177,6 +178,7 @@ const OPTIONAL_GROUP_HANDLERS: Record<string, { file: string; fn: string }> = {
   reviews: { file: './handlers-reviews', fn: 'registerReviewsHandlers' },
   scanner: { file: './handlers-scanner', fn: 'registerScannerHandlers' },
   speech: { file: './handlers-speech', fn: 'registerSpeechHandlers' },
+  tracking: { file: './handlers-tracking', fn: 'registerTrackingHandlers' },
   backgroundTask: { file: './handlers-background', fn: 'registerBackgroundTaskHandlers' },
 };
 
@@ -251,6 +253,19 @@ function stampEntitlements(outDir: string, cfg: AppwrapConfig, req: NativeReqs):
       `<plist version="1.0">\n<dict>\n${body}\n</dict>\n</plist>\n`
   );
   console.log(`  entl ← ${keys.join(', ')}`);
+}
+
+/** Stamp the App Tracking Transparency declarations into the store-readiness privacy manifest
+ * (PrivacyInfo.xcprivacy). EXTENDS that single manifest — flips NSPrivacyTracking + fills
+ * NSPrivacyTrackingDomains only when the `tracking` module is active, else leaves the template's
+ * `false` + empty defaults. Idempotent both ways (a build that later drops the module resets them). */
+function stampPrivacyManifest(outDir: string, cfg: AppwrapConfig, req: NativeReqs): void {
+  const file = join(outDir, 'App_Resources/iOS/PrivacyInfo.xcprivacy');
+  if (!existsSync(file)) return;
+  const active = req.activeOptionalGroups.includes('tracking');
+  const next = stampPrivacyTracking(readFileSync(file, 'utf8'), active, cfg.trackingDomains ?? []);
+  writeFileSync(file, next);
+  if (active) console.log(`  priv ← NSPrivacyTracking=true${cfg.trackingDomains?.length ? ` (${cfg.trackingDomains.length} domain${cfg.trackingDomains.length > 1 ? 's' : ''})` : ''}`);
 }
 
 /** Copy active modules' native source (runtime/modules-native/<name>/) into native/ — only when the
@@ -997,6 +1012,7 @@ function regenerateCore(cwd: string, outDir: string, cfg: AppwrapConfig, opts: {
   stampStoreKit(cwd, outDir, cfg);
   stampPush(cwd, outDir, cfg);
   stampEntitlements(outDir, cfg, req); // unified app.entitlements: module entitlements + push aps-environment
+  stampPrivacyManifest(outDir, cfg, req); // ATT tracking declarations into the store-readiness privacy manifest
   generateIcons(cwd, outDir, cfg);
   copyPwa(cwd, outDir, cfg);
 }

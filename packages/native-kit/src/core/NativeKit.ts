@@ -30,6 +30,7 @@ import { ShareModule } from '../modules/share';
 import { SpeechModule } from '../modules/speech';
 import { StorageModule } from '../modules/storage';
 import { ToastModule } from '../modules/toast';
+import { TrackingModule } from '../modules/tracking';
 import { UiModule } from '../modules/ui';
 import { UpdatesModule } from '../modules/updates';
 
@@ -103,6 +104,7 @@ export class NativeKit {
   public readonly billing = new BillingModule(this);
   public readonly updates = new UpdatesModule(this);
   public readonly backgroundTask = new BackgroundTaskModule(this);
+  public readonly tracking = new TrackingModule(this);
 
   public handshakeInfo: Handshake | null = null;
   public options: NativeKitOptions;

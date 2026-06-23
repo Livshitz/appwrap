@@ -12,6 +12,7 @@ import {
   stampAndroidQueries,
   stampPlistBackgroundTasks,
   stampPlistOrientations,
+  stampPrivacyTracking,
 } from '../src/derive';
 
 describe('resolveBuildNumber — named strategies + precedence', () => {
@@ -334,5 +335,50 @@ describe('stampPlistBackgroundTasks — headless background tasks (operates on t
     expect(out).toContain('<string>fetch</string>');
     expect(out).toContain('<string>processing</string>');
     expect(out.match(/<key>UIBackgroundModes<\/key>/g)).toHaveLength(1);
+  });
+});
+
+describe('stampPrivacyTracking — ATT declarations into the real store-readiness manifest', () => {
+  // Read the SHIPPING template so the test fails if its structure drifts away from the stamper's regex.
+  const TEMPLATE = readFileSync(
+    join(import.meta.dir, '../../../runtime/App_Resources/iOS/PrivacyInfo.xcprivacy'),
+    'utf8'
+  );
+
+  test('module INACTIVE: NSPrivacyTracking stays false, domains empty (template default preserved)', () => {
+    const out = stampPrivacyTracking(TEMPLATE, false, ['analytics.example.com']);
+    expect(out).toContain('<key>NSPrivacyTracking</key>\n\t<false/>');
+    expect(out).toMatch(/<key>NSPrivacyTrackingDomains<\/key>\s*<array\/>/);
+    expect(out).not.toContain('analytics.example.com'); // domains ignored when tracking off
+    // The store-readiness required-reason APIs survive untouched.
+    expect(out).toContain('NSPrivacyAccessedAPICategoryUserDefaults');
+    expect(out).toContain('NSPrivacyCollectedDataTypeDeviceID');
+  });
+
+  test('module ACTIVE with domains: NSPrivacyTracking true + populated NSPrivacyTrackingDomains', () => {
+    const out = stampPrivacyTracking(TEMPLATE, true, ['analytics.example.com', 'ads.example.net']);
+    expect(out).toContain('<key>NSPrivacyTracking</key>\n\t<true/>');
+    expect(out).toMatch(/<key>NSPrivacyTrackingDomains<\/key>\s*<array>/);
+    expect(out).toContain('<string>analytics.example.com</string>');
+    expect(out).toContain('<string>ads.example.net</string>');
+    // Still ONE manifest — required-reason declarations preserved (extends, not replaces).
+    expect(out).toContain('NSPrivacyAccessedAPICategoryDiskSpace');
+    expect(out.match(/<key>NSPrivacyTracking<\/key>/g)).toHaveLength(1);
+  });
+
+  test('module ACTIVE, no domains: tracking true with an empty domains array', () => {
+    const out = stampPrivacyTracking(TEMPLATE, true, []);
+    expect(out).toContain('<key>NSPrivacyTracking</key>\n\t<true/>');
+    expect(out).toMatch(/<key>NSPrivacyTrackingDomains<\/key>\s*<array\/>/);
+  });
+
+  test('idempotent + reversible: active→inactive resets cleanly to the false default', () => {
+    const active = stampPrivacyTracking(TEMPLATE, true, ['a.example.com']);
+    const again = stampPrivacyTracking(active, true, ['a.example.com']);
+    expect(again).toBe(active); // idempotent
+    const reset = stampPrivacyTracking(active, false, []);
+    expect(reset).toContain('<key>NSPrivacyTracking</key>\n\t<false/>');
+    expect(reset).toMatch(/<key>NSPrivacyTrackingDomains<\/key>\s*<array\/>/);
+    expect(reset).not.toContain('a.example.com');
   });
 });

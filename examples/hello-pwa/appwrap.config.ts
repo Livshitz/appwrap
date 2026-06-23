@@ -12,7 +12,7 @@ export default defineConfig({
   modules: [
     'notifications', 'biometrics', 'geo', 'photos', 'camera', 'media',
     'motion', 'contacts', 'calendar', 'reviews', 'billing', 'health', 'scanner', 'speech', 'oauth',
-    'backgroundTask',
+    'tracking', 'backgroundTask',
   ],
   // Permitted headless background-task ids (iOS BGTaskSchedulerPermittedIdentifiers). The 'sync' tile
   // registers + schedules this id.
@@ -27,7 +27,11 @@ export default defineConfig({
     contacts: 'Demo: pick a contact to prove native contacts access',
     motion: 'Demo: count your steps',
     speechRecognition: 'Demo: transcribe your voice in the speech tile',
+    tracking: 'Demo: ask App Tracking Transparency consent and read the IDFA',
   },
+  // ATT tracking domains (iOS) — declared in PrivacyInfo.xcprivacy when the `tracking` module is
+  // active. Demo placeholder; a real app lists the hosts its analytics/ad SDKs contact while tracking.
+  trackingDomains: ['analytics.example.com'],
   teamId: 'YOUR_APPLE_TEAM_ID',
   // Remote push (APNs). Gated here (NOT the modules list). iOS stamps the `aps-environment`
   // entitlement → requires a PAID Apple team that can hold the Push capability (a free personal

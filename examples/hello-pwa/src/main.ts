@@ -391,6 +391,14 @@ async function main() {
     ['stop listening', () => kit.speech.stopListening()],
   ]);
 
+  // Tracking (iOS App Tracking Transparency). cap 'none' off iOS (no ATT) → buttons resolve to the
+  // honest fallback ('authorized' / no IDFA) without prompting.
+  tile('Tracking (ATT)', kit.tracking.capability, [
+    ['request consent', () => kit.tracking.requestPermission()],
+    ['status', () => kit.tracking.status()],
+    ['idfa', async () => (await kit.tracking.idfa()) ?? '(none — not authorized / off iOS)'],
+  ]);
+
   tile('Network', kit.network.capability, [
     ['status', () => kit.network.status()],
   ]);

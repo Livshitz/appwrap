@@ -208,6 +208,33 @@ export function stampPlistBackgroundTasks(src: string, ids: string[] | undefined
   return src;
 }
 
+/**
+ * Stamp the App Tracking Transparency declarations into PrivacyInfo.xcprivacy. Rewrites the two
+ * tracking keys IN PLACE (the template ships them, so we never restructure the doc — we only flip
+ * values), keeping the required-reason API declarations the store-readiness manifest carries intact.
+ * Fully idempotent both directions:
+ *   - module ACTIVE   → `NSPrivacyTracking` true  + `NSPrivacyTrackingDomains` = `domains`.
+ *   - module INACTIVE → `NSPrivacyTracking` false + empty `NSPrivacyTrackingDomains` (template default).
+ * This EXTENDS the store-readiness manifest (single source of truth) rather than emitting a second one.
+ */
+export function stampPrivacyTracking(src: string, tracking: boolean, domains: string[] = []): string {
+  const list = (tracking ? domains : []).filter(Boolean);
+  // NSPrivacyTracking — true/false. Match the key + its following <true/>|<false/> element.
+  src = src.replace(
+    /(<key>NSPrivacyTracking<\/key>\s*)<(?:true|false)\/>/,
+    `$1<${tracking ? 'true' : 'false'}/>`
+  );
+  // NSPrivacyTrackingDomains — empty <array/> or a populated <array>…</array>. Match either form.
+  const domXml = list.length
+    ? `<array>\n${list.map((d) => `\t\t<string>${d}</string>`).join('\n')}\n\t</array>`
+    : `<array/>`;
+  src = src.replace(
+    /(<key>NSPrivacyTrackingDomains<\/key>\s*)(?:<array\/>|<array>[\s\S]*?<\/array>)/,
+    `$1${domXml}`
+  );
+  return src;
+}
+
 export function stampAndroidQueries(src: string, queryPackages?: string[], queryUrlSchemes?: string[]): string {
   const children = [
     ...(queryPackages ?? []).map((p) => `\t\t<package android:name="${p}"/>`),

@@ -109,8 +109,14 @@ export interface AppwrapConfig {
    * (iOS: Info.plist usage string; Android: <uses-permission>). 'contacts' has no
    * iOS key (CNContactPicker needs none) — it only stamps Android READ_CONTACTS. */
   permissions?: Partial<
-    Record<'location' | 'photos' | 'camera' | 'microphone' | 'faceid' | 'calendar' | 'contacts' | 'motion', string>
+    Record<'location' | 'photos' | 'camera' | 'microphone' | 'faceid' | 'calendar' | 'contacts' | 'motion' | 'tracking', string>
   >;
+  /** App Tracking Transparency tracking domains (iOS, `tracking` module). When the module is active
+   * the CLI sets the privacy manifest's `NSPrivacyTracking` → true and fills `NSPrivacyTrackingDomains`
+   * with these (the hosts the app/embedded SDKs contact while tracking — Apple validates them at
+   * upload). Empty/absent → `NSPrivacyTracking` true with an empty domains array (declare the prompt
+   * without listing domains). No-op entirely when the `tracking` module is inactive. */
+  trackingDomains?: string[];
   /** Monotonic build identifier. Stores reject a re-upload unless this is HIGHER than the last:
    * iOS `CFBundleVersion`, Android `versionCode` (the marketing `version` stays the user-facing
    * string). Default: an integer derived from `version` (0.2.1 → 201). Set an explicit number from a

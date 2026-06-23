@@ -254,6 +254,22 @@ export const MODULES: ModuleManifest[] = [
     nativeSrc: 'health',
   },
 
+  // ── tracking — App Tracking Transparency (iOS) — opt-in, STRIPPABLE (own handler + group) ──
+  // The native-only store-compliance seam for cross-company tracking (IDFA / cross-app identity):
+  // Apple REQUIRES the ATT prompt + NSUserTrackingUsageDescription and forbids tracking before
+  // consent. iOS-only (`ios:true`/`android:false`) — Android has NO ATT (the kit reports the cap
+  // 'none' there and degrades honestly). Stamping NSUserTrackingUsageDescription is what tells Apple
+  // the app tracks, so it's gated behind THIS module being active (no string = Apple assumes none).
+  // The CLI also flips the privacy manifest's NSPrivacyTracking → true + fills NSPrivacyTrackingDomains
+  // (from config `trackingDomains`) only when this module is active. iOS links
+  // AppTrackingTransparency.framework lazily via the runtime FFI (no extra link flag needed for a
+  // weak-import system framework referenced through NativeScript's interop). No native deps.
+  {
+    name: 'tracking', group: 'tracking',
+    capabilities: { tracking: { ios: true, android: false } },
+    ios: { permissions: [{ key: 'NSUserTrackingUsageDescription', domain: 'tracking', defaultUsage: 'Allow tracking to deliver a more personalized experience and measure ad performance.' }] },
+  },
+
   // ── backgroundTask — headless background execution (HEADLESS JS HANDLER) — opt-in, STRIPPABLE ──
   // The OS wakes the app (possibly cold, no visible WebView) for a permitted task id; the shell builds
   // an OFFSCREEN WebView, loads the app conveying the id (the handshake reports it), awaits the JS
@@ -273,7 +289,7 @@ export const MODULES: ModuleManifest[] = [
 
 /** Opt-in registration groups that own their own NS handler file (strippable when inactive). Core
  * groups (core/extended/parity/system/media/billing) are always bundled; only these are CLI-gated. */
-export const OPTIONAL_GROUPS = ['health', 'oauth', 'reviews', 'scanner', 'speech', 'backgroundTask'] as const;
+export const OPTIONAL_GROUPS = ['health', 'oauth', 'reviews', 'scanner', 'speech', 'tracking', 'backgroundTask'] as const;
 
 /** Resolve the active capability map for the handshake from a set of active capability names. */
 export function buildCapabilityMap(

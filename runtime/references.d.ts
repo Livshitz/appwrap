@@ -21,3 +21,5 @@
 /// <reference path="./node_modules/@nativescript/types-ios/lib/ios/objc-x86_64/objc!BackgroundTasks.d.ts" />
 /// <reference path="./node_modules/@nativescript/types-ios/lib/ios/objc-x86_64/objc!AuthenticationServices.d.ts" />
 /// <reference path="./node_modules/@nativescript/types-ios/lib/ios/objc-x86_64/objc!Photos.d.ts" />
+/// <reference path="./node_modules/@nativescript/types-ios/lib/ios/objc-x86_64/objc!AppTrackingTransparency.d.ts" />
+/// <reference path="./node_modules/@nativescript/types-ios/lib/ios/objc-x86_64/objc!AdSupport.d.ts" />
