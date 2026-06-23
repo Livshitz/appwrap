@@ -26,7 +26,18 @@ export function onDeepLink(url: string): void {
   // plumbing, not an app deep link, so it's swallowed here and never forwarded to the PWA.
   if (deepLinkInterceptor?.(url)) return;
   if (pwaReady) bridge.emit('deeplink.open', { url });
-  else pendingDeepLink = url; // buffer until the PWA handshakes
+  else pendingDeepLink = url; // buffer until the PWA handshakes — delivered IN the handshake response
+}
+
+/**
+ * Hand the cold-start deep link back IN the handshake response (read-once), so the PWA knows the
+ * target route BEFORE first paint and routes immediately — no `/home` flash, no fragile event timer.
+ * Returns null when the launch wasn't from a link (or it was already consumed / delivered warm).
+ */
+export function consumePendingDeepLink(): string | null {
+  const url = pendingDeepLink;
+  pendingDeepLink = null;
+  return url;
 }
 
 /** A home-screen shortcut was activated (iOS performActionForShortcutItem / cold-start launchOptions;
@@ -47,18 +58,15 @@ export function onPushTap(payload: { data: Record<string, string> }): void {
 }
 
 /**
- * The PWA completed app.handshake → its JS is live and registers its
- * lifecycle listeners right after kit.ready() resolves. Flush any deep link
- * that arrived during launch (cold start), after a beat for listener install.
+ * The PWA completed app.handshake → its JS is live and registers its lifecycle listeners right after
+ * kit.ready() resolves. A cold-start DEEP LINK is delivered IN the handshake response itself (see
+ * `consumePendingDeepLink`), so the PWA routes before first paint — it is NOT flushed here. Push taps
+ * and shortcuts still flush as events (after a beat for listener install) — they aren't route-shaped,
+ * so a flash isn't a concern and the event path is the established contract.
  */
 export function onPwaHandshake(): void {
   if (pwaReady) return;
   pwaReady = true;
-  if (pendingDeepLink) {
-    const url = pendingDeepLink;
-    pendingDeepLink = null;
-    setTimeout(() => bridge.emit('deeplink.open', { url }), 500);
-  }
   if (pendingPushTap) {
     const payload = pendingPushTap;
     pendingPushTap = null;

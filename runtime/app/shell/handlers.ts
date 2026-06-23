@@ -1,7 +1,7 @@
 import { ApplicationSettings, Utils, isAndroid, isIOS } from '@nativescript/core';
 import { bridge } from './bridge';
 import { SHELL_CONFIG } from './config';
-import { onPwaHandshake } from './events';
+import { onPwaHandshake, consumePendingDeepLink } from './events';
 import { showToast } from './toast';
 import { showBanner, dismissBanner } from './banner';
 import { setStatusBarStyle } from './status-bar';
@@ -10,7 +10,7 @@ import { ACTIVE_MODULE_NAMES } from './active-modules.generated';
 import { consumePendingBackgroundTaskId } from './background-context';
 
 /** Build identifier for the native shell bundle — bump per deploy to spot stale bundles. */
-export const SHELL_BUILD = 'tracking-att-1';
+export const SHELL_BUILD = 'deeplink-noflash-1';
 
 /** Version status the web side (native-kit `kit.updates`) reports via `app.reportWebVersion`. */
 export interface WebVersionInfo { current?: string; latest?: string; build?: string | number; updateAvailable?: boolean; }
@@ -32,6 +32,10 @@ export function registerHandlers(): void {
     // (offscreen) WebView. Report it so `kit.backgroundTask` dispatches the registered handler. Consumed
     // (read-once) so a later foreground handshake in the same process never re-reports a stale wake.
     const backgroundTaskId = consumePendingBackgroundTaskId();
+    // A cold-start deep link buffered during launch is handed back HERE (read-once) so the PWA routes
+    // to the target before first paint — no `/home` flash. Warm links (app already running) still
+    // arrive via the `deeplink.open` event.
+    const deepLink = consumePendingDeepLink();
     return {
       protocol: 1,
       platform: isIOS ? 'ios' : 'android',
@@ -39,6 +43,7 @@ export function registerHandlers(): void {
       debug: { lastNotifTap: safeJson(ApplicationSettings.getString('kit:__notifTap', '')) },
       capabilities,
       ...(backgroundTaskId ? { backgroundTaskId } : {}),
+      ...(deepLink ? { deepLink } : {}),
     };
   });
 

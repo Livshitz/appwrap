@@ -29,6 +29,12 @@ export interface Handshake {
    * reads it from {@link NativeKit.handshakeInfo} and dispatches the registered handler. Absent on a
    * normal foreground launch. See {@link BackgroundTaskModule}. */
   backgroundTaskId?: string;
+  /** Set ONLY on a cold launch FROM a deep link (url-scheme open or notification tap that started the
+   * app): the link that launched us, handed back synchronously so the PWA can route to the target
+   * route BEFORE first paint — avoiding a brief home-screen flash. A WARM deep link (app already
+   * running) is NOT carried here; it arrives via the `deeplink.open` event. Read it at `ready()` via
+   * {@link LifecycleModule.launchDeepLink}. Absent on a normal launch. */
+  deepLink?: string;
   /** Optional diagnostic payload (breadcrumbs, etc.). */
   debug?: Record<string, unknown>;
 }

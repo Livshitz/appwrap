@@ -256,6 +256,14 @@ async function main() {
     log(`handshake ok — capabilities: ${JSON.stringify(hs.capabilities)}`);
     const tap = hs.debug?.lastNotifTap;
     if (tap) log(`lastNotifTap: ${JSON.stringify(tap)}`);
+    // COLD-START deep link: the shell handed the launch link back IN the handshake, so we can route to
+    // the target BEFORE first paint (no `/home` flash). The initial applyRoute() below renders it.
+    // Warm links still arrive via kit.lifecycle.onDeepLink (wired further down).
+    const launchLink = kit.lifecycle.launchDeepLink;
+    if (launchLink) {
+      location.hash = routeForDeepLink(launchLink);
+      log(`cold deeplink → ${launchLink}`);
+    }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     $('context').textContent = `handshake failed: ${msg}`;
