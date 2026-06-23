@@ -601,6 +601,10 @@ async function main() {
     ['restore', () => kit.billing.restore()],
     ['entitlements', () => kit.billing.entitlements()],
     ['manage subs', () => kit.billing.manageSubscriptions()],
+    // In-app StoreKit-2 manage-subscriptions sheet (iOS 15+). The drawer presents WITHOUT the app scene
+    // leaving foregroundActive → it's the surface that exposed the native-surface WebView freeze; great
+    // for verifying recoverAfterNativeSurface() (the app should stay responsive on dismiss).
+    ['manage sheet', async () => { await kit.billing.showManageSubscriptionsSheet(); return 'sheet dismissed'; }],
   ]);
 
   // Deep-link round trip: hand our own scheme to the OS → it reopens us → router navigates.
