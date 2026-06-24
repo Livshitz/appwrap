@@ -270,6 +270,21 @@ export const MODULES: ModuleManifest[] = [
     ios: { permissions: [{ key: 'NSUserTrackingUsageDescription', domain: 'tracking', defaultUsage: 'Allow tracking to deliver a more personalized experience and measure ad performance.' }] },
   },
 
+  // ── appleSignIn — native Sign in with Apple (iOS ASAuthorization) — opt-in, STRIPPABLE ──
+  // The native account-sheet alternative to the web-OAuth path: ASAuthorizationAppleIDProvider uses the
+  // App ID (bundle) and returns the identityToken + nonce DIRECTLY — no Services ID, no https Return URL,
+  // no browser redirect (which Apple rejects for custom-scheme redirect_uris). The PWA feeds the result
+  // to Firebase signInWithCredential('apple.com', { idToken, rawNonce }). iOS-only (`ios:true`/
+  // `android:false`) — Sign in with Apple has NO native Android SDK (the kit reports 'none' there and the
+  // app falls back to its web Apple auth). Stamps the `com.apple.developer.applesignin` entitlement ONLY
+  // when active (gated, like push's aps-environment) — a non-Apple-SignIn build signs without it. No
+  // permission string. Strippable own handler `handlers-apple-signin.ts` (in OPTIONAL_GROUPS).
+  {
+    name: 'appleSignIn', group: 'appleSignIn',
+    capabilities: { appleSignIn: { ios: true, android: false } },
+    ios: { entitlements: { 'com.apple.developer.applesignin': ['Default'] } },
+  },
+
   // ── backgroundTask — headless background execution (HEADLESS JS HANDLER) — opt-in, STRIPPABLE ──
   // The OS wakes the app (possibly cold, no visible WebView) for a permitted task id; the shell builds
   // an OFFSCREEN WebView, loads the app conveying the id (the handshake reports it), awaits the JS
@@ -289,7 +304,7 @@ export const MODULES: ModuleManifest[] = [
 
 /** Opt-in registration groups that own their own NS handler file (strippable when inactive). Core
  * groups (core/extended/parity/system/media/billing) are always bundled; only these are CLI-gated. */
-export const OPTIONAL_GROUPS = ['health', 'oauth', 'reviews', 'scanner', 'speech', 'tracking', 'backgroundTask'] as const;
+export const OPTIONAL_GROUPS = ['health', 'oauth', 'reviews', 'scanner', 'speech', 'tracking', 'appleSignIn', 'backgroundTask'] as const;
 
 /** Resolve the active capability map for the handshake from a set of active capability names. */
 export function buildCapabilityMap(

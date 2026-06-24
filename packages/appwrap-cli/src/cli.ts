@@ -179,6 +179,7 @@ const OPTIONAL_GROUP_HANDLERS: Record<string, { file: string; fn: string }> = {
   scanner: { file: './handlers-scanner', fn: 'registerScannerHandlers' },
   speech: { file: './handlers-speech', fn: 'registerSpeechHandlers' },
   tracking: { file: './handlers-tracking', fn: 'registerTrackingHandlers' },
+  appleSignIn: { file: './handlers-apple-signin', fn: 'registerAppleSignInHandlers' },
   backgroundTask: { file: './handlers-background', fn: 'registerBackgroundTaskHandlers' },
 };
 

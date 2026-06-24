@@ -12,7 +12,7 @@ export default defineConfig({
   modules: [
     'notifications', 'biometrics', 'geo', 'photos', 'camera', 'media',
     'motion', 'contacts', 'calendar', 'reviews', 'billing', 'health', 'scanner', 'speech', 'oauth',
-    'tracking', 'backgroundTask',
+    'tracking', 'appleSignIn', 'backgroundTask',
   ],
   // Permitted headless background-task ids (iOS BGTaskSchedulerPermittedIdentifiers). The 'sync' tile
   // registers + schedules this id.

@@ -2,6 +2,7 @@ import { AppwrapAdapter } from './appwrap-adapter';
 import { WebAdapter } from './web-adapter';
 import { Capability, Handshake, InvokeOptions, KIT_PROTOCOL, KitError, NativeKitAdapter, Platform, Unsubscribe } from './types';
 import { AppModule } from '../modules/app';
+import { AppleSignInModule } from '../modules/appleSignIn';
 import { BackgroundTaskModule } from '../modules/backgroundTask';
 import { BillingModule } from '../modules/billing/billing';
 import { BiometricsModule } from '../modules/biometrics';
@@ -105,6 +106,7 @@ export class NativeKit {
   public readonly updates = new UpdatesModule(this);
   public readonly backgroundTask = new BackgroundTaskModule(this);
   public readonly tracking = new TrackingModule(this);
+  public readonly appleSignIn = new AppleSignInModule(this);
 
   public handshakeInfo: Handshake | null = null;
   public options: NativeKitOptions;

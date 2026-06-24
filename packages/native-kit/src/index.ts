@@ -42,6 +42,13 @@ export type { CalendarEventOptions } from './modules/calendar';
 export type { BrowserOptions } from './modules/browser';
 export type { OAuthAuthorizeParams, OAuthResult } from './modules/oauth';
 export type { TrackingStatus } from './modules/tracking';
+export type {
+  AppleSignInName,
+  AppleSignInParams,
+  AppleSignInResult,
+  AppleSignInCancelled,
+} from './modules/appleSignIn';
+export { isAppleSignInResult } from './modules/appleSignIn';
 export { ClientTrustedValidator, HttpValidator, HttpValidatorOptions } from './modules/billing/validators';
 export { HttpBillingProvider, HttpBillingProviderOptions } from './modules/billing/providers';
 export type { HeaderProvider } from './modules/billing/http';

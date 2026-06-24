@@ -3,6 +3,12 @@ import { kit, type BillingProvider, type Entitlement } from '@livx.cc/native-kit
 /** Demo web-checkout provider. In production this is
  *  `new HttpBillingProvider({ baseUrl: '/api/billing' })` → Stripe Checkout + Billing Portal.
  *  Here (no backend) it's in-memory so the web build shows the SAME kit.billing.* calls working. */
+/** A random, URL-safe nonce for Sign in with Apple (Firebase needs the RAW value back as rawNonce). */
+function randomNonce(len = 32): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(len));
+  return Array.from(bytes, (b) => '0123456789abcdef'[b & 15] + '0123456789abcdef'[b >> 4]).join('').slice(0, len);
+}
+
 function demoWebBilling(): BillingProvider {
   let owned: Entitlement[] = [];
   return {
@@ -405,6 +411,19 @@ async function main() {
     ['request consent', () => kit.tracking.requestPermission()],
     ['status', () => kit.tracking.status()],
     ['idfa', async () => (await kit.tracking.idfa()) ?? '(none — not authorized / off iOS)'],
+  ]);
+
+  // Native Sign in with Apple (iOS ASAuthorization). Generates a raw nonce, signs in, and shows the
+  // identityToken JWT header (proves a real token came back) + the raw nonce you'd pass to Firebase as
+  // rawNonce. Resolves '(cancelled)' if the user dismisses the sheet (never throws).
+  tile('Sign in with Apple', kit.appleSignIn.capability, [
+    ['sign in', async () => {
+      const nonce = randomNonce();
+      const r = await kit.appleSignIn.signIn({ nonce });
+      if (!('identityToken' in r)) return '(cancelled)';
+      const head = r.identityToken.split('.')[0] ?? '';
+      return `token.header=${head.slice(0, 24)}… nonce=${r.nonce.slice(0, 8)}… user=${r.user?.email ?? r.user?.name?.displayName ?? '(none — not first auth)'}`;
+    }],
   ]);
 
   tile('Network', kit.network.capability, [

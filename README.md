@@ -168,6 +168,7 @@ await kit.clipboard.copy('text');
 await kit.notifications.schedule({ title: 'Hi', delaySec: 5 });
 await kit.biometrics.authenticate('Prove it');
 await kit.oauth.authorize({ url: authUrl, callbackScheme: 'myapp' }); // system-browser OAuth (iOS ASWebAuthenticationSession / Android Chrome Custom Tabs, opt-in `oauth` module) — for providers (Google…) that reject embedded WebViews; redirect returns via the app's urlScheme → { url } callback to exchange + signInWithCredential (user-dismiss → 'CANCELLED')
+await kit.appleSignIn.signIn({ nonce });           // native Sign in with Apple (opt-in `appleSignIn` module, iOS ASAuthorizationController) → { identityToken, authorizationCode?, nonce, user? } | { cancelled:true }; sends SHA256(nonce) to Apple, returns the raw nonce for Firebase signInWithCredential(OAuthProvider.credential('apple.com', { idToken, rawNonce })) — no Services ID/redirect (Android/web: UNSUPPORTED)
 await kit.geo.current();
 await kit.photos.pick();
 await kit.network.status();
@@ -425,6 +426,13 @@ bun test packages/                                  # kit unit tests
       permission (deduped). Web maps to `BarcodeDetector` where present (Chrome/Android `web`), else
       honest `none` + `UNSUPPORTED` (no heavy JS decoder). Compiles clean; camera-session lifecycle is
       device-gated (not yet device-verified)
+- [x] `appleSignIn` (native Sign in with Apple) — opt-in, strippable module: iOS
+      `ASAuthorizationController` (App-ID flow, no Services ID/redirect). `kit.appleSignIn.signIn({ nonce })`
+      sends `SHA256(nonce)` to Apple and returns the raw nonce + `identityToken`/`authorizationCode`/
+      first-auth `user{name,email}` for Firebase `signInWithCredential('apple.com', { idToken, rawNonce })`;
+      user-dismiss resolves `{ cancelled: true }`. CLI stamps `com.apple.developer.applesignin` only when
+      active. Android/web honest `none` + `UNSUPPORTED` (no native Apple SDK). Compiles clean; the native
+      sheet + token round-trip is device-gated (not yet device-verified)
 - [x] `speech` (TTS + STT) — opt-in module, ONE `kit.speech` with TWO honest capabilities:
       `capability` (synthesis) + `recognitionCapability` (transcription). iOS `AVSpeechSynthesizer` +
       `SFSpeechRecognizer`/`AVAudioEngine`; Android `TextToSpeech` + `SpeechRecognizer` (plain Java —
