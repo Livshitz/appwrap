@@ -98,6 +98,26 @@ export function resolveBuildNumber(
 }
 
 /**
+ * Apply a `--build-number` CLI flag to the env so stamping picks it up. The stamping chain
+ * (sync → stampIOSDisplayName/gradle → buildNumberOf → resolveBuildNumber) reads
+ * `APPWRAP_BUILD_NUMBER` off the env, and stamping runs BEFORE the native build/archive — so the
+ * flag must land on the env *before* sync(), not only on a child process env copy.
+ * Returns the validated build-number string (set on `env`), or undefined if no flag was given.
+ * Throws on a non-positive-integer flag so the caller can print + exit.
+ */
+export function applyBuildNumberFlag(
+  flag: string | undefined,
+  env: { APPWRAP_BUILD_NUMBER?: string } = process.env
+): string | undefined {
+  if (flag == null || flag === '') return undefined;
+  if (!/^\d+$/.test(flag)) {
+    throw new Error(`--build-number must be a positive integer (got "${flag}").`);
+  }
+  env.APPWRAP_BUILD_NUMBER = flag;
+  return flag;
+}
+
+/**
  * Collapse a PWA web-manifest `orientation` value to our three states. The manifest spec allows
  * `portrait`/`landscape` plus the `-primary`/`-secondary`/`*-up`/`natural` variants — we don't model
  * a single-edge lock at the app level (a PWA wrapper either constrains an axis or leaves it free), so

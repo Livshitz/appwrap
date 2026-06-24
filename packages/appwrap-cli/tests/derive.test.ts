@@ -3,6 +3,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
   androidScreenOrientation,
+  applyBuildNumberFlag,
   deriveBuild,
   iosOrientations,
   mergeManifest,
@@ -56,6 +57,46 @@ describe('resolveBuildNumber — named strategies + precedence', () => {
     expect(resolveBuildNumber({ version: '0.2.1', buildNumber: 'epoch' }, '', NOW)).toBe(
       Math.floor(NOW.getTime() / 1000)
     );
+  });
+});
+
+describe('applyBuildNumberFlag — flag flows to the stamped CFBundleVersion', () => {
+  const NOW = new Date(Date.UTC(2026, 5, 22, 14, 5));
+
+  // The regression: `appwrap release ios --build-number N` stamped the default timestamp because the
+  // flag was applied only to a child-process env copy, never the env that stamping reads. This proves
+  // the flag lands on the env BEFORE stamping (sync → buildNumberOf → resolveBuildNumber) reads it.
+  test('--build-number N → resolveBuildNumber returns N (over a timestamp default)', () => {
+    const env: { APPWRAP_BUILD_NUMBER?: string } = {};
+    const applied = applyBuildNumberFlag('18', env);
+    expect(applied).toBe('18');
+    expect(env.APPWRAP_BUILD_NUMBER).toBe('18');
+    // This is exactly what buildNumberOf does: resolveBuildNumber(cfg, process.env.APPWRAP_BUILD_NUMBER).
+    expect(resolveBuildNumber({ version: '1.2.3', buildNumber: 'timestamp' }, env.APPWRAP_BUILD_NUMBER, NOW)).toBe(18);
+  });
+
+  // Real consumer shape: appwrap.config.ts does `buildNumber: process.env.APPWRAP_BUILD_NUMBER || <stamp>`,
+  // evaluated at import time — so cfg.buildNumber is already FROZEN to a numeric timestamp string before
+  // the flag mutates process.env. Proves env precedence still wins over the frozen field (the actual trap).
+  test('--build-number N wins over a frozen numeric-timestamp cfg.buildNumber', () => {
+    const env: { APPWRAP_BUILD_NUMBER?: string } = {};
+    applyBuildNumberFlag('18', env);
+    expect(resolveBuildNumber({ version: '1.2.3', buildNumber: '2606221405' }, env.APPWRAP_BUILD_NUMBER, NOW)).toBe(18);
+    // …and with no flag, the frozen timestamp is preserved unchanged.
+    expect(resolveBuildNumber({ version: '1.2.3', buildNumber: '2606221405' }, undefined, NOW)).toBe(2606221405);
+  });
+
+  test('no flag → env untouched, stamping keeps the default strategy', () => {
+    const env: { APPWRAP_BUILD_NUMBER?: string } = {};
+    expect(applyBuildNumberFlag(undefined, env)).toBeUndefined();
+    expect(applyBuildNumberFlag('', env)).toBeUndefined();
+    expect(env.APPWRAP_BUILD_NUMBER).toBeUndefined();
+    expect(resolveBuildNumber({ version: '1.2.3', buildNumber: 'timestamp' }, env.APPWRAP_BUILD_NUMBER, NOW)).toBe(2606221405);
+  });
+
+  test('non-positive-integer flag throws (caller prints + exits)', () => {
+    expect(() => applyBuildNumberFlag('abc', {})).toThrow(/positive integer/);
+    expect(() => applyBuildNumberFlag('-1', {})).toThrow(/positive integer/);
   });
 });
 

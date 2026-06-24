@@ -22,6 +22,7 @@ import type * as CapManifest from '../../../runtime/app/shell/capabilities.manif
 import type { AppwrapConfig } from './config';
 import {
   androidScreenOrientation,
+  applyBuildNumberFlag,
   iosOrientations,
   mergeManifest,
   resolveBuildNumber,
@@ -1173,6 +1174,14 @@ async function build(cwd: string, flags: Record<string, string>, positionals: st
     console.error(`✖ Wrapper not found at ${outDir} — run \`appwrap init\` first`);
     process.exit(1);
   }
+  // --build-number → process.env.APPWRAP_BUILD_NUMBER before sync() stamps the plist/gradle (same
+  // mechanism `release` uses). Env-var path still honored by sync()'s buildNumberOf when no flag.
+  try {
+    applyBuildNumberFlag(flags['build-number']);
+  } catch (e) {
+    console.error(`✖ ${(e as Error).message}`);
+    process.exit(1);
+  }
   // Make sure the wrapper reflects the latest config + PWA before compiling (also validates the config).
   await sync(cwd, flags);
 
@@ -1254,16 +1263,17 @@ async function release(cwd: string, flags: Record<string, string>, positionals: 
   }
   const stampCfg = serverUrl ? { ...cfg, loader: 'server' as const, serverUrl } : cfg;
 
-  // Build number: explicit flag → APPWRAP_BUILD_NUMBER (which the CLI's stamping already honors and
-  // wins over the derived default). In CI the workflow sets APPWRAP_BUILD_NUMBER itself.
-  const env = { ...process.env };
-  if (flags['build-number']) {
-    if (!/^\d+$/.test(flags['build-number'])) {
-      console.error(`✖ --build-number must be a positive integer (got "${flags['build-number']}").`);
-      process.exit(1);
-    }
-    env.APPWRAP_BUILD_NUMBER = flags['build-number'];
+  // Build number: explicit flag → APPWRAP_BUILD_NUMBER. Stamping (sync → stampIOSDisplayName →
+  // buildNumberOf) reads process.env.APPWRAP_BUILD_NUMBER, and sync() runs BEFORE fastlane archives
+  // the (already-stamped) Info.plist — so the flag must land on process.env *here*, before sync(),
+  // not only on the child env. In CI the workflow sets APPWRAP_BUILD_NUMBER itself (env path).
+  try {
+    applyBuildNumberFlag(flags['build-number']);
+  } catch (e) {
+    console.error(`✖ ${(e as Error).message}`);
+    process.exit(1);
   }
+  const env = { ...process.env };
 
   // Re-stamp config + copy the latest PWA into native/ so the lane archives current sources. (The lane
   // also runs `ns prepare ios --release`; sync here makes the wrapper config/PWA authoritative first.)
