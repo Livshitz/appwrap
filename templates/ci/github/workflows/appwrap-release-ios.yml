@@ -34,7 +34,13 @@ jobs:
       - run: bun install && bun run build
       # Pin global tools — unpinned installs can grab a breaking release mid-flight. Bump deliberately.
       - run: npm i -g nativescript@9.0.6
-      - run: bunx @livx.cc/appwrap init # native/ is generated (gitignored) — regenerate it fresh in CI
+      # bunx is PINNED to the appwrap version that emitted this workflow (stamped at `init`). Pinning is
+      # load-bearing: an UNPINNED `bunx @livx.cc/appwrap` resolves to whatever is currently published,
+      # which may pre-date the `init`/`release` commands and would silently run old code + exit 1 with a
+      # confusing usage dump. With the pin, CI fails LOUDLY ("No matching version") until that version is
+      # published to the @livx.cc registry. PUBLISH-ORDERING: publish the appwrap CLI BEFORE the first CI
+      # run that uses a freshly-emitted workflow.
+      - run: bunx @livx.cc/appwrap@^__APPWRAP_VERSION__ init # native/ is generated (gitignored) — regenerate it fresh in CI
       - working-directory: native
         run: npm install
       - uses: ruby/setup-ruby@v1
@@ -56,6 +62,6 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
-        run: bunx @livx.cc/appwrap release ios
+        run: bunx @livx.cc/appwrap@^__APPWRAP_VERSION__ release ios
 
   # Production promotion is a manual gate: promote the TestFlight build in App Store Connect.

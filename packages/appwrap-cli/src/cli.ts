@@ -87,6 +87,12 @@ function resolveAssetRoot(rel: string): string {
 const TEMPLATE_DIR = resolveAssetRoot('runtime');
 const CI_TEMPLATE_DIR = resolveAssetRoot('templates/ci');
 
+/** This CLI's own published version — used to pin the `bunx @livx.cc/appwrap@^x.y.z` invocations the
+ * emitted workflow runs. Pinning to THIS version's floor means CI fails LOUDLY ("version not found")
+ * until that version is published, instead of bunx silently resolving an older published build that
+ * lacks `release`/`init` flags. package.json sits one level above src/ (published) or the monorepo dir. */
+const CLI_VERSION: string = (await import(resolve(import.meta.dir, '..', 'package.json'), { with: { type: 'json' } })).default.version;
+
 // Load the capability manifest VALUES from the resolved runtime (pure data — safe outside NativeScript).
 // Top-level await resolves before any command dispatches at the bottom of this file.
 const { MODULES, OPTIONAL_GROUPS } = (await import(
@@ -980,6 +986,13 @@ function copyCiTemplates(cwd: string, outDir: string, cfg: AppwrapConfig, force 
   for (const [from, to, overwrite] of targets) {
     mkdirSync(to, { recursive: true });
     cpSync(from, to, { recursive: true, force: overwrite, errorOnExist: false });
+  }
+  // Pin the emitted workflow's `bunx @livx.cc/appwrap@^x.y.z` to THIS CLI's version floor, so a CI run
+  // using a freshly-emitted workflow can't silently resolve an older published build that lacks the
+  // `init`/`release` commands (it would 404 loudly instead). Idempotent: re-init finds no placeholder.
+  if (!isFrameworkRepo(repoRoot)) {
+    const wf = join(repoRoot, '.github/workflows/appwrap-release-ios.yml');
+    if (existsSync(wf)) writeFileSync(wf, readFileSync(wf, 'utf8').replaceAll('__APPWRAP_VERSION__', CLI_VERSION));
   }
   // Stamp the app id + team into the emitted fastlane (signing needs them; the templates ship
   // `__APP_ID__`/`__TEAM_ID__` placeholders). Idempotent: re-init finds no placeholders → no-op.
