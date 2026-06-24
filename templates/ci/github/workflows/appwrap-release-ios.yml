@@ -47,14 +47,15 @@ jobs:
           chmod 600 ~/.ssh/match_deploy_key
           printf 'Host github.com\n  IdentityFile ~/.ssh/match_deploy_key\n  IdentitiesOnly yes\n' >> ~/.ssh/config
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+      # Single source of truth: the SAME command a developer runs locally. It re-stamps native/ and
+      # delegates the full archive/sign/upload to the emitted fastlane lane — no fastlane logic here.
       - name: Build & upload to TestFlight
-        working-directory: native
         env:
           MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
-        run: fastlane ios beta
+        run: bunx @livx.cc/appwrap release ios
 
   # Production promotion is a manual gate: promote the TestFlight build in App Store Connect.

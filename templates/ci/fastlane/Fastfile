@@ -6,6 +6,36 @@ default_platform(:ios)
 APP_ID = '__APP_ID__'.freeze
 TEAM_ID = '__TEAM_ID__'.freeze
 
+# Run `ns prepare` (which shells out to `pod install`) with a SANITIZED gem env.
+#
+# Why: fastlane runs under its own Ruby and exports GEM_HOME/GEM_PATH into every child process. On a
+# Mac, NativeScript's `pod` is the system one (`/usr/local/bin/pod`, shebang-pinned to Ruby 2.6, whose
+# CocoaPods lives in /Library/Ruby/Gems/2.6.0). The inherited GEM_HOME redirects its gem lookup to
+# fastlane's Ruby dir → `can't find gem cocoapods (Gem::GemNotFoundException)` → NS prints
+# `'arch install' command failed` (exit 127). Interactively `pod` works because no GEM_HOME is set.
+#
+# Fix: only when the active `pod` is that system-Ruby-2.6 binary, drop the leaked GEM_* vars so it
+# falls back to its own default gem dir. CI runners use a self-managed Ruby (setup-ruby) whose `pod`
+# is NOT the system 2.6 one, so the env is left untouched there — no behavior change on CI.
+def appwrap_prepare_ios
+  prepare = "cd '#{File.expand_path('..', __dir__)}' && ns prepare ios --release"
+  pod = `command -v pod`.strip
+  system_pod = !pod.empty? && File.exist?(pod) &&
+               File.read(pod, 256).include?('Ruby.framework/Versions/2.6')
+  unless system_pod
+    sh(prepare)
+    return
+  end
+  leaked = %w[GEM_HOME GEM_PATH RUBYLIB RUBYOPT BUNDLE_GEMFILE BUNDLE_BIN_PATH]
+  saved = {}
+  leaked.each { |k| saved[k] = ENV[k]; ENV.delete(k) }
+  begin
+    sh(prepare)
+  ensure
+    saved.each { |k, v| ENV[k] = v unless v.nil? }
+  end
+end
+
 platform :ios do
   desc 'Build the NativeScript wrapper and upload to TestFlight'
   lane :beta do
@@ -23,7 +53,8 @@ platform :ios do
           git_url: ENV['MATCH_GIT_URL'], api_key: api_key)
 
     # NativeScript prepares the Xcode project inside the wrapper dir (native/ = parent of fastlane/).
-    sh("cd '#{File.expand_path('..', __dir__)}' && ns prepare ios --release")
+    # Wrapped to sanitize the gem env so the system `pod` can find CocoaPods (see appwrap_prepare_ios).
+    appwrap_prepare_ios
 
     # NS defaults the project to automatic signing → archive can't find a profile. Pin manual signing
     # to the match-provided App Store profile (name exported by match into ENV).

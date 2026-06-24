@@ -959,23 +959,27 @@ export function isFrameworkRepo(root: string): boolean {
   return existsSync(join(root, 'packages/appwrap-cli/src/cli.ts'));
 }
 
-/** Emit CI scaffolding (GH Actions → git repo root, fastlane → native/). Never overwrites. */
-function copyCiTemplates(cwd: string, outDir: string, cfg: AppwrapConfig): void {
+/** Emit CI scaffolding (GH Actions → git repo root, fastlane → native/).
+ * GH workflows are never overwritten (users may customize them). The fastlane lane IS appwrap-managed
+ * (the release recipe, not for hand-editing — see AGENTS.md), so it is RE-EMITTED on `--force` to keep
+ * the recipe current after a framework upgrade; without --force it's still first-time-only. */
+function copyCiTemplates(cwd: string, outDir: string, cfg: AppwrapConfig, force = false): void {
   if (!existsSync(CI_TEMPLATE_DIR)) return;
   const repoRoot = gitRoot(cwd);
   // GitHub only reads `.github/workflows` at the REPO ROOT — in a monorepo, writing it under the
   // package cwd (e.g. packages/app/.github) is dead config and regenerates a stray workflow each init.
-  const targets: Array<[string, string]> = [[join(CI_TEMPLATE_DIR, 'fastlane'), join(outDir, 'fastlane')]];
+  // [from, to, overwritable]
+  const targets: Array<[string, string, boolean]> = [[join(CI_TEMPLATE_DIR, 'fastlane'), join(outDir, 'fastlane'), force]];
   // …but if the repo root IS the appwrap framework itself (in-repo example), DON'T scaffold consumer
   // workflows into the framework's .github — that's the stray-workflow-each-init bug.
   if (isFrameworkRepo(repoRoot)) {
     console.log('  ci   ← GH Actions scaffold skipped (inside the appwrap framework repo — manages its own CI)');
   } else {
-    targets.unshift([join(CI_TEMPLATE_DIR, 'github/workflows'), join(repoRoot, '.github/workflows')]);
+    targets.unshift([join(CI_TEMPLATE_DIR, 'github/workflows'), join(repoRoot, '.github/workflows'), false]);
   }
-  for (const [from, to] of targets) {
+  for (const [from, to, overwrite] of targets) {
     mkdirSync(to, { recursive: true });
-    cpSync(from, to, { recursive: true, force: false, errorOnExist: false });
+    cpSync(from, to, { recursive: true, force: overwrite, errorOnExist: false });
   }
   // Stamp the app id + team into the emitted fastlane (signing needs them; the templates ship
   // `__APP_ID__`/`__TEAM_ID__` placeholders). Idempotent: re-init finds no placeholders → no-op.
@@ -1060,7 +1064,7 @@ async function init(cwd: string, flags: Record<string, string>): Promise<void> {
   console.log(`🎁 appwrap init → ${outDir}`);
   mkdirSync(outDir, { recursive: true });
   regenerateCore(cwd, outDir, cfg, { firstRun: true, flags });
-  copyCiTemplates(cwd, outDir, cfg); // first-time scaffold (never overwrites)
+  copyCiTemplates(cwd, outDir, cfg, 'force' in flags); // GH workflows: first-time only; fastlane lane: re-emit on --force
   writeFileSync(join(outDir, '.gitignore'), 'node_modules/\nplatforms/\nhooks/\n');
   applyOverrides(cwd, outDir, cfg); // escape hatch — last, so custom native code wins
   stampVersionManifest(outDir, cfg); // provenance — also marks the dir appwrap-managed
@@ -1174,6 +1178,84 @@ async function build(cwd: string, flags: Record<string, string>, positionals: st
   if (platform === 'ios' && release) {
     console.log('ℹ App Store distribution (archive + upload) goes through the fastlane release lane (native/fastlane) — needs a paid team + ASC API key.');
   }
+}
+
+/** `appwrap release ios` — the ONE build+sign+upload-to-TestFlight command, identical locally and in CI.
+ *
+ * It re-stamps the config + PWA (`sync`) and then delegates the full archive/sign/upload to the emitted
+ * fastlane lane (`native/fastlane` `:beta`) — the SINGLE source of truth for the iOS release recipe (the
+ * lane runs `ns prepare ios --release` → match signing → build_app → upload_to_testflight). CI is a thin
+ * wrapper that just calls this. Keeping the recipe in fastlane (not duplicated in TS) means local and CI
+ * run byte-identical steps.
+ *
+ * Knobs (all optional; mirror the workflow):
+ *   --server-url <url>   override loader:'server' serverUrl for this release (lab vs prod backend)
+ *   --env <name>         convenience: resolve serverUrl from cfg.envs[name] when present (see config)
+ *   --build-number <n>   set the store CFBundleVersion (sets APPWRAP_BUILD_NUMBER for the lane)
+ *
+ * Signing/ASC config is read from env by the lane (ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_P8 /
+ * MATCH_GIT_URL / MATCH_PASSWORD) — secrets never live in appwrap.config. */
+async function release(cwd: string, flags: Record<string, string>, positionals: string[]): Promise<void> {
+  const platform = positionals[0];
+  if (platform !== 'ios') {
+    console.error('Usage: appwrap release ios [--server-url <url>] [--env <name>] [--build-number <n>] [--config <path>] [--out native]\n' +
+      '  (Android: `appwrap build android --release --aab` then `fastlane android beta`.)');
+    process.exit(1);
+  }
+  const cfg = await loadConfig(cwd, flags);
+  const outDir = resolve(cwd, flags.out ?? 'native');
+  if (!existsSync(outDir)) {
+    console.error(`✖ Wrapper not found at ${outDir} — run \`appwrap init\` first (CI must \`init\`, native/ is gitignored).`);
+    process.exit(1);
+  }
+  const fastfile = join(outDir, 'fastlane', 'Fastfile');
+  if (!existsSync(fastfile)) {
+    console.error(`✖ No fastlane lane at ${fastfile} — run \`appwrap init\` to emit it (it carries the release recipe).`);
+    process.exit(1);
+  }
+
+  // Optional backend-url override for loader:'server' apps (lab vs prod). --server-url wins; else
+  // --env resolves from cfg.envs[name] when the consumer config declares it.
+  let serverUrl = flags['server-url'] || undefined;
+  if (!serverUrl && flags.env) {
+    serverUrl = (cfg as { envs?: Record<string, string> }).envs?.[flags.env];
+    if (!serverUrl) {
+      console.error(`✖ --env ${flags.env} given but cfg.envs[${flags.env}] is not set in the config.`);
+      process.exit(1);
+    }
+  }
+  const stampCfg = serverUrl ? { ...cfg, loader: 'server' as const, serverUrl } : cfg;
+
+  // Build number: explicit flag → APPWRAP_BUILD_NUMBER (which the CLI's stamping already honors and
+  // wins over the derived default). In CI the workflow sets APPWRAP_BUILD_NUMBER itself.
+  const env = { ...process.env };
+  if (flags['build-number']) {
+    if (!/^\d+$/.test(flags['build-number'])) {
+      console.error(`✖ --build-number must be a positive integer (got "${flags['build-number']}").`);
+      process.exit(1);
+    }
+    env.APPWRAP_BUILD_NUMBER = flags['build-number'];
+  }
+
+  // Re-stamp config + copy the latest PWA into native/ so the lane archives current sources. (The lane
+  // also runs `ns prepare ios --release`; sync here makes the wrapper config/PWA authoritative first.)
+  await sync(cwd, flags);
+  if (serverUrl) {
+    stampShellConfig(outDir, stampCfg);
+    console.log(`✓ Release loader → ${serverUrl}${flags.env ? ` (env: ${flags.env})` : ''}`);
+  }
+
+  console.log(`▶ fastlane ios beta  (cwd: ${outDir}/fastlane → native/)${env.APPWRAP_BUILD_NUMBER ? `  build #${env.APPWRAP_BUILD_NUMBER}` : ''}`);
+  try {
+    execFileSync('fastlane', ['ios', 'beta'], { cwd: outDir, stdio: 'inherit', env });
+  } catch {
+    console.error('\n✖ TestFlight release failed. Common causes:\n' +
+      '  • Missing ASC/match env: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 (base64), MATCH_GIT_URL, MATCH_PASSWORD.\n' +
+      '  • Certs/profiles not seeded — run `fastlane match appstore` once against MATCH_GIT_URL.\n' +
+      '  • CFBundleVersion already used for this marketing version → pass a higher --build-number.');
+    process.exit(1);
+  }
+  console.log('✓ Uploaded to TestFlight (App Store Connect processing — check the build list / wait for the email).');
 }
 
 interface AppleTeam { teamId: string; name: string; email?: string; paid: boolean }
@@ -1712,13 +1794,17 @@ async function main(): Promise<void> {
     case 'deploy':
       await deploy(cwd, flags, positionals);
       break;
+    case 'release':
+      await release(cwd, flags, positionals);
+      break;
     case 'logs':
       await logs(cwd, flags, positionals);
       break;
     default:
-      console.log('Usage: appwrap <init|sync|dev|build|deploy|logs> [--config <path>] [--out native]\n' +
+      console.log('Usage: appwrap <init|sync|dev|build|deploy|release|logs> [--config <path>] [--out native]\n' +
         '  config: appwrap.config.ts (preferred) → .js → appwrap.json\n' +
         '  build <ios|android> [--release] [--aab]   deploy ios [--device <id|name>] [--no-launch]\n' +
+        '  release ios [--server-url <url>] [--env <name>] [--build-number <n>]  (build+sign+upload to TestFlight)\n' +
         '  logs ios [--once] [--native]   dev [--url <url> | --port <p>]');
       process.exit(command ? 1 : 0);
   }
