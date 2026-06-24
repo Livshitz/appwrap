@@ -525,6 +525,20 @@ function stampTeamId(outDir: string, cfg: AppwrapConfig, ctx?: { cwd: string; co
   writeFileSync(xcconfig, src);
 }
 
+/** Stamp TARGETED_DEVICE_FAMILY into build.xcconfig from cfg.targetedDevices. `'iphone'` → `1`
+ * (iPhone-only → UIDeviceFamily=[1], so the App Store doesn't require iPad screenshots);
+ * `'universal'`/unset → `1,2` (NativeScript's default). Idempotent: replaces any prior value. */
+function stampDeviceFamily(outDir: string, cfg: AppwrapConfig): void {
+  const xcconfig = join(outDir, 'App_Resources/iOS/build.xcconfig');
+  if (!existsSync(xcconfig)) return;
+  const value = cfg.targetedDevices === 'iphone' ? '1' : '1,2';
+  let src = readFileSync(xcconfig, 'utf8');
+  src = /TARGETED_DEVICE_FAMILY\s*=/.test(src)
+    ? src.replace(/TARGETED_DEVICE_FAMILY\s*=\s*[^;\n]*;?/, `TARGETED_DEVICE_FAMILY = ${value};`)
+    : src + `\nTARGETED_DEVICE_FAMILY = ${value};\n`;
+  writeFileSync(xcconfig, src);
+}
+
 /** Wire a StoreKit config file for LOCAL iOS IAP testing (no App Store Connect needed).
  * NativeScript copies App_Resources/iOS/* into the generated project and adds it as a file
  * reference — but it never points the scheme at it, so StoreKit has no catalog. We (1) drop the
@@ -1036,6 +1050,7 @@ function regenerateCore(cwd: string, outDir: string, cfg: AppwrapConfig, opts: {
   stampNativeScriptConfig(outDir, cfg);
   stampIOSDisplayName(outDir, cfg, req);
   stampTeamId(outDir, cfg, { cwd, configPath: resolveConfigPath(cwd, opts.flags ?? {}) });
+  stampDeviceFamily(outDir, cfg);
   stampAndroidAppName(outDir, cfg, req);
   stampAndroidVersion(outDir, cfg);
   stampAndroidGradleDeps(outDir, req.androidGradleDeps);

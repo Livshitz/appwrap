@@ -34,6 +34,11 @@ export interface AppwrapConfig {
    * axis; `any` (default) leaves rotation free (sans upside-down on iOS). Stamped into iOS
    * `UISupportedInterfaceOrientations` (+ `~ipad`) and Android `android:screenOrientation`. */
   orientation?: 'portrait' | 'landscape' | 'any';
+  /** iOS targeted device family. `'iphone'` builds an iPhone-only app (TARGETED_DEVICE_FAMILY=1 →
+   * UIDeviceFamily=[1]); `'universal'` (default — NativeScript's behavior) targets iPhone + iPad,
+   * which makes the App Store require a full iPad screenshot set. Set `'iphone'` for a phone-only
+   * app to avoid that requirement. iOS-only; no-op on Android. */
+  targetedDevices?: 'iphone' | 'universal';
   /** Android only (experimental). When true, the WebView draws genuinely edge-to-edge UNDER the
    * transparent system bars (NS `androidOverflowEdge='dont-apply'`) and the real safe-area insets
    * are injected as `--saie-*` CSS vars + native `env(safe-area-inset-*)`, so a multi-theme PWA
