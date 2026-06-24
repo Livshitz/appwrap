@@ -131,6 +131,9 @@ iOS `UISupportedInterfaceOrientations` (+ the `~ipad` variant) and Android `andr
 safe areas) at boot — distinct from `backgroundColor`, which paints the page/splash. **Both fall back to
 the PWA `manifest.json`** (`orientation` — `*-primary`/`*-secondary` normalize to the axis — and
 `theme_color`) when absent (config > manifest > default).
+`targetedDevices` (`iphone` | `universal`, default `universal`) sets the iOS device family —
+`iphone` stamps `TARGETED_DEVICE_FAMILY=1` (`UIDeviceFamily=[1]`) so a phone-only app isn't forced
+to supply an iPad screenshot set at App Store submission; `universal` keeps NativeScript's iPhone+iPad default.
 `urlScheme` registers a deep-link scheme (`hellowrap://…` → `kit.lifecycle.onDeepLink`).
 `modules` (optional) is an opt-in capability allow-list — **present** → only the listed capabilities
 (plus always-on core) are advertised, permissioned, and compiled into the shell, so an app that
