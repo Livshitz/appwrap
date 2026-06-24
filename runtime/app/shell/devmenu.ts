@@ -17,28 +17,52 @@ export function startDevMenu(): void {
   else if (isAndroid) startAndroidShake();
 }
 
-// ── shake detection (total acceleration magnitude in g incl. gravity, debounced) ──
-const SHAKE_G = 1.8; // spike vs. ~1g rest
+// ── shake detection — deliberate, robust against incidental motion (walking, bumps) ──
+// A real "shake to open" is a sustained back-and-forth: several HARD spikes, close together, that
+// REVERSE direction each time. Walking/jostle produces occasional same-direction spikes with gaps —
+// so we require (a) a high threshold, (b) direction reversal between consecutive spikes, and (c) a
+// short inter-spike gap that RESETS the count if you pause. The bar is a firm wrist-shake, not a step.
+const SHAKE_G = 2.3; // hard spike vs. ~1g rest (was 1.8 — too low, walking cleared it)
+const SHAKE_SPIKES = 4; // direction-reversing spikes needed (≈2 full back-and-forth shakes)
+const SHAKE_GAP_MS = 400; // max gap between spikes; a longer pause resets the streak
+const MENU_DEBOUNCE_MS = 1500; // don't re-open right after a menu
 let shakeMm: CMMotionManager | null = null; // hold a ref so CoreMotion isn't GC'd
-let firstSpikeAt = 0;
 let spikes = 0;
+let lastSpikeAt = 0;
+let lastSpikeDir = 0; // sign of the dominant axis at the last spike; reversal = real shake
 let lastMenuAt = 0;
 
-function onAccelMagnitude(g: number): void {
+/** @param g total accel magnitude in g (rest ≈ 1)
+ *  @param dir sign (+1/-1) of the dominant-axis acceleration — used to detect back-and-forth reversal */
+function onAccelMagnitude(g: number, dir: number): void {
   if (g < SHAKE_G) return;
   const now = Date.now();
-  if (now - lastMenuAt < 1500) return; // don't re-open right after a menu
-  if (now - firstSpikeAt > 800) {
-    firstSpikeAt = now; // start a fresh window
+  if (now - lastMenuAt < MENU_DEBOUNCE_MS) return;
+  // A spike that's too soon after the last counts as the SAME thrust, not a new one — ignore it so a
+  // single hard jolt's ringing doesn't rack up the count.
+  if (now - lastSpikeAt < 80) return;
+  // Reset the streak unless this spike continues a fast, direction-reversing sequence.
+  if (now - lastSpikeAt > SHAKE_GAP_MS || dir === lastSpikeDir) {
     spikes = 1;
-    return;
+  } else {
+    spikes++;
   }
-  if (++spikes >= 2) {
+  lastSpikeAt = now;
+  lastSpikeDir = dir;
+  if (spikes >= SHAKE_SPIKES) {
     spikes = 0;
-    firstSpikeAt = 0;
+    lastSpikeAt = 0;
+    lastSpikeDir = 0;
     lastMenuAt = now;
     void showDevMenu();
   }
+}
+
+/** Sign of the largest-magnitude component — the axis the shake is thrusting along. */
+function dominantDir(x: number, y: number, z: number): number {
+  const ax = Math.abs(x), ay = Math.abs(y), az = Math.abs(z);
+  const v = ax >= ay && ax >= az ? x : ay >= az ? y : z;
+  return v >= 0 ? 1 : -1;
 }
 
 function startIOSShake(): void {
@@ -52,10 +76,12 @@ function startIOSShake(): void {
   setInterval(() => {
     const m = mm.deviceMotion;
     if (!m) return; // first sample not ready
-    const x = m.userAcceleration.x + m.gravity.x; // total accel in g (rest ≈ 1)
-    const y = m.userAcceleration.y + m.gravity.y;
-    const z = m.userAcceleration.z + m.gravity.z;
-    onAccelMagnitude(Math.sqrt(x * x + y * y + z * z));
+    const ux = m.userAcceleration.x, uy = m.userAcceleration.y, uz = m.userAcceleration.z;
+    const x = ux + m.gravity.x; // total accel in g (rest ≈ 1) — magnitude includes gravity
+    const y = uy + m.gravity.y;
+    const z = uz + m.gravity.z;
+    // Direction from gravity-free userAcceleration (gravity is constant → would mask the back-and-forth).
+    onAccelMagnitude(Math.sqrt(x * x + y * y + z * z), dominantDir(ux, uy, uz));
   }, 100);
 }
 
@@ -66,11 +92,19 @@ function startAndroidShake(): void {
   const accel = sm.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER);
   if (!accel) return;
   const G = 9.80665;
+  // Low-pass gravity estimate so we can derive gravity-free direction (mirrors iOS userAcceleration);
+  // the raw accelerometer includes gravity, which is constant and would mask the back-and-forth.
+  const grav = [0, 0, 0];
+  const alpha = 0.8;
   const listener = new android.hardware.SensorEventListener({
     onAccuracyChanged() {},
     onSensorChanged(e: android.hardware.SensorEvent) {
       const v = e.values;
-      onAccelMagnitude(Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) / G);
+      grav[0] = alpha * grav[0] + (1 - alpha) * v[0];
+      grav[1] = alpha * grav[1] + (1 - alpha) * v[1];
+      grav[2] = alpha * grav[2] + (1 - alpha) * v[2];
+      const lx = v[0] - grav[0], ly = v[1] - grav[1], lz = v[2] - grav[2]; // linear (gravity-free)
+      onAccelMagnitude(Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) / G, dominantDir(lx, ly, lz));
     },
   });
   sm.registerListener(listener, accel, android.hardware.SensorManager.SENSOR_DELAY_UI);
