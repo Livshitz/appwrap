@@ -431,8 +431,9 @@ bun test packages/                                  # kit unit tests
       sends `SHA256(nonce)` to Apple and returns the raw nonce + `identityToken`/`authorizationCode`/
       first-auth `user{name,email}` for Firebase `signInWithCredential('apple.com', { idToken, rawNonce })`;
       user-dismiss resolves `{ cancelled: true }`. CLI stamps `com.apple.developer.applesignin` only when
-      active. Android/web honest `none` + `UNSUPPORTED` (no native Apple SDK). Compiles clean; the native
-      sheet + token round-trip is device-gated (not yet device-verified)
+      active (signs only on a paid team — the free personal team can't hold the capability). Android/web
+      honest `none` + `UNSUPPORTED` (no native Apple SDK). Device-verified on iPhone 13 Pro Max: native
+      sheet → real Apple `identityToken` + raw nonce + first-auth email, dismiss without freeze
 - [x] `speech` (TTS + STT) — opt-in module, ONE `kit.speech` with TWO honest capabilities:
       `capability` (synthesis) + `recognitionCapability` (transcription). iOS `AVSpeechSynthesizer` +
       `SFSpeechRecognizer`/`AVAudioEngine`; Android `TextToSpeech` + `SpeechRecognizer` (plain Java —

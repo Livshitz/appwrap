@@ -104,9 +104,11 @@ class AppleSignInDelegate extends NSObject implements ASAuthorizationControllerD
  * iOS-only: the capability is gated `ios:true`/`android:false`, so the kit short-circuits off iOS
  * before reaching the bridge. The isIOS guard is defence-in-depth.
  *
- * DEVICE-UNVERIFIED (compile-verified-only this session): the ASAuthorization sheet + token round-trip
- * cannot be exercised on this environment's USB dev-sideload without an interactive Apple ID. The FFI
- * selectors are verified against @nativescript/types-ios. Same honesty bar as oauth/tracking.
+ * DEVICE-VERIFIED (iPhone 13 Pro Max, 2026-06-24, hello-pwa under paid team RDYDSWE9RB): the native
+ * ASAuthorization sheet presented, returned a real Apple-signed identityToken (JWT) + the raw nonce +
+ * first-auth user email, and dismissed without freezing (recoverAfterNativeSurface held). The
+ * com.apple.developer.applesignin entitlement signs only on a paid team — the free personal team can't
+ * hold the Sign-in-with-Apple capability (same class as push aps-environment).
  */
 export function registerAppleSignInHandlers(): void {
   if (!isIOS) return;
