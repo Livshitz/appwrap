@@ -80,7 +80,25 @@ def appwrap_archive_and_sign_ios
   api_key
 end
 
+# Restore the login keychain as the system default and drop fastlane's temp keychain. `setup_ci`/`match`
+# create `fastlane_tmp_keychain` and point the default keychain at it; if a lane dies mid-run before
+# fastlane's own teardown, that stray keychain is left as the DEFAULT — so macOS (com.apple.iCloudHelper
+# etc.) keeps prompting for its password forever. CI runners are ephemeral so this is a no-op there;
+# locally it prevents the recurring keychain prompt. Best-effort: never fail the lane on cleanup.
+def appwrap_keychain_cleanup
+  login = File.expand_path('~/Library/Keychains/login.keychain-db')
+  return unless File.exist?(login)
+  sh("security default-keychain -s '#{login}'", error_callback: ->(_) {})
+  sh('security delete-keychain ~/Library/Keychains/fastlane_tmp_keychain-db 2>/dev/null || true',
+     error_callback: ->(_) {})
+rescue StandardError => e
+  UI.message("keychain cleanup skipped: #{e}")
+end
+
 platform :ios do
+  after_all { appwrap_keychain_cleanup }
+  error { |_lane, _exception| appwrap_keychain_cleanup }
+
   desc 'Build the NativeScript wrapper and upload to TestFlight'
   lane :beta do
     api_key = appwrap_archive_and_sign_ios
