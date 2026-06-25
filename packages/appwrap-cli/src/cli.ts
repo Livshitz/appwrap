@@ -1231,11 +1231,18 @@ async function build(cwd: string, flags: Record<string, string>, positionals: st
  *   --build-number <n>   set the store CFBundleVersion (sets APPWRAP_BUILD_NUMBER for the lane)
  *
  * Signing/ASC config is read from env by the lane (ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_P8 /
- * MATCH_GIT_URL / MATCH_PASSWORD) — secrets never live in appwrap.config. */
-async function release(cwd: string, flags: Record<string, string>, positionals: string[]): Promise<void> {
+ * MATCH_GIT_URL / MATCH_PASSWORD) — secrets never live in appwrap.config.
+ *
+ * `appwrap submit ios` reuses this same body with `lane: 'release'` → fastlane `:release`
+ * (`upload_to_app_store`): a binary-only App Store production promote. Metadata/screenshots stay in
+ * ASC; pass `--submit-for-review` to also submit the build for review. */
+async function release(cwd: string, flags: Record<string, string>, positionals: string[], lane: 'beta' | 'release' = 'beta'): Promise<void> {
+  const submit = lane === 'release';
+  const cmd = submit ? 'submit' : 'release';
   const platform = positionals[0];
   if (platform !== 'ios') {
-    console.error('Usage: appwrap release ios [--server-url <url>] [--env <name>] [--build-number <n>] [--config <path>] [--out native]\n' +
+    console.error(`Usage: appwrap ${cmd} ios [--server-url <url>] [--env <name>] [--build-number <n>]` +
+      (submit ? ' [--submit-for-review]' : '') + ' [--config <path>] [--out native]\n' +
       '  (Android: `appwrap build android --release --aab` then `fastlane android beta`.)');
     process.exit(1);
   }
@@ -1274,26 +1281,31 @@ async function release(cwd: string, flags: Record<string, string>, positionals: 
     process.exit(1);
   }
   const env = { ...process.env };
+  // `submit ios --submit-for-review` → also submit the binary for App Store review (the lane defaults
+  // to a safe binary-only promote). The flag is boolean (presence = '' via parseArgs).
+  if (submit && 'submit-for-review' in flags) env.APPWRAP_SUBMIT_FOR_REVIEW = 'true';
 
   // Re-stamp config + copy the latest PWA into native/ so the lane archives current sources. (The lane
   // also runs `ns prepare ios --release`; sync here makes the wrapper config/PWA authoritative first.)
   await sync(cwd, flags);
   if (serverUrl) {
     stampShellConfig(outDir, stampCfg);
-    console.log(`✓ Release loader → ${serverUrl}${flags.env ? ` (env: ${flags.env})` : ''}`);
+    console.log(`✓ ${submit ? 'Submit' : 'Release'} loader → ${serverUrl}${flags.env ? ` (env: ${flags.env})` : ''}`);
   }
 
-  console.log(`▶ fastlane ios beta  (cwd: ${outDir}/fastlane → native/)${env.APPWRAP_BUILD_NUMBER ? `  build #${env.APPWRAP_BUILD_NUMBER}` : ''}`);
+  console.log(`▶ fastlane ios ${lane}  (cwd: ${outDir}/fastlane → native/)${env.APPWRAP_BUILD_NUMBER ? `  build #${env.APPWRAP_BUILD_NUMBER}` : ''}`);
   try {
-    execFileSync('fastlane', ['ios', 'beta'], { cwd: outDir, stdio: 'inherit', env });
+    execFileSync('fastlane', ['ios', lane], { cwd: outDir, stdio: 'inherit', env });
   } catch {
-    console.error('\n✖ TestFlight release failed. Common causes:\n' +
+    console.error(`\n✖ ${submit ? 'App Store submit' : 'TestFlight release'} failed. Common causes:\n` +
       '  • Missing ASC/match env: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 (base64), MATCH_GIT_URL, MATCH_PASSWORD.\n' +
       '  • Certs/profiles not seeded — run `fastlane match appstore` once against MATCH_GIT_URL.\n' +
       '  • CFBundleVersion already used for this marketing version → pass a higher --build-number.');
     process.exit(1);
   }
-  console.log('✓ Uploaded to TestFlight (App Store Connect processing — check the build list / wait for the email).');
+  console.log(submit
+    ? `✓ Binary promoted to the App Store (production)${env.APPWRAP_SUBMIT_FOR_REVIEW === 'true' ? ' and submitted for review' : ' — submit for review in App Store Connect (or pass --submit-for-review)'}.`
+    : '✓ Uploaded to TestFlight (App Store Connect processing — check the build list / wait for the email).');
 }
 
 interface AppleTeam { teamId: string; name: string; email?: string; paid: boolean }
@@ -1833,16 +1845,20 @@ async function main(): Promise<void> {
       await deploy(cwd, flags, positionals);
       break;
     case 'release':
-      await release(cwd, flags, positionals);
+      await release(cwd, flags, positionals, 'beta');
+      break;
+    case 'submit':
+      await release(cwd, flags, positionals, 'release');
       break;
     case 'logs':
       await logs(cwd, flags, positionals);
       break;
     default:
-      console.log('Usage: appwrap <init|sync|dev|build|deploy|release|logs> [--config <path>] [--out native]\n' +
+      console.log('Usage: appwrap <init|sync|dev|build|deploy|release|submit|logs> [--config <path>] [--out native]\n' +
         '  config: appwrap.config.ts (preferred) → .js → appwrap.json\n' +
         '  build <ios|android> [--release] [--aab]   deploy ios [--device <id|name>] [--no-launch]\n' +
         '  release ios [--server-url <url>] [--env <name>] [--build-number <n>]  (build+sign+upload to TestFlight)\n' +
+        '  submit ios [--build-number <n>] [--submit-for-review]  (promote the binary to the App Store; metadata stays in ASC)\n' +
         '  logs ios [--once] [--native]   dev [--url <url> | --port <p>]');
       process.exit(command ? 1 : 0);
   }

@@ -36,44 +36,54 @@ def appwrap_prepare_ios
   end
 end
 
+# Shared archive-and-sign sequence for BOTH the TestFlight (:beta) and App Store (:release) lanes.
+# Returns the ASC API-key object so each lane can reuse it for its final upload step — the lanes
+# differ ONLY in that final step (upload_to_testflight vs upload_to_app_store). Keep the recipe here,
+# not duplicated per-lane.
+def appwrap_archive_and_sign_ios
+  setup_ci # on CI: provisions a temporary unlocked keychain so codesign can use the match cert
+
+  api_key = app_store_connect_api_key(
+    key_id: ENV['ASC_KEY_ID'],
+    issuer_id: ENV['ASC_ISSUER_ID'],
+    key_content: ENV['ASC_KEY_P8'],
+    is_key_content_base64: true
+  )
+
+  # readonly: certs/profiles must be seeded once via `fastlane match appstore` (see workflow header).
+  match(type: 'appstore', readonly: true, app_identifier: APP_ID,
+        git_url: ENV['MATCH_GIT_URL'], api_key: api_key)
+
+  # NativeScript prepares the Xcode project inside the wrapper dir (native/ = parent of fastlane/).
+  # Wrapped to sanitize the gem env so the system `pod` can find CocoaPods (see appwrap_prepare_ios).
+  appwrap_prepare_ios
+
+  # NS defaults the project to automatic signing → archive can't find a profile. Pin manual signing
+  # to the match-provided App Store profile (name exported by match into ENV).
+  profile = ENV["sigh_#{APP_ID}_appstore_profile-name"] || "match AppStore #{APP_ID}"
+  update_code_signing_settings(
+    use_automatic_signing: false,
+    path: 'platforms/ios/native.xcodeproj',
+    team_id: TEAM_ID,
+    bundle_identifier: APP_ID,
+    code_sign_identity: 'Apple Distribution',
+    profile_name: profile
+  )
+
+  build_app(
+    workspace: 'platforms/ios/native.xcworkspace',
+    scheme: 'native',
+    export_method: 'app-store',
+    export_options: { provisioningProfiles: { APP_ID => profile } }
+  )
+
+  api_key
+end
+
 platform :ios do
   desc 'Build the NativeScript wrapper and upload to TestFlight'
   lane :beta do
-    setup_ci # on CI: provisions a temporary unlocked keychain so codesign can use the match cert
-
-    api_key = app_store_connect_api_key(
-      key_id: ENV['ASC_KEY_ID'],
-      issuer_id: ENV['ASC_ISSUER_ID'],
-      key_content: ENV['ASC_KEY_P8'],
-      is_key_content_base64: true
-    )
-
-    # readonly: certs/profiles must be seeded once via `fastlane match appstore` (see workflow header).
-    match(type: 'appstore', readonly: true, app_identifier: APP_ID,
-          git_url: ENV['MATCH_GIT_URL'], api_key: api_key)
-
-    # NativeScript prepares the Xcode project inside the wrapper dir (native/ = parent of fastlane/).
-    # Wrapped to sanitize the gem env so the system `pod` can find CocoaPods (see appwrap_prepare_ios).
-    appwrap_prepare_ios
-
-    # NS defaults the project to automatic signing → archive can't find a profile. Pin manual signing
-    # to the match-provided App Store profile (name exported by match into ENV).
-    profile = ENV["sigh_#{APP_ID}_appstore_profile-name"] || "match AppStore #{APP_ID}"
-    update_code_signing_settings(
-      use_automatic_signing: false,
-      path: 'platforms/ios/native.xcodeproj',
-      team_id: TEAM_ID,
-      bundle_identifier: APP_ID,
-      code_sign_identity: 'Apple Distribution',
-      profile_name: profile
-    )
-
-    build_app(
-      workspace: 'platforms/ios/native.xcworkspace',
-      scheme: 'native',
-      export_method: 'app-store',
-      export_options: { provisioningProfiles: { APP_ID => profile } }
-    )
+    api_key = appwrap_archive_and_sign_ios
 
     # Wait for App Store Connect to finish processing and FAIL if it doesn't — Apple can accept the
     # upload yet silently drop the build (e.g. an out-of-range CFBundleVersion). skip:true hides that.
@@ -84,6 +94,26 @@ platform :ios do
     tf_wait_env = ENV['APPWRAP_TF_WAIT_TIMEOUT'].to_s.strip
     tf_wait_timeout = tf_wait_env.to_i > 0 ? tf_wait_env.to_i : 3600
     upload_to_testflight(api_key: api_key, skip_waiting_for_build_processing: false, wait_processing_timeout_duration: tf_wait_timeout)
+  end
+
+  desc 'Build the NativeScript wrapper and promote the binary to the App Store (production).'
+  lane :release do
+    api_key = appwrap_archive_and_sign_ios
+
+    # Binary-only promote: the listing/metadata/screenshots/IAP stay in App Store Connect — this lane
+    # only ships the signed binary. SAFE by default: no review submit, no automatic release, headless
+    # (force: true → no HTML preview). Set APPWRAP_SUBMIT_FOR_REVIEW=true to also submit for review.
+    # Guard BOTH unset (nil) and blank env the same way as APPWRAP_TF_WAIT_TIMEOUT above.
+    submit_for_review = ENV['APPWRAP_SUBMIT_FOR_REVIEW'].to_s.strip.downcase == 'true'
+    upload_to_app_store(
+      api_key: api_key,
+      submit_for_review: submit_for_review,
+      automatic_release: false,
+      skip_metadata: true,
+      skip_screenshots: true,
+      precheck_include_in_app_purchases: false,
+      force: true
+    )
   end
 end
 

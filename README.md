@@ -474,4 +474,7 @@ bun test packages/                                  # kit unit tests
       origin (`loader: 'file'` kept as a debug fallback in the config)
 - [x] icon + launch-screen generation from the PWA manifest (`sips`, zero deps)
 - [x] CI/CD templates — GH Actions (PR build + tag→TestFlight) + fastlane (match, ASC API key)
+      — `appwrap release ios` builds+signs+uploads to TestFlight; `appwrap submit ios` promotes the
+      binary to the App Store (production, binary-only — metadata stays in ASC; `--submit-for-review`
+      to also submit for review)
 - [ ] OTA updates
