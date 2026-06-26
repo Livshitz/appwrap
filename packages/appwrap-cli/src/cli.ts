@@ -28,6 +28,7 @@ import {
   resolveBuildNumber,
   stampAndroidOrientation,
   stampAndroidQueries,
+  stampAppBoundDomains,
   stampPlistBackgroundTasks,
   stampPlistOrientations,
   stampPrivacyTracking,
@@ -410,6 +411,7 @@ export const SHELL_CONFIG = {
   debugLog: ${JSON.stringify(cfg.debugLog ?? '*')},
   devMenu: ${JSON.stringify(cfg.devMenu ?? true)},
   neutralizeServiceWorker: ${JSON.stringify(cfg.neutralizeServiceWorker ?? true)},
+  appBoundDomains: ${JSON.stringify(cfg.appBoundDomains ?? [])},
   openNewWindowsInBrowser: ${JSON.stringify(cfg.openNewWindowsInBrowser ?? false)},
   pushIos: ${JSON.stringify(!!cfg.push?.enabled && cfg.push?.ios !== false)},
   pushAndroid: ${JSON.stringify(!!cfg.push?.enabled && cfg.push?.android !== false)},
@@ -447,6 +449,11 @@ function stampIOSDisplayName(outDir: string, cfg: AppwrapConfig, req: NativeReqs
   // strips the block — so it no-ops (and cleans up) when the module is inactive or the field is absent.
   const bgActive = req.activeOptionalGroups.includes('backgroundTask');
   src = stampPlistBackgroundTasks(src, bgActive ? cfg.backgroundTasks : undefined);
+
+  // iOS App-Bound Domains — gate for a WKWebView service worker (paired with
+  // limitsNavigationsToAppBoundDomains in the shell config). Idempotent both ways: empty/undefined
+  // strips the WKAppBoundDomains key, so it no-ops when the field is absent.
+  src = stampAppBoundDomains(src, cfg.appBoundDomains);
 
   // Permission usage strings + URL scheme + export-compliance — idempotent: strip stamped block, re-add
   src = src.replace(/\s*<!-- appwrap:begin -->[\s\S]*?<!-- appwrap:end -->/g, '');

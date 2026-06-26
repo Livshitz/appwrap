@@ -180,6 +180,10 @@ export class CustomWebView extends WebView {
     config.allowsPictureInPictureMediaPlayback = true;
     config.mediaTypesRequiringUserActionForPlayback = 0; // WKAudiovisualMediaTypeNone
     config.websiteDataStore = WKWebsiteDataStore.defaultDataStore();
+    // Apple's hard requirement for a service worker in a WKWebView: restrict navigation to the
+    // declared app-bound domains (also stamped to Info.plist WKAppBoundDomains). Only set when
+    // configured — otherwise the WebView stays unrestricted (default behavior).
+    if (SHELL_CONFIG.appBoundDomains?.length) config.limitsNavigationsToAppBoundDomains = true;
 
     // Env hints + framework globals (backend origin) + a getUserMedia guard for UNDECLARED capabilities
     // (must reject in JS before WebKit's native capture path — see mediaCaptureGuardJs) + native-feel

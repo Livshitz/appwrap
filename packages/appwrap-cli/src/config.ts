@@ -97,6 +97,15 @@ export interface AppwrapConfig {
    * for in-WebView web-push as a fallback. NOTE: keeping the SW is the only way to get web push; native
    * push is the separate `push` lane (APNs/FCM) and does NOT need a SW. */
   neutralizeServiceWorker?: boolean;
+  /** iOS App-Bound Domains — the hosts (no scheme, max 10 per Apple) the WebView may navigate to.
+   * Setting this stamps `WKAppBoundDomains` into Info.plist AND sets
+   * `WKWebViewConfiguration.limitsNavigationsToAppBoundDomains = true`, which is Apple's HARD
+   * requirement for a service worker to run inside a WKWebView. Pair with `neutralizeServiceWorker:false`
+   * to actually enable a SW (this flag is the iOS gate; Android's SW is a separate lane).
+   * TRADEOFF: `limitsNavigationsToAppBoundDomains` RESTRICTS the WebView to exactly these domains —
+   * any navigation/OAuth/redirect to another domain breaks. Only for single-origin apps. Empty/unset =
+   * no change to current behavior (no Info.plist key, no nav restriction). */
+  appBoundDomains?: string[];
   /** Hand navigations that LEAVE the app's own origin to the OS default browser (Safari / Chrome)
    * instead of replacing the shell WebView — so external links and `window.open(...)`/`target="_blank"`
    * behave like a regular native app (open in the system browser) rather than navigating away inside

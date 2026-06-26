@@ -40,6 +40,11 @@ export const SHELL_CONFIG = {
    * fights the app:// handler / remote-update detection). On by default; set false to opt out and keep
    * the SW (e.g. for in-WebView web-push). See `serviceWorkerGuardJs`. */
   neutralizeServiceWorker: true,
+  /** iOS App-Bound Domains (from `appwrap.json.appBoundDomains`). When non-empty the shell sets
+   * `WKWebViewConfiguration.limitsNavigationsToAppBoundDomains = true` — Apple's gate for running a
+   * service worker in the WKWebView (the same hosts are stamped to Info.plist `WKAppBoundDomains`).
+   * RESTRICTS the WebView to these domains, so only for single-origin apps. Empty = no restriction. */
+  appBoundDomains: [] as string[],
   /** Open external-origin navigations (`<a>` to another origin, incl. `target="_blank"`, and
    * `window.open(...)`) in the OS default browser (Safari / Chrome) instead of inside the shell
    * WebView — regular-native-app behavior. Same-origin SPA navigation is untouched. Off by default.

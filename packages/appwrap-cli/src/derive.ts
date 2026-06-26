@@ -229,6 +229,27 @@ export function stampPlistBackgroundTasks(src: string, ids: string[] | undefined
 }
 
 /**
+ * Stamp (or strip) `WKAppBoundDomains` in an Info.plist string — Apple's gate for running a service
+ * worker inside a WKWebView (paired with `limitsNavigationsToAppBoundDomains` on the config). Pure +
+ * idempotent: rewrites an `appwrap:appbound` marker block (added before `</dict>`), so a re-sync never
+ * duplicates. `domains` empty/undefined → strips the block entirely (no key = current behavior). Apple
+ * caps the array at 10; we stamp what's given. Mirrors `stampPlistOrientations` (pure string transform).
+ */
+export function stampAppBoundDomains(src: string, domains: string[] | undefined): string {
+  src = src.replace(/\s*<!-- appwrap:appbound -->[\s\S]*?<!-- \/appwrap:appbound -->/g, '');
+  const list = (domains ?? []).filter(Boolean);
+  if (list.length) {
+    const items = list.map((d) => `    <string>${d}</string>`).join('\n');
+    const block =
+      `  <!-- appwrap:appbound -->\n` +
+      `  <key>WKAppBoundDomains</key>\n  <array>\n${items}\n  </array>\n` +
+      `  <!-- /appwrap:appbound -->`;
+    src = src.replace(/<\/dict>\s*<\/plist>\s*$/, `${block}\n</dict>\n</plist>\n`);
+  }
+  return src;
+}
+
+/**
  * Stamp the App Tracking Transparency declarations into PrivacyInfo.xcprivacy. Rewrites the two
  * tracking keys IN PLACE (the template ships them, so we never restructure the doc — we only flip
  * values), keeping the required-reason API declarations the store-readiness manifest carries intact.

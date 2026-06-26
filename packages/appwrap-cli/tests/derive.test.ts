@@ -3,6 +3,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
   androidScreenOrientation,
+  stampAppBoundDomains,
   applyBuildNumberFlag,
   deriveBuild,
   iosOrientations,
@@ -376,6 +377,46 @@ describe('stampPlistBackgroundTasks — headless background tasks (operates on t
     expect(out).toContain('<string>fetch</string>');
     expect(out).toContain('<string>processing</string>');
     expect(out.match(/<key>UIBackgroundModes<\/key>/g)).toHaveLength(1);
+  });
+});
+
+describe('stampAppBoundDomains — WKAppBoundDomains gate (operates on the REAL Info.plist template)', () => {
+  const TEMPLATE = join(import.meta.dir, '../../../runtime/App_Resources/iOS/Info.plist');
+  const PLIST = readFileSync(TEMPLATE, 'utf8');
+
+  test('empty/undefined → no WKAppBoundDomains key, round-trips to the original template', () => {
+    expect(stampAppBoundDomains(PLIST, undefined)).toBe(PLIST);
+    expect(stampAppBoundDomains(PLIST, [])).toBe(PLIST);
+    expect(PLIST).not.toContain('WKAppBoundDomains');
+  });
+
+  test('adds the key + array, single valid <dict>/<plist>', () => {
+    const out = stampAppBoundDomains(PLIST, ['shadowstep.bodify.bod.ee']);
+    expect(out).toContain('<key>WKAppBoundDomains</key>');
+    expect(out).toContain('<string>shadowstep.bodify.bod.ee</string>');
+    expect(out.match(/<\/plist>/g)).toHaveLength(1);
+    expect(out.match(/<key>WKAppBoundDomains<\/key>/g)).toHaveLength(1);
+  });
+
+  test('multiple domains stamped', () => {
+    const out = stampAppBoundDomains(PLIST, ['a.example.com', 'b.example.com']);
+    expect(out).toContain('<string>a.example.com</string>');
+    expect(out).toContain('<string>b.example.com</string>');
+  });
+
+  test('idempotent replace — re-stamping same domains is a fixed point; new domains replace old', () => {
+    const once = stampAppBoundDomains(PLIST, ['a.example.com']);
+    const twice = stampAppBoundDomains(once, ['a.example.com']);
+    expect(twice).toBe(once);
+    expect(twice.match(/<key>WKAppBoundDomains<\/key>/g)).toHaveLength(1);
+    const replaced = stampAppBoundDomains(once, ['b.example.com']);
+    expect(replaced).toContain('<string>b.example.com</string>');
+    expect(replaced).not.toContain('<string>a.example.com</string>');
+  });
+
+  test('stamp then clear round-trips back to the original template', () => {
+    const stamped = stampAppBoundDomains(PLIST, ['a.example.com']);
+    expect(stampAppBoundDomains(stamped, undefined)).toBe(PLIST);
   });
 });
 
