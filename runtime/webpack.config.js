@@ -3,6 +3,14 @@ const CopyWebpackPlugin = require('copy-webpack-plugin');
 const path = require('path');
 
 module.exports = (env) => {
+  // Force CommonJS bundle output. @nativescript/ios >=9 flips @nativescript/webpack to ESM (.mjs),
+  // which makes @nativescript/core install its polyfills EAGERLY at bundle eval (matchMedia /
+  // media-query-list) — and that eager install crashes on launch ("Cannot read properties of
+  // undefined" in installPolyfills→matchMedia), white-screening/killing the app at startup. CommonJS
+  // uses the lazy polyfill path (the long-stable NS mode). appwrap runtime uses no import.meta, so
+  // CommonJS is safe. Remove only once the NS-core ESM eager-install bug is fixed upstream.
+  env = env || {};
+  env.commonjs = true;
   webpack.init(env);
 
   webpack.chainWebpack((config) => {
