@@ -1,7 +1,7 @@
 {
   "name": "appwrap-shell",
   "main": "app/app.ts",
-  "version": "0.32.0",
+  "version": "0.32.1",
   "private": true,
   "scripts": {
     "dev:ios": "ns run ios",
@@ -17,5 +17,11 @@
     "@nativescript/webpack": "~5.0.25",
     "copy-webpack-plugin": "^13.0.1",
     "typescript": "~5.4.0"
-  }
+  },
+  "//trustedDependencies": "bun blocks lifecycle scripts by default; allow the NativeScript toolchain's (parcel/watcher native build for live-reload, core-js postinstall) so `appwrap run` behaves like npm on every platform.",
+  "trustedDependencies": [
+    "@nativescript/core",
+    "@parcel/watcher",
+    "core-js-pure"
+  ]
 }

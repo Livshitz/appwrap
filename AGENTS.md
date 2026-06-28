@@ -15,7 +15,7 @@ Take any PWA and ship it as a real native app — the same web app, hosted in a 
 ## Prerequisites
 
 - **[Bun](https://bun.sh)** — appwrap is bun-first (`curl -fsSL https://bun.sh/install | bash`).
-- **NativeScript CLI** — for any simulator/device/store build (`init`/`sync` don't need it): `npm i -g nativescript`, then `ns doctor ios` / `ns doctor android` to verify the toolchain.
+- **NativeScript CLI** — for any simulator/device/store build (`init`/`sync` don't need it): `bun add -g nativescript`, then `ns doctor ios` / `ns doctor android` to verify the toolchain.
 - **iOS** — Xcode + Command Line Tools (`xcode-select --install`; provides `xcodebuild` + `devicectl`) and CocoaPods (`brew install cocoapods`). A physical-device install needs the device registered to your Apple team — set `teamId` in `appwrap.config.ts`.
 - **Android** — Android Studio + JDK 17, with `ANDROID_HOME` exported.
 
@@ -25,7 +25,7 @@ Take any PWA and ship it as a real native app — the same web app, hosted in a 
 bun add -d @livx.cc/appwrap @livx.cc/native-kit
 bun run build                 # your build → dist/
 bunx appwrap init             # generate native/ (gitignore it)
-cd native && npm install && ns run ios     # or: ns run android
+bunx appwrap run ios          # compile + boot in the simulator (or: run android)
 ```
 
 Describe the app in a typed config (preferred — autocomplete + type-checking via `defineConfig`):

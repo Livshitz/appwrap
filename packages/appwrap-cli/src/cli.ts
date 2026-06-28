@@ -387,6 +387,24 @@ async function loadConfig(cwd: string, flags: Record<string, string>): Promise<A
       process.exit(1);
     }
   }
+
+  // loader:'server' bakes serverUrl into the shell and loads it via NSURL/WKWebView. A scheme-less
+  // value (e.g. "agf.circlesup.com") produces an unusable URL — the app silently fails to load (or
+  // shows a stale page) with no error. Normalize to https:// when no scheme is present, and fail loud
+  // on a genuinely malformed URL rather than shipping a broken build.
+  if (cfg.serverUrl) {
+    const raw = String(cfg.serverUrl).trim();
+    const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    try {
+      new URL(withScheme);
+    } catch {
+      console.error(`✖ invalid serverUrl: ${JSON.stringify(cfg.serverUrl)} — must be an absolute http(s) URL (e.g. https://app.example.com)`);
+      process.exit(1);
+    }
+    if (withScheme !== raw) console.log(`  serverUrl ← ${withScheme} (added https:// — scheme was missing)`);
+    cfg.serverUrl = withScheme;
+  }
+
   return cfg;
 }
 
@@ -907,6 +925,9 @@ function copyPwa(cwd: string, outDir: string, cfg: AppwrapConfig): void {
   // www so it isn't shipped.
   if (cfg.loader === 'server') {
     rmSync(www, { recursive: true, force: true });
+    // Loudly surface the live URL the app will load — the single most deploy-critical value for a
+    // server loader (easy to get wrong via env/scheme/cache). Visible in every sync/deploy output.
+    console.log(`  🌐 serverUrl → ${cfg.serverUrl}  (the app loads this live; verify it before shipping)`);
     console.log('  www  ← skipped (loader:server loads serverUrl)');
     return;
   }
@@ -1104,7 +1125,7 @@ async function init(cwd: string, flags: Record<string, string>): Promise<void> {
   writeFileSync(join(outDir, '.gitignore'), 'node_modules/\nplatforms/\nhooks/\n');
   applyOverrides(cwd, outDir, cfg); // escape hatch — last, so custom native code wins
   stampVersionManifest(outDir, cfg); // provenance — also marks the dir appwrap-managed
-  console.log(`✓ Wrapper ready (generated — gitignore \`${flags.out ?? 'native'}/\`, regenerate with \`appwrap init\`).\n  cd ${flags.out ?? 'native'} && npm install && ns run ios`);
+  console.log(`✓ Wrapper ready (generated — gitignore \`${flags.out ?? 'native'}/\`, regenerate with \`appwrap init\`).\n  Run it: appwrap run ios   (or: appwrap run android)`);
 }
 
 // `sync` = the same regenerate as `init`, minus the first-time guard/scaffold. It is a TRUE refresh from
@@ -1162,7 +1183,41 @@ async function dev(cwd: string, flags: Record<string, string>): Promise<void> {
     console.log(`  ⚠ Android: serve the dev server over HTTP, not HTTPS — the WebView can't bypass wss TLS`);
     console.log(`    errors, so HMR won't live-reload on-device (the page still loads). iOS is fine with HTTPS.`);
   }
-  console.log(`  Then: cd ${flags.out ?? 'native'} && ns run ios   (revert with \`appwrap sync\`)`);
+  console.log(`  Then: appwrap run ios   (revert with \`appwrap sync\`)`);
+}
+
+/** Ensure the wrapper's deps are installed (bun — honoring the repo's package manager, so callers
+ * never `cd native` or remember the tool) then exec an `ns` subcommand in it with inherited stdio.
+ * The single place appwrap shells out to ns for the interactive run loop. Best-effort bun: we only
+ * install when node_modules is absent — if ns later reinstalls on package.json drift it uses npm
+ * (NativeScript has no bun package-manager mode), so trustedDependencies in the shell package.json
+ * is what keeps the bun-installed tree behaving like npm's (parcel/watcher, ns CLI hooks). */
+function runNs(outDir: string, args: string[]): void {
+  if (!existsSync(join(outDir, 'node_modules'))) {
+    console.log(`▶ bun install  (cwd: ${outDir})`);
+    execFileSync('bun', ['install'], { cwd: outDir, stdio: 'inherit' });
+  }
+  console.log(`▶ ns ${args.join(' ')}  (cwd: ${outDir})`);
+  execFileSync('ns', args, { cwd: outDir, stdio: 'inherit' });
+}
+
+/** `appwrap run <ios|android> [--device <id|name>]` — compile + boot the wrapper in a
+ * simulator/emulator (or named device) with live reload: the appwrap-managed replacement for raw
+ * `ns run`, driven from the PWA project root with deps auto-installed. Like `ns run`, it reflects
+ * whatever loader is currently stamped (`init`/`sync`/`dev`/`build` own stamping) and does NOT
+ * re-stamp — so it won't clobber a `dev` loader. */
+async function run(cwd: string, flags: Record<string, string>, positionals: string[]): Promise<void> {
+  const platform = positionals[0];
+  if (platform !== 'ios' && platform !== 'android') {
+    console.error('Usage: appwrap run <ios|android> [--device <id|name>] [--out native]');
+    process.exit(1);
+  }
+  const outDir = resolve(cwd, flags.out ?? 'native');
+  if (!existsSync(outDir)) {
+    console.error(`✖ Wrapper not found at ${outDir} — run \`appwrap init\` first`);
+    process.exit(1);
+  }
+  runNs(outDir, ['run', platform, ...(flags.device ? ['--device', flags.device] : [])]);
 }
 
 /** `appwrap build <ios|android> [--release] [--aab]` — store-readiness build path. Re-stamps config,
@@ -1590,7 +1645,7 @@ function pickDevice(devices: DeviceInfo[], explicitId?: string): DeviceInfo {
 async function deploy(cwd: string, flags: Record<string, string>, positionals: string[]): Promise<void> {
   const platform = positionals[0];
   if (platform !== 'ios') {
-    console.error('Usage: appwrap deploy ios [--device <id|name>] [--no-launch]  (android: use `ns run android`)');
+    console.error('Usage: appwrap deploy ios [--device <id|name>] [--no-launch]  (android: use `appwrap run android`)');
     process.exit(1);
   }
   const cfg = await loadConfig(cwd, flags);
@@ -1845,6 +1900,9 @@ async function main(): Promise<void> {
     case 'dev':
       await dev(cwd, flags);
       break;
+    case 'run':
+      await run(cwd, flags, positionals);
+      break;
     case 'build':
       await build(cwd, flags, positionals);
       break;
@@ -1861,8 +1919,9 @@ async function main(): Promise<void> {
       await logs(cwd, flags, positionals);
       break;
     default:
-      console.log('Usage: appwrap <init|sync|dev|build|deploy|release|submit|logs> [--config <path>] [--out native]\n' +
+      console.log('Usage: appwrap <init|sync|dev|run|build|deploy|release|submit|logs> [--config <path>] [--out native]\n' +
         '  config: appwrap.config.ts (preferred) → .js → appwrap.json\n' +
+        '  run <ios|android> [--device <id|name>]    (compile + boot in a simulator/emulator, live reload)\n' +
         '  build <ios|android> [--release] [--aab]   deploy ios [--device <id|name>] [--no-launch]\n' +
         '  release ios [--server-url <url>] [--env <name>] [--build-number <n>]  (build+sign+upload to TestFlight)\n' +
         '  submit ios [--build-number <n>] [--submit-for-review]  (promote the binary to the App Store; metadata stays in ASC)\n' +

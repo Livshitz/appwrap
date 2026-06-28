@@ -3,7 +3,7 @@
 Isomorphic native-capabilities kit for PWAs — the **same API in the browser and inside an [appwrap](https://github.com/Livshitz/appwrap) native shell**. Zero dependencies.
 
 ```bash
-bun add @livx.cc/native-kit   # or: npm i @livx.cc/native-kit
+bun add @livx.cc/native-kit
 ```
 
 ```ts

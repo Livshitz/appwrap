@@ -26,7 +26,7 @@ Prefer to drive it yourself? → [Get started](#get-started--wrap-your-own-pwa).
 ## Requirements
 
 - **[Bun](https://bun.sh)** — appwrap is bun-first; the `appwrap` binary runs as TypeScript via bun. (`curl -fsSL https://bun.sh/install | bash`)
-- **NativeScript CLI** — required for any simulator/device/store build (`appwrap init` / `sync` work *without* it; `ns run`/`ns build` need it): `npm i -g nativescript`, then run `ns doctor ios` / `ns doctor android` to verify the toolchain and fix anything it flags.
+- **NativeScript CLI** — required for any simulator/device/store build (`appwrap init` / `sync` work *without* it; `ns run`/`ns build` need it): `bun add -g nativescript`, then run `ns doctor ios` / `ns doctor android` to verify the toolchain and fix anything it flags.
 - **iOS builds** — [Xcode](https://apps.apple.com/app/xcode/id497799835) + Command Line Tools (`xcode-select --install`; provides `xcodebuild` and `devicectl` for on-device installs) and **CocoaPods** (`brew install cocoapods`). A physical-device install also needs the device registered to your Apple team — set `teamId` in `appwrap.config.ts`.
 - **Android builds** — [Android Studio](https://developer.android.com/studio) + JDK 17, with `ANDROID_HOME` exported (e.g. `export ANDROID_HOME=$HOME/Library/Android/sdk`).
 
@@ -46,7 +46,7 @@ EOF
 # 3 · build your PWA, scaffold the native wrapper, run it
 bun run build                            # your existing build → dist/
 bunx @livx.cc/appwrap init                        # generates native/ from your config
-cd native && npm install && ns run ios   # or: ns run android
+bunx @livx.cc/appwrap run ios            # compile + boot in the simulator (or: run android)
 
 # iterate — rebuild the PWA and re-sync (fast path, no full regen)
 bunx @livx.cc/appwrap sync
@@ -70,7 +70,7 @@ bun install
 bun run build:hello
 cd examples/hello-pwa
 bun ../../packages/appwrap-cli/src/cli.ts init   # runs the CLI straight from source
-cd native && npm install && ns run ios
+bun ../../packages/appwrap-cli/src/cli.ts run ios
 
 # run it as a plain PWA in the browser instead:
 cd .. && bun run serve                           # http://localhost:5180
@@ -308,7 +308,7 @@ manifest + your overrides — so **gitignore `native/`** and regenerate it any t
 # upgrade the framework, then regenerate the shell — like `expo prebuild`
 bun update @livx.cc/native-kit @livx.cc/appwrap
 appwrap init        # idempotent: re-running regenerates an appwrap-managed wrapper in place
-cd native && npm install && ns run ios
+appwrap run ios
 ```
 
 - **`init` vs `sync`** — `init` (re)generates the whole shell; use it after a framework upgrade,
