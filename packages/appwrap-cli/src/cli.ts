@@ -1761,10 +1761,14 @@ async function deploy(cwd: string, flags: Record<string, string>, positionals: s
 
   // devicectl process-launch is also stuck when we fell back to usbmux — skip it; the user taps the icon.
   if (!('no-launch' in flags) && !installedViaUsbmux) {
-    console.log(`▶ launching ${cfg.id}`);
+    console.log(`▶ launching ${cfg.id} (terminating any running instance first)`);
     try {
+      // --terminate-existing: kill a suspended/running copy before launching, so the FRESHLY installed
+      // binary actually runs. Without it, iOS resumes the old process and you see stale config (e.g. an
+      // old serverUrl) despite a correct new build — masquerading as a build/cache bug. (A reinstall
+      // over the top does NOT replace a running process; this avoids the manual uninstall dance.)
       withUnlockRetry('Launch', () =>
-        execFileSync('xcrun', ['devicectl', 'device', 'process', 'launch', '--timeout', '25', '--device', device.id, cfg.id], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'pipe'] })
+        execFileSync('xcrun', ['devicectl', 'device', 'process', 'launch', '--terminate-existing', '--timeout', '25', '--device', device.id, cfg.id], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'pipe'] })
       );
     } catch {
       console.error('⚠ Launch failed (still locked after waiting). The app is installed — unlock and tap it, or re-run.');
