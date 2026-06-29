@@ -5,9 +5,10 @@ import { SHELL_BUILD, reloadWebView, getReportedWebVersion } from './handlers';
 
 /**
  * Shake-to-open developer menu (enabled in prod too, gated by `SHELL_CONFIG.devMenu`).
- * A shake raises a native action sheet → "App Info" shows non-sensitive diagnostics
- * (ids, versions, loader, remote host) including the running webapp's version vs. the
- * latest deployed — so you can tell at a glance whether the device got the update.
+ * A shake raises a native action sheet with: "App Info" — non-sensitive diagnostics (ids, versions,
+ * loader, remote host) including the running webapp's version vs. the latest deployed, so you can tell
+ * at a glance whether the device got the update; "Reload"; and "Toggle Debug" — a generic hook that
+ * dispatches the `appwrap:toggleDebug` DOM event so the web app can flip its OWN debug UI.
  * The web version status is reported via the always-on `app.reportWebVersion` handler
  * (in handlers.ts) — independent of this menu — and read here when the menu is shown.
  */
@@ -120,10 +121,11 @@ async function showDevMenu(): Promise<void> {
       title: SHELL_CONFIG.name,
       message: 'Developer menu',
       cancelButtonText: 'Cancel',
-      actions: ['App Info', 'Reload'],
+      actions: ['App Info', 'Reload', 'Toggle Debug'],
     });
     if (action === 'App Info') await showInfo();
     else if (action === 'Reload') reloadWebView();
+    else if (action === 'Toggle Debug') toggleWebDebug();
   } finally {
     menuOpen = false;
   }
@@ -150,6 +152,15 @@ async function showInfo(): Promise<void> {
   else if (webInfo.latest) lines.push('✓ Up to date');
 
   Dialogs.alert({ title: 'App Info', message: lines.join('\n'), okButtonText: 'Close' });
+}
+
+/** Generic dev hook: dispatch a DOM event the running web app can listen for to flip its OWN debug UI
+ * (`window.addEventListener('appwrap:toggleDebug', …)`). No-op for apps that don't listen — the shell
+ * has no app-specific debug state of its own, so it just relays the intent. */
+function toggleWebDebug(): void {
+  bridge
+    .evalJs("window.dispatchEvent(new CustomEvent('appwrap:toggleDebug'))")
+    .catch((e) => console.log('[appwrap] toggleDebug dispatch failed:', e));
 }
 
 /** Read the running page's embedded version directly from the WebView: `window.__APP_VERSION__`,
