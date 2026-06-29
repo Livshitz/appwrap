@@ -1711,13 +1711,19 @@ function pickDevice(devices: DeviceInfo[], explicitId?: string): DeviceInfo {
   return devices[idx];
 }
 
-/** `appwrap deploy ios [--device <id|name>] [--no-launch]` — build for device, auto-pick the
- * connected phone (USB or network; prompts if several), install + launch. Debug build (no
- * distribution signing) — for testing on your own device. Run the PWA build first (or via the script). */
+/** `appwrap deploy <ios|android> [--device <id|name>] [--no-launch]` — build for a device, auto-pick
+ * the connected phone (USB or network; prompts if several), install + launch. Debug build (no
+ * distribution signing) — for testing on your own device. Run the PWA build first (or via the script).
+ * iOS has a bespoke Debug-IPA path (below); Android delegates to `run` (NativeScript builds + installs
+ * + launches), so the `deploy <platform>` surface is symmetric across both. */
 async function deploy(cwd: string, flags: Record<string, string>, positionals: string[]): Promise<void> {
   const platform = positionals[0];
+  if (platform === 'android') {
+    // Aligned surface: `deploy android` == `run android` (Android's run already does build+install+launch).
+    return run(cwd, flags, positionals);
+  }
   if (platform !== 'ios') {
-    console.error('Usage: appwrap deploy ios [--device <id|name>] [--no-launch]  (android: use `appwrap run android`)');
+    console.error('Usage: appwrap deploy <ios|android> [--device <id|name>] [--no-launch]');
     process.exit(1);
   }
   const cfg = await loadConfig(cwd, flags);
@@ -1998,7 +2004,7 @@ async function main(): Promise<void> {
       console.log('Usage: appwrap <init|sync|dev|run|build|deploy|release|submit|logs> [--config <path>] [--out native]\n' +
         '  config: appwrap.config.ts (preferred) → .js → appwrap.json\n' +
         '  run <ios|android> [--device <id|name>]    (compile + boot in a simulator/emulator, live reload)\n' +
-        '  build <ios|android> [--release] [--aab]   deploy ios [--device <id|name>] [--no-launch]\n' +
+        '  build <ios|android> [--release] [--aab]   deploy <ios|android> [--device <id|name>] [--no-launch]\n' +
         '  release ios [--server-url <url>] [--env <name>] [--build-number <n>]  (build+sign+upload to TestFlight)\n' +
         '  submit ios [--build-number <n>] [--submit-for-review]  (promote the binary to the App Store; metadata stays in ASC)\n' +
         '  logs ios [--once] [--native]   dev [--url <url> | --port <p>]');
