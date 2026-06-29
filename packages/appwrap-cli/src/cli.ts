@@ -20,6 +20,7 @@ import type * as CapManifest from '../../../runtime/app/shell/capabilities.manif
 // Config shape lives in its own import-safe module so a `appwrap.config.ts` file can import the
 // type + `defineConfig` helper without pulling in (and running) the CLI dispatch.
 import type { AppwrapConfig } from './config';
+import { unknownConfigKeys } from './config';
 import {
   androidScreenOrientation,
   applyBuildNumberFlag,
@@ -376,6 +377,15 @@ async function loadConfig(cwd: string, flags: Record<string, string>): Promise<A
     process.exit(1);
   }
   const cfg = await readConfigFile(configPath);
+
+  // Warn (never fail) on keys this appwrap doesn't recognize. A config authored for a NEWER appwrap
+  // silently no-ops its unknown keys on an older install (e.g. `targetedDevices` before 0.39 → wrong
+  // device family, no error). Turn that silent no-op into a signal.
+  const stray = unknownConfigKeys(cfg as unknown as Record<string, unknown>);
+  if (stray.length) {
+    const ver = pkgVersion(resolve(import.meta.dir, '../package.json'));
+    for (const k of stray) console.warn(`⚠ appwrap: unrecognized config key '${k}' — ignored. If you expect it to apply, your installed @livx.cc/appwrap (${ver}) may predate it — upgrade.`);
+  }
 
   // Manifest as source: the appwrap config wins, the PWA manifest fills the gaps, template default last.
   // (DRY single-source — devs don't re-type identity already declared in the manifest.) See mergeManifest.

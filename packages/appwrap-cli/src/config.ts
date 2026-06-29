@@ -200,3 +200,24 @@ export interface AppwrapConfig {
 export function defineConfig(config: AppwrapConfig): AppwrapConfig {
   return config;
 }
+
+/**
+ * Top-level keys appwrap recognizes — KEEP IN SYNC with `AppwrapConfig` above (top-level only; nested
+ * keys like `push.ios` are not listed). Drives `unknownConfigKeys`, which warns (never fails) on stray
+ * keys at load time. The motivating bug: a config written for a NEWER appwrap silently no-ops its
+ * unknown keys on an OLDER installed version (e.g. `targetedDevices` before 0.39 → a universal build
+ * with no error, then an App Store rejection). A loud warning turns that silent no-op into a signal.
+ */
+export const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  'appBoundDomains', 'backendOrigin', 'backgroundColor', 'backgroundTasks', 'buildNumber', 'debug',
+  'debugLog', 'devMenu', 'edgeToEdge', 'entry', 'icon', 'id', 'loader', 'modules', 'name',
+  'neutralizeServiceWorker', 'openNewWindowsInBrowser', 'orientation', 'overrides', 'permissions',
+  'plugins', 'push', 'pwaDist', 'queryPackages', 'queryUrlSchemes', 'serverUrl', 'statusBarStyle',
+  'storekitConfig', 'targetedDevices', 'teamId', 'themeColor', 'trackingDomains', 'urlScheme',
+  'usesNonExemptEncryption', 'vendorPaths', 'version',
+]);
+
+/** Config keys appwrap doesn't recognize (pure — the caller decides how to surface them). */
+export function unknownConfigKeys(cfg: Record<string, unknown>): string[] {
+  return Object.keys(cfg).filter((k) => !KNOWN_CONFIG_KEYS.has(k));
+}
