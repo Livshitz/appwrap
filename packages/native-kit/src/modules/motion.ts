@@ -19,11 +19,12 @@ export class MotionModule {
     return this.kit.capability('motion');
   }
 
-  /** Stream motion samples (~10Hz); resolves an unsubscribe once streaming starts. */
-  async watch(cb: (sample: MotionSample) => void): Promise<Unsubscribe> {
+  /** Stream motion samples; resolves an unsubscribe once streaming starts. `opts.hz` sets the emit
+   * rate (default 10, clamped 5–60 native-side) — bump it for crisp tilt (e.g. a game asks 60). */
+  async watch(cb: (sample: MotionSample) => void, opts?: { hz?: number }): Promise<Unsubscribe> {
     const off = this.kit.on('motion.data', (p) => cb(p as MotionSample));
     try {
-      await this.kit.invoke('motion.start');
+      await this.kit.invoke('motion.start', opts?.hz ? { hz: opts.hz } : undefined);
     } catch (e) {
       off();
       throw e;
