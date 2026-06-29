@@ -172,13 +172,18 @@ export function registerParityHandlers(): void {
   let motionManager: CMMotionManager | null = null;
   let motionTimer: ReturnType<typeof setInterval> | null = null;
 
-  bridge.register('motion.start', () => {
+  bridge.register('motion.start', (p: { hz?: number } = {}) => {
     if (!isIOS) throw iosOnly();
     if (motionManager) return;
+    // Emit rate is configurable (default 10 Hz; games can ask up to 60 for crisp tilt). Both the JS
+    // poll cadence AND the CoreMotion sample interval are set — the poll is the actual emit rate, so
+    // bumping deviceMotionUpdateInterval alone wouldn't help. Higher Hz = more bridge traffic/battery.
+    const hz = Math.max(5, Math.min(60, p.hz || 10));
+    const ms = 1000 / hz;
     const mm = CMMotionManager.new();
     if (!mm.deviceMotionAvailable) throw err('UNSUPPORTED', 'No motion sensors (simulator?)');
     motionManager = mm;
-    mm.deviceMotionUpdateInterval = 0.1;
+    mm.deviceMotionUpdateInterval = ms / 1000;
     mm.startDeviceMotionUpdates();
     const G = 9.81; // CoreMotion reports in g — kit contract is m/s²
     motionTimer = setInterval(() => {
@@ -192,7 +197,7 @@ export function registerParityHandlers(): void {
         ry: m.rotationRate.y,
         rz: m.rotationRate.z,
       });
-    }, 100);
+    }, ms);
   });
 
   bridge.register('motion.stop', () => {

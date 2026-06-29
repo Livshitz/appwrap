@@ -256,8 +256,12 @@ export function registerAndroidHandlers(): void {
   let motionListener: android.hardware.SensorEventListener | null = null;
   const lastMotion = { ax: 0, ay: 0, az: 0, rx: 0, ry: 0, rz: 0 };
 
-  bridge.register('motion.start', () => {
+  bridge.register('motion.start', (p: { hz?: number } = {}) => {
     if (motionListener) return; // already streaming
+    // Emit rate configurable (default 10 Hz; up to 60 for crisp tilt). SENSOR_DELAY_GAME feeds ~50 Hz;
+    // we throttle the EMIT to the requested rate. Higher Hz = more bridge traffic/battery.
+    const hz = Math.max(5, Math.min(60, p.hz || 10));
+    const minMs = 1000 / hz;
     const sm = sensorManager();
     const accel = sm.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER);
     if (!accel) throw err('UNSUPPORTED', 'No accelerometer on this device');
@@ -274,12 +278,13 @@ export function registerAndroidHandlers(): void {
           lastMotion.rx = v[0]; lastMotion.ry = v[1]; lastMotion.rz = v[2];
         }
         const now = java.lang.System.currentTimeMillis();
-        if (now - last < 100) return; // ~10Hz, matches iOS
+        if (now - last < minMs) return; // throttle emit to the requested Hz
         last = now;
         bridge.emit('motion.data', { ...lastMotion });
       },
     });
-    const RATE = android.hardware.SensorManager.SENSOR_DELAY_GAME;
+    const RATE = hz > 30 ? android.hardware.SensorManager.SENSOR_DELAY_FASTEST
+                         : android.hardware.SensorManager.SENSOR_DELAY_GAME;
     sm.registerListener(motionListener, accel, RATE);
     if (gyro) sm.registerListener(motionListener, gyro, RATE);
   });
