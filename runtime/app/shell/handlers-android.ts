@@ -272,8 +272,11 @@ export function registerAndroidHandlers(): void {
       onSensorChanged(event: android.hardware.SensorEvent) {
         const v = event.values;
         if (event.sensor.getType() === android.hardware.Sensor.TYPE_ACCELEROMETER) {
-          // Android accelerometer already reports m/s² incl. gravity — kit contract matches.
-          lastMotion.ax = v[0]; lastMotion.ay = v[1]; lastMotion.az = v[2];
+          // NEGATE to match the kit/iOS convention: iOS CoreMotion delivers the gravity-DIRECTION
+          // vector (rest az ≈ -9.81), whereas Android's accelerometer reports the REACTION force
+          // (rest az ≈ +9.81) — the exact negation. Without this, gravity-vector tilt is inverted
+          // on every axis vs iOS (confirmed on-device: steering reversed). m/s² units already match.
+          lastMotion.ax = -v[0]; lastMotion.ay = -v[1]; lastMotion.az = -v[2];
         } else {
           lastMotion.rx = v[0]; lastMotion.ry = v[1]; lastMotion.rz = v[2];
         }
@@ -283,10 +286,14 @@ export function registerAndroidHandlers(): void {
         bridge.emit('motion.data', { ...lastMotion });
       },
     });
-    const RATE = hz > 30 ? android.hardware.SensorManager.SENSOR_DELAY_FASTEST
-                         : android.hardware.SensorManager.SENSOR_DELAY_GAME;
-    sm.registerListener(motionListener, accel, RATE);
-    if (gyro) sm.registerListener(motionListener, gyro, RATE);
+    // Register at the REQUESTED rate as an explicit sampling period (µs), NOT SENSOR_DELAY_FASTEST:
+    // on Android 12+ (API 31) any rate faster than 200 Hz — including FASTEST (0 µs) — throws
+    // SecurityException unless the app declares HIGH_SAMPLING_RATE_SENSORS. Our hz is capped at 60
+    // (≈16.7 ms), comfortably under 200 Hz, so a plain period needs no extra permission. Floor at
+    // 5 ms (200 Hz) to stay below that threshold even if the cap ever rises.
+    const periodUs = Math.max(5000, Math.round(1_000_000 / hz));
+    sm.registerListener(motionListener, accel, periodUs);
+    if (gyro) sm.registerListener(motionListener, gyro, periodUs);
   });
 
   bridge.register('motion.stop', () => {

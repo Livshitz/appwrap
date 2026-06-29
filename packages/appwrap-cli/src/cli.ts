@@ -878,16 +878,36 @@ function generateIcons(cwd: string, outDir: string, cfg: AppwrapConfig): void {
 
 /** Tint the iOS launch screen to the configured background color. */
 function stampLaunchScreen(outDir: string, cfg: AppwrapConfig): void {
-  const storyboard = join(outDir, 'App_Resources/iOS/LaunchScreen.storyboard');
-  if (!existsSync(storyboard) || !cfg.backgroundColor) return;
+  if (!cfg.backgroundColor) return;
   const hex = cfg.backgroundColor.replace('#', '');
   if (!/^[0-9a-fA-F]{6}$/.test(hex)) return;
-  const ch = (i: number) => (parseInt(hex.slice(i, i + 2), 16) / 255).toFixed(4);
-  const src = readFileSync(storyboard, 'utf8').replace(
-    /<color key="backgroundColor"[^/]*\/>/g,
-    `<color key="backgroundColor" red="${ch(0)}" green="${ch(2)}" blue="${ch(4)}" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>`
-  );
-  writeFileSync(storyboard, src);
+
+  // iOS: tint the storyboard launch background.
+  const storyboard = join(outDir, 'App_Resources/iOS/LaunchScreen.storyboard');
+  if (existsSync(storyboard)) {
+    const ch = (i: number) => (parseInt(hex.slice(i, i + 2), 16) / 255).toFixed(4);
+    const src = readFileSync(storyboard, 'utf8').replace(
+      /<color key="backgroundColor"[^/]*\/>/g,
+      `<color key="backgroundColor" red="${ch(0)}" green="${ch(2)}" blue="${ch(4)}" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>`
+    );
+    writeFileSync(storyboard, src);
+  }
+
+  // Android: replace the default NativeScript splash (background bitmap + NS logo) with a solid fill
+  // of the app's backgroundColor — parity with the iOS solid launch screen, and no NS branding flash.
+  const splash = join(outDir, 'App_Resources/Android/src/main/res/drawable-nodpi/splash_screen.xml');
+  if (existsSync(splash)) {
+    writeFileSync(splash,
+      `<?xml version="1.0" encoding="utf-8"?>\n` +
+      `<layer-list xmlns:android="http://schemas.android.com/apk/res/android" android:gravity="fill">\n` +
+      `    <item>\n` +
+      `        <shape android:shape="rectangle">\n` +
+      `            <solid android:color="#${hex.toUpperCase()}" />\n` +
+      `        </shape>\n` +
+      `    </item>\n` +
+      `</layer-list>\n`
+    );
+  }
 }
 
 const VERSION_FILE = '.appwrap-version';
@@ -1211,11 +1231,33 @@ function runNs(outDir: string, args: string[]): void {
   execFileSync('ns', args, { cwd: outDir, stdio: 'inherit' });
 }
 
+/** Read the loader currently stamped into the generated shell (app/shell/config.ts). Used to
+ * preserve an ACTIVE `dev` loader across `run` (see run()'s footgun note). Returns null if the
+ * generated config is absent/unreadable — the caller then falls back to the appwrap config. */
+function readStampedLoader(outDir: string): { loader: string; serverUrl: string; debug: boolean } | null {
+  try {
+    const src = readFileSync(join(outDir, 'app/shell/config.ts'), 'utf8');
+    const loader = src.match(/loader:\s*"([^"]*)"/)?.[1];
+    if (!loader) return null;
+    return {
+      loader,
+      serverUrl: src.match(/serverUrl:\s*"([^"]*)"/)?.[1] ?? '',
+      debug: /debug:\s*true/.test(src),
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** `appwrap run <ios|android> [--device <id|name>]` — compile + boot the wrapper in a
  * simulator/emulator (or named device) with live reload: the appwrap-managed replacement for raw
- * `ns run`, driven from the PWA project root with deps auto-installed. Like `ns run`, it reflects
- * whatever loader is currently stamped (`init`/`sync`/`dev`/`build` own stamping) and does NOT
- * re-stamp — so it won't clobber a `dev` loader. */
+ * `ns run`, driven from the PWA project root with deps auto-installed.
+ *
+ * Refreshes the generated wrapper from the source template + PWA first (same regenerateCore as
+ * `sync`/`build`) so framework `runtime/` edits and PWA rebuilds actually reach the device — `run`
+ * used to skip this and silently ship the STALE generated shell (the run-without-sync footgun). An
+ * ACTIVE `dev` loader (loader:'server', stamped by `appwrap dev`) is preserved so dev→run
+ * live-reload isn't clobbered back to the bundled loader. */
 async function run(cwd: string, flags: Record<string, string>, positionals: string[]): Promise<void> {
   const platform = positionals[0];
   if (platform !== 'ios' && platform !== 'android') {
@@ -1227,6 +1269,17 @@ async function run(cwd: string, flags: Record<string, string>, positionals: stri
     console.error(`✖ Wrapper not found at ${outDir} — run \`appwrap init\` first`);
     process.exit(1);
   }
+  const cfg = await loadConfig(cwd, flags);
+  const stamped = readStampedLoader(outDir);
+  const devActive = stamped?.loader === 'server';
+  // Preserve a live dev loader; otherwise regenerate from the appwrap config (bundled loader).
+  const effectiveCfg = devActive
+    ? { ...cfg, loader: 'server' as const, serverUrl: stamped!.serverUrl, debug: stamped!.debug }
+    : cfg;
+  regenerateCore(cwd, outDir, effectiveCfg, { flags });
+  applyOverrides(cwd, outDir, effectiveCfg); // overrides win last — same order as sync (else run wipes them)
+  stampVersionManifest(outDir, effectiveCfg); // keep the managed-marker / provenance current
+  console.log(devActive ? `✓ Refreshed wrapper (preserved dev loader → ${stamped!.serverUrl})` : '✓ Refreshed wrapper from template + PWA');
   runNs(outDir, ['run', platform, ...(flags.device ? ['--device', flags.device] : [])]);
 }
 
