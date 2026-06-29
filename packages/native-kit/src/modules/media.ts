@@ -1,4 +1,5 @@
 import type { NativeKit } from '../core/NativeKit';
+import type { Unsubscribe } from '../core/types';
 
 /**
  * Live media bridge — mic / camera / speaker. The streams themselves are plain
@@ -8,6 +9,14 @@ import type { NativeKit } from '../core/NativeKit';
  * plus `configureAudio()` which tunes the native audio session (iOS).
  */
 export type AudioMode = 'playback' | 'playAndRecord' | 'voiceChat' | 'default';
+
+/** Whether the device would actually play game/media sound right now, plus the media volume (0–1). */
+export interface AudioState {
+  /** True when output is effectively silenced — iOS mute switch OR zero media volume; Android: zero media volume. */
+  silent: boolean;
+  /** Media output volume, 0–1 (iOS AVAudioSession.outputVolume / Android STREAM_MUSIC). */
+  volume: number;
+}
 
 export interface MediaDeviceLite {
   kind: MediaDeviceKind;
@@ -66,6 +75,36 @@ export class MediaModule {
   configureAudio(mode: AudioMode = 'playback'): Promise<void> {
     if (this.capability !== 'native') return Promise.resolve();
     return this.kit.invoke('media.configureAudio', { mode });
+  }
+
+  /**
+   * Watch whether sound would actually be heard — for reflecting the OS mute/volume state in UI
+   * (e.g. disabling an in-app speaker toggle while the device is silenced). Fires `cb` with the
+   * current {@link AudioState} immediately and again whenever it changes (~1s granularity). Native
+   * only — on web (no OS silent concept) this is a no-op returning a noop unsubscribe.
+   */
+  async watchAudio(cb: (state: AudioState) => void): Promise<Unsubscribe> {
+    // Wait for the handshake so `platform` is resolved (it defaults to 'web' until ready — callers
+    // often subscribe during early app setup, before the bridge handshake lands).
+    await this.kit.ready().catch(() => {});
+    // Gate on PLATFORM, not the 'media' capability: the audio-state handler is always registered in
+    // the native shell, so this works even for apps that don't opt into the full media module. Only
+    // the browser (no OS silent/volume concept) is a genuine no-op.
+    if (this.kit.platform === 'web') return () => {};
+    const off = this.kit.on('media.audioState', (p) => cb(p as AudioState));
+    try {
+      await this.kit.invoke('media.audioWatch.start');
+    } catch (e) {
+      off();
+      throw e;
+    }
+    let stopped = false;
+    return () => {
+      if (stopped) return;
+      stopped = true;
+      off();
+      this.kit.invoke('media.audioWatch.stop').catch((e) => console.warn('[native-kit] audioWatch.stop failed', e));
+    };
   }
 
   /** Stop every track on a stream — convenience to release the camera/mic LED. */
