@@ -60,86 +60,97 @@ function receiptFor(productId: string, transactionId?: string) {
 // In-flight resolvers, keyed so the single queue observer can route callbacks.
 const purchaseWaiters = new Map<string, { resolve: (r: any) => void; reject: (e: any) => void }>();
 let restoreWaiter: { receipts: any[]; resolve: (r: any[]) => void; reject: (e: any) => void } | null = null;
-const productRequests = new Set<{ request: SKProductsRequest; delegate: ProductsDelegate }>(); // keep strong refs to in-flight requests + delegates
-let observer: PaymentObserver | null = null;
+const productRequests = new Set<{ request: SKProductsRequest; delegate: any }>(); // keep strong refs to in-flight requests + delegates
+let observer: any = null;
 
-// SKPaymentQueue transaction observer. State (purchaseWaiters/restoreWaiter) lives at module
-// scope, so the delegate needs no instance fields.
-@NativeClass()
-class PaymentObserver extends NSObject implements SKPaymentTransactionObserver {
-  static ObjCProtocols = [SKPaymentTransactionObserver];
-  static new(): PaymentObserver {
-    return <PaymentObserver>super.new();
-  }
-  paymentQueueUpdatedTransactions(queue: SKPaymentQueue, transactions: NSArray<SKPaymentTransaction>): void {
-    const n = transactions.count;
-    for (let i = 0; i < n; i++) {
-      const t = transactions.objectAtIndex(i);
-      const pid = String(t.payment.productIdentifier);
-      switch (t.transactionState) {
-        case STATE.Purchased: {
-          queue.finishTransaction(t);
-          const r = receiptFor(pid, String(t.transactionIdentifier ?? ''));
-          bridge.emit('billing.transaction', r);
-          purchaseWaiters.get(pid)?.resolve(r);
-          purchaseWaiters.delete(pid);
-          break;
+// iOS-only StoreKit delegates. Defined lazily inside an isIOS-gated factory (mirrors banner.ts) so the
+// shared module can instantiate on Android — NSObject/SK* are iOS globals, and a top-level
+// `extends NSObject` would evaluate at ES-module load and crash the Android shell.
+// any: module-level holders for runtime-built ObjC subclasses; each class BODY stays fully typed.
+let PaymentObserver: any, ProductsDelegate: any;
+function ensureIosDelegates(): void {
+  if (!isIOS || PaymentObserver) return;
+
+  // SKPaymentQueue transaction observer. State (purchaseWaiters/restoreWaiter) lives at module
+  // scope, so the delegate needs no instance fields.
+  @NativeClass()
+  class PaymentObserverImpl extends NSObject implements SKPaymentTransactionObserver {
+    static ObjCProtocols = [SKPaymentTransactionObserver];
+    static new(): PaymentObserverImpl {
+      return <PaymentObserverImpl>super.new();
+    }
+    paymentQueueUpdatedTransactions(queue: SKPaymentQueue, transactions: NSArray<SKPaymentTransaction>): void {
+      const n = transactions.count;
+      for (let i = 0; i < n; i++) {
+        const t = transactions.objectAtIndex(i);
+        const pid = String(t.payment.productIdentifier);
+        switch (t.transactionState) {
+          case STATE.Purchased: {
+            queue.finishTransaction(t);
+            const r = receiptFor(pid, String(t.transactionIdentifier ?? ''));
+            bridge.emit('billing.transaction', r);
+            purchaseWaiters.get(pid)?.resolve(r);
+            purchaseWaiters.delete(pid);
+            break;
+          }
+          case STATE.Restored: {
+            queue.finishTransaction(t);
+            const r = receiptFor(pid, String(t.transactionIdentifier ?? ''));
+            if (restoreWaiter) restoreWaiter.receipts.push(r);
+            bridge.emit('billing.transaction', r);
+            break;
+          }
+          case STATE.Failed: {
+            queue.finishTransaction(t);
+            const cancelled = t.error && t.error.code === SK_ERR_CANCELLED;
+            const e = err(cancelled ? 'DENIED' : 'NATIVE_ERROR', t.error?.localizedDescription ?? 'Purchase failed');
+            purchaseWaiters.get(pid)?.reject(e);
+            purchaseWaiters.delete(pid);
+            break;
+          }
+          // Purchasing / Deferred: nothing to do.
         }
-        case STATE.Restored: {
-          queue.finishTransaction(t);
-          const r = receiptFor(pid, String(t.transactionIdentifier ?? ''));
-          if (restoreWaiter) restoreWaiter.receipts.push(r);
-          bridge.emit('billing.transaction', r);
-          break;
-        }
-        case STATE.Failed: {
-          queue.finishTransaction(t);
-          const cancelled = t.error && t.error.code === SK_ERR_CANCELLED;
-          const e = err(cancelled ? 'DENIED' : 'NATIVE_ERROR', t.error?.localizedDescription ?? 'Purchase failed');
-          purchaseWaiters.get(pid)?.reject(e);
-          purchaseWaiters.delete(pid);
-          break;
-        }
-        // Purchasing / Deferred: nothing to do.
       }
     }
+    paymentQueueRestoreCompletedTransactionsFinished(_queue: SKPaymentQueue): void {
+      restoreWaiter?.resolve(restoreWaiter.receipts);
+      restoreWaiter = null;
+    }
+    paymentQueueRestoreCompletedTransactionsFailedWithError(_queue: SKPaymentQueue, error: NSError): void {
+      restoreWaiter?.reject(err('NATIVE_ERROR', error?.localizedDescription ?? 'Restore failed'));
+      restoreWaiter = null;
+    }
   }
-  paymentQueueRestoreCompletedTransactionsFinished(_queue: SKPaymentQueue): void {
-    restoreWaiter?.resolve(restoreWaiter.receipts);
-    restoreWaiter = null;
+  PaymentObserver = PaymentObserverImpl;
+
+  // SKProductsRequest delegate. Closure-captured state (resolve/reject + the strong-ref holder)
+  // is held as instance fields, assigned after new().
+  @NativeClass()
+  class ProductsDelegateImpl extends NSObject implements SKProductsRequestDelegate {
+    static ObjCProtocols = [SKProductsRequestDelegate];
+    onResolve?: (products: SKProduct[]) => void;
+    onReject?: (e: Error) => void;
+    holder?: { request: SKProductsRequest; delegate: any };
+    static new(): ProductsDelegateImpl {
+      return <ProductsDelegateImpl>super.new();
+    }
+    productsRequestDidReceiveResponse(_request: SKProductsRequest, response: SKProductsResponse): void {
+      const out: SKProduct[] = [];
+      const products = response.products;
+      for (let i = 0; i < products.count; i++) out.push(products.objectAtIndex(i));
+      if (this.holder) productRequests.delete(this.holder);
+      this.onResolve?.(out);
+    }
+    requestDidFailWithError(_request: SKRequest, error: NSError): void {
+      if (this.holder) productRequests.delete(this.holder);
+      this.onReject?.(err('NATIVE_ERROR', error?.localizedDescription ?? 'Products request failed'));
+    }
   }
-  paymentQueueRestoreCompletedTransactionsFailedWithError(_queue: SKPaymentQueue, error: NSError): void {
-    restoreWaiter?.reject(err('NATIVE_ERROR', error?.localizedDescription ?? 'Restore failed'));
-    restoreWaiter = null;
-  }
+  ProductsDelegate = ProductsDelegateImpl;
 }
 
-function buildObserver(): PaymentObserver {
+function buildObserver(): any {
   return PaymentObserver.new();
-}
-
-// SKProductsRequest delegate. Closure-captured state (resolve/reject + the strong-ref holder)
-// is held as instance fields, assigned after new().
-@NativeClass()
-class ProductsDelegate extends NSObject implements SKProductsRequestDelegate {
-  static ObjCProtocols = [SKProductsRequestDelegate];
-  onResolve?: (products: SKProduct[]) => void;
-  onReject?: (e: Error) => void;
-  holder?: { request: SKProductsRequest; delegate: ProductsDelegate };
-  static new(): ProductsDelegate {
-    return <ProductsDelegate>super.new();
-  }
-  productsRequestDidReceiveResponse(_request: SKProductsRequest, response: SKProductsResponse): void {
-    const out: SKProduct[] = [];
-    const products = response.products;
-    for (let i = 0; i < products.count; i++) out.push(products.objectAtIndex(i));
-    if (this.holder) productRequests.delete(this.holder);
-    this.onResolve?.(out);
-  }
-  requestDidFailWithError(_request: SKRequest, error: NSError): void {
-    if (this.holder) productRequests.delete(this.holder);
-    this.onReject?.(err('NATIVE_ERROR', error?.localizedDescription ?? 'Products request failed'));
-  }
 }
 
 /** One SKProductsRequest → resolves the raw SKProduct objects (used by both products + purchase). */
@@ -161,6 +172,7 @@ function requestSKProducts(ids: string[]): Promise<SKProduct[]> {
 export function registerBillingHandlers(): void {
   if (!isIOS) return; // Android billing is a separate, not-yet-wired handler
 
+  ensureIosDelegates();
   observer = buildObserver();
   SKPaymentQueue.defaultQueue().addTransactionObserver(observer);
 

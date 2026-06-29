@@ -9,14 +9,24 @@ const err = (code: string, message: string) => Object.assign(new Error(message),
 // (orphaned tracking window / throttled renderer), so recover from its didFinish. Strong-ref the
 // delegate while the browser is up (ARC would otherwise free it). Mirrors the OAuth delegate pattern.
 let activeSafariDelegate: NSObject | null = null;
-@NativeClass()
-class SafariDelegate extends NSObject implements SFSafariViewControllerDelegate {
-  static ObjCProtocols = [SFSafariViewControllerDelegate];
-  static new(): SafariDelegate { return <SafariDelegate>super.new(); }
-  safariViewControllerDidFinish(_controller: SFSafariViewController): void {
-    activeSafariDelegate = null;
-    bridge.getWebView()?.recoverAfterNativeSurface();
+// Built lazily INSIDE an iOS-only path (mirrors banner.ts): NSObject/SF* are iOS globals and this file
+// is imported on Android too, so a top-level `@NativeClass extends NSObject` would crash at module load.
+// any: runtime-built ObjC subclass holder; the class BODY stays fully typed.
+let SafariDelegate: any;
+function safariDelegateClass(): any {
+  if (!SafariDelegate) {
+    @NativeClass()
+    class SafariDelegateImpl extends NSObject implements SFSafariViewControllerDelegate {
+      static ObjCProtocols = [SFSafariViewControllerDelegate];
+      static new(): SafariDelegateImpl { return <SafariDelegateImpl>super.new(); }
+      safariViewControllerDidFinish(_controller: SFSafariViewController): void {
+        activeSafariDelegate = null;
+        bridge.getWebView()?.recoverAfterNativeSurface();
+      }
+    }
+    SafariDelegate = SafariDelegateImpl;
   }
+  return SafariDelegate;
 }
 
 /** Running on a simulator/emulator? (mirrors env.ts detection; kept local to avoid a cross-import). */
@@ -204,7 +214,7 @@ export function registerSystemHandlers(): void {
       Utils.dispatchToMainThread(() => {
         const vc = SFSafariViewController.alloc().initWithURL(NSURL.URLWithString(target));
         if (toolbarColor) vc.preferredControlTintColor = new Color(String(toolbarColor)).ios;
-        activeSafariDelegate = SafariDelegate.new();
+        activeSafariDelegate = safariDelegateClass().new();
         vc.delegate = activeSafariDelegate as SFSafariViewControllerDelegate;
         Utils.ios.getRootViewController().presentViewControllerAnimatedCompletion(vc, true, null);
       });

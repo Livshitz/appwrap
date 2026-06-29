@@ -20,77 +20,89 @@ function readContact(contact: CNContact): { name: string; phones: string[]; emai
   };
 }
 
-// CLLocationManager delegate for the persistent geo.watch stream. Callbacks are wired via instance
-// fields so the closure-captured behavior of the old (NSObject).extend(...) is preserved.
-@NativeClass()
-class GeoWatchDelegate extends NSObject implements CLLocationManagerDelegate {
-  static ObjCProtocols = [CLLocationManagerDelegate];
-  static new(): GeoWatchDelegate {
-    return <GeoWatchDelegate>super.new();
-  }
-  locationManagerDidUpdateLocations(_m: CLLocationManager, locations: NSArray<CLLocation>): void {
-    const loc = locations.lastObject;
-    if (!loc) return;
-    bridge.emit('geo.position', {
-      lat: loc.coordinate.latitude,
-      lng: loc.coordinate.longitude,
-      accuracy: loc.horizontalAccuracy,
-    });
-  }
-  locationManagerDidFailWithError(_m: CLLocationManager, error: NSError): void {
-    console.warn('AppWrap: geo.watch error', error.localizedDescription);
-  }
-  locationManagerDidChangeAuthorization(m: CLLocationManager): void {
-    const st = m.authorizationStatus;
-    if (st === CLAuthorizationStatus.kCLAuthorizationStatusAuthorizedWhenInUse ||
-        st === CLAuthorizationStatus.kCLAuthorizationStatusAuthorizedAlways) {
-      m.startUpdatingLocation();
+// iOS-only native delegates. Defined lazily inside an isIOS-gated factory (mirrors banner.ts) so the
+// shared module can instantiate on Android — NSObject/CL*/CN*/UIImagePicker* are iOS globals, and a
+// top-level `extends NSObject` would evaluate at ES-module load and crash the Android shell.
+// any: module-level holders for runtime-built ObjC subclasses; each class BODY stays fully typed.
+let GeoWatchDelegate: any, ContactPickerDelegate: any, CameraCaptureDelegate: any;
+function ensureIosDelegates(): void {
+  if (!isIOS || GeoWatchDelegate) return;
+
+  // CLLocationManager delegate for the persistent geo.watch stream. Callbacks are wired via instance
+  // fields so the closure-captured behavior of the old (NSObject).extend(...) is preserved.
+  @NativeClass()
+  class GeoWatchDelegateImpl extends NSObject implements CLLocationManagerDelegate {
+    static ObjCProtocols = [CLLocationManagerDelegate];
+    static new(): GeoWatchDelegateImpl {
+      return <GeoWatchDelegateImpl>super.new();
+    }
+    locationManagerDidUpdateLocations(_m: CLLocationManager, locations: NSArray<CLLocation>): void {
+      const loc = locations.lastObject;
+      if (!loc) return;
+      bridge.emit('geo.position', {
+        lat: loc.coordinate.latitude,
+        lng: loc.coordinate.longitude,
+        accuracy: loc.horizontalAccuracy,
+      });
+    }
+    locationManagerDidFailWithError(_m: CLLocationManager, error: NSError): void {
+      console.warn('AppWrap: geo.watch error', error.localizedDescription);
+    }
+    locationManagerDidChangeAuthorization(m: CLLocationManager): void {
+      const st = m.authorizationStatus;
+      if (st === CLAuthorizationStatus.kCLAuthorizationStatusAuthorizedWhenInUse ||
+          st === CLAuthorizationStatus.kCLAuthorizationStatusAuthorizedAlways) {
+        m.startUpdatingLocation();
+      }
     }
   }
-}
+  GeoWatchDelegate = GeoWatchDelegateImpl;
 
-// CNContactPickerViewController delegate. The picker resolution callbacks are set as instance fields
-// after construction (replacing the old closure-captured `resolve`).
-@NativeClass()
-class ContactPickerDelegate extends NSObject implements CNContactPickerDelegate {
-  static ObjCProtocols = [CNContactPickerDelegate];
-  static new(): ContactPickerDelegate {
-    return <ContactPickerDelegate>super.new();
+  // CNContactPickerViewController delegate. The picker resolution callbacks are set as instance fields
+  // after construction (replacing the old closure-captured `resolve`).
+  @NativeClass()
+  class ContactPickerDelegateImpl extends NSObject implements CNContactPickerDelegate {
+    static ObjCProtocols = [CNContactPickerDelegate];
+    static new(): ContactPickerDelegateImpl {
+      return <ContactPickerDelegateImpl>super.new();
+    }
+    onSelect?: (contact: CNContact) => void;
+    onCancel?: (picker: CNContactPickerViewController) => void;
+    contactPickerDidSelectContact(_picker: CNContactPickerViewController, contact: CNContact): void {
+      this.onSelect?.(contact);
+    }
+    contactPickerDidCancel(picker: CNContactPickerViewController): void {
+      this.onCancel?.(picker);
+    }
   }
-  onSelect?: (contact: CNContact) => void;
-  onCancel?: (picker: CNContactPickerViewController) => void;
-  contactPickerDidSelectContact(_picker: CNContactPickerViewController, contact: CNContact): void {
-    this.onSelect?.(contact);
-  }
-  contactPickerDidCancel(picker: CNContactPickerViewController): void {
-    this.onCancel?.(picker);
-  }
-}
+  ContactPickerDelegate = ContactPickerDelegateImpl;
 
-// UIImagePickerController delegate (camera.capture). Result/options are set as instance fields after
-// construction, replacing the old closure-captured `resolve`/`dataUrl`/`maxSize`.
-@NativeClass()
-class CameraCaptureDelegate extends NSObject implements UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-  static ObjCProtocols = [UIImagePickerControllerDelegate, UINavigationControllerDelegate];
-  static new(): CameraCaptureDelegate {
-    return <CameraCaptureDelegate>super.new();
+  // UIImagePickerController delegate (camera.capture). Result/options are set as instance fields after
+  // construction, replacing the old closure-captured `resolve`/`dataUrl`/`maxSize`.
+  @NativeClass()
+  class CameraCaptureDelegateImpl extends NSObject implements UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+    static ObjCProtocols = [UIImagePickerControllerDelegate, UINavigationControllerDelegate];
+    static new(): CameraCaptureDelegateImpl {
+      return <CameraCaptureDelegateImpl>super.new();
+    }
+    wantDataUrl = false;
+    maxSize = 1024;
+    onResult?: (out: { picked: boolean; width?: number; height?: number; dataUrl?: string }) => void;
+    imagePickerControllerDidFinishPickingMediaWithInfo(picker: UIImagePickerController, info: NSDictionary<string, any>): void {
+      picker.dismissViewControllerAnimatedCompletion(true, null);
+      const img = info.objectForKey(UIImagePickerControllerOriginalImage) as UIImage | null;
+      if (!img) return this.onResult?.({ picked: true });
+      const out: { picked: boolean; width?: number; height?: number; dataUrl?: string } =
+        { picked: true, width: img.size.width, height: img.size.height };
+      if (this.wantDataUrl) out.dataUrl = uiImageToDataUrl(img, this.maxSize);
+      this.onResult?.(out);
+    }
+    imagePickerControllerDidCancel(picker: UIImagePickerController): void {
+      picker.dismissViewControllerAnimatedCompletion(true, null);
+      this.onResult?.({ picked: false });
+    }
   }
-  wantDataUrl = false;
-  maxSize = 1024;
-  onResult?: (out: { picked: boolean; width?: number; height?: number; dataUrl?: string }) => void;
-  imagePickerControllerDidFinishPickingMediaWithInfo(picker: UIImagePickerController, info: NSDictionary<string, any>): void {
-    picker.dismissViewControllerAnimatedCompletion(true, null);
-    const img = info.objectForKey(UIImagePickerControllerOriginalImage) as UIImage | null;
-    if (!img) return this.onResult?.({ picked: true });
-    const out: { picked: boolean; width?: number; height?: number; dataUrl?: string } =
-      { picked: true, width: img.size.width, height: img.size.height };
-    if (this.wantDataUrl) out.dataUrl = uiImageToDataUrl(img, this.maxSize);
-    this.onResult?.(out);
-  }
-  imagePickerControllerDidCancel(picker: UIImagePickerController): void {
-    picker.dismissViewControllerAnimatedCompletion(true, null);
-    this.onResult?.({ picked: false });
-  }
+  CameraCaptureDelegate = CameraCaptureDelegateImpl;
 }
 
 /**
@@ -98,6 +110,7 @@ class CameraCaptureDelegate extends NSObject implements UIImagePickerControllerD
  * motion, contacts, calendar, camera. iOS-first like handlers-extended.
  */
 export function registerParityHandlers(): void {
+  ensureIosDelegates(); // no-op on Android; defines the iOS delegate classes used by the handlers below
   // ── dialogs (NS Dialogs — cross-platform) ──────────────────────────
   bridge.register('ui.alert', ({ title, message, ok }: any) =>
     Dialogs.alert({ title, message: String(message ?? ''), okButtonText: ok ?? 'OK' }).then(() => undefined)
@@ -139,7 +152,7 @@ export function registerParityHandlers(): void {
 
   // ── geo.watch (persistent CLLocationManager) ───────────────────────
   let geoManager: CLLocationManager | null = null;
-  let geoDelegate: GeoWatchDelegate | null = null;
+  let geoDelegate: any = null;
 
   bridge.register('geo.watch.start', () => {
     if (!isIOS) throw iosOnly();
@@ -213,10 +226,10 @@ export function registerParityHandlers(): void {
     return new Promise((resolve) => {
       Utils.dispatchToMainThread(() => {
         const delegate = ContactPickerDelegate.new();
-        delegate.onSelect = (contact) => {
+        delegate.onSelect = (contact: CNContact) => {
           resolve({ picked: true, ...readContact(contact) });
         };
-        delegate.onCancel = (picker) => {
+        delegate.onCancel = (picker: CNContactPickerViewController) => {
           picker.dismissViewControllerAnimatedCompletion(true, null);
           resolve({ picked: false });
         };

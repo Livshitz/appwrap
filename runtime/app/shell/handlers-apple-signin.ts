@@ -8,22 +8,8 @@ const err = (code: string, message: string) => Object.assign(new Error(message),
 // provider the moment the JS locals fall out of scope, which silently cancels the flow mid-handshake
 // (same lesson as handlers-oauth.ts `activeSession`/`activeProvider`).
 let activeController: ASAuthorizationController | null = null;
-let activeDelegate: AppleSignInDelegate | null = null;
-let activeProvider: AppleSignInContextProvider | null = null;
-
-@NativeClass()
-class AppleSignInContextProvider extends NSObject implements ASAuthorizationControllerPresentationContextProviding {
-  static ObjCProtocols = [ASAuthorizationControllerPresentationContextProviding];
-  static new(): AppleSignInContextProvider {
-    return <AppleSignInContextProvider>super.new();
-  }
-  presentationAnchorForAuthorizationController(_controller: ASAuthorizationController): UIWindow {
-    return (
-      Utils.ios.getRootViewController()?.view?.window ??
-      UIApplication.sharedApplication.keyWindow
-    );
-  }
-}
+let activeDelegate: any = null;
+let activeProvider: any = null;
 
 /** Decode an Apple-returned NSData JWT/code blob into a UTF-8 string (identityToken/authorizationCode). */
 function dataToUtf8(data: NSData | null): string | undefined {
@@ -32,61 +18,86 @@ function dataToUtf8(data: NSData | null): string | undefined {
   return s ? String(s) : undefined;
 }
 
-@NativeClass()
-class AppleSignInDelegate extends NSObject implements ASAuthorizationControllerDelegate {
-  static ObjCProtocols = [ASAuthorizationControllerDelegate];
-  // Per-call settlement (set right after `.new()`). The shared `settle` clears the ARC refs + recovers
-  // the WebView before resolving/rejecting, so it runs exactly once per flow.
-  rawNonce = '';
-  settle!: (fn: () => void) => void;
-  resolve!: (v: unknown) => void;
-  reject!: (e: unknown) => void;
-  static new(): AppleSignInDelegate {
-    return <AppleSignInDelegate>super.new();
-  }
+// iOS-only native delegates. Defined lazily inside an isIOS-gated factory (mirrors banner.ts) so the
+// shared module can instantiate on Android — NSObject/AS* are iOS globals, and a top-level
+// `extends NSObject` would evaluate at ES-module load and crash the Android shell.
+// any: module-level holders for runtime-built ObjC subclasses; each class BODY stays fully typed.
+let AppleSignInContextProvider: any, AppleSignInDelegate: any;
+function ensureIosDelegates(): void {
+  if (!isIOS || AppleSignInDelegate) return;
 
-  authorizationControllerDidCompleteWithAuthorization(
-    _controller: ASAuthorizationController,
-    authorization: ASAuthorization
-  ): void {
-    const cred = authorization.credential as ASAuthorizationAppleIDCredential;
-    const identityToken = dataToUtf8(cred.identityToken ?? null);
-    if (!identityToken) {
-      this.settle(() => this.reject(err('NATIVE_ERROR', 'appleSignIn: Apple returned no identityToken')));
-      return;
+  @NativeClass()
+  class AppleSignInContextProviderImpl extends NSObject implements ASAuthorizationControllerPresentationContextProviding {
+    static ObjCProtocols = [ASAuthorizationControllerPresentationContextProviding];
+    static new(): AppleSignInContextProviderImpl {
+      return <AppleSignInContextProviderImpl>super.new();
     }
-    const authorizationCode = dataToUtf8(cred.authorizationCode ?? null);
-
-    // First-authorization-only profile. Apple omits name/email on subsequent sign-ins per Apple ID.
-    let name: { givenName?: string; familyName?: string; displayName?: string } | undefined;
-    if (cred.fullName) {
-      const givenName = cred.fullName.givenName || undefined;
-      const familyName = cred.fullName.familyName || undefined;
-      // OS-composed display name (locale-aware) — convenience; the consumer can also build its own.
-      const composed = NSPersonNameComponentsFormatter.localizedStringFromPersonNameComponentsStyleOptions(
-        cred.fullName,
-        NSPersonNameComponentsFormatterStyle.Default,
-        0 as NSPersonNameComponentsFormatterOptions
+    presentationAnchorForAuthorizationController(_controller: ASAuthorizationController): UIWindow {
+      return (
+        Utils.ios.getRootViewController()?.view?.window ??
+        UIApplication.sharedApplication.keyWindow
       );
-      const displayName = (composed && String(composed)) || undefined;
-      if (givenName || familyName || displayName) name = { givenName, familyName, displayName };
     }
-    const email = cred.email || undefined;
-    const user = name || email ? { ...(name ? { name } : {}), ...(email ? { email } : {}) } : undefined;
-
-    this.settle(() =>
-      this.resolve({ identityToken, authorizationCode, nonce: this.rawNonce, ...(user ? { user } : {}) })
-    );
   }
+  AppleSignInContextProvider = AppleSignInContextProviderImpl;
 
-  authorizationControllerDidCompleteWithError(_controller: ASAuthorizationController, error: NSError): void {
-    // ASAuthorizationError.Canceled === 1001 (user dismissed the sheet) → resolve cancelled, never throw.
-    if (error.code === ASAuthorizationError.Canceled) {
-      this.settle(() => this.resolve({ cancelled: true }));
-      return;
+  @NativeClass()
+  class AppleSignInDelegateImpl extends NSObject implements ASAuthorizationControllerDelegate {
+    static ObjCProtocols = [ASAuthorizationControllerDelegate];
+    // Per-call settlement (set right after `.new()`). The shared `settle` clears the ARC refs + recovers
+    // the WebView before resolving/rejecting, so it runs exactly once per flow.
+    rawNonce = '';
+    settle!: (fn: () => void) => void;
+    resolve!: (v: unknown) => void;
+    reject!: (e: unknown) => void;
+    static new(): AppleSignInDelegateImpl {
+      return <AppleSignInDelegateImpl>super.new();
     }
-    this.settle(() => this.reject(err('NATIVE_ERROR', error.localizedDescription ?? 'appleSignIn failed')));
+
+    authorizationControllerDidCompleteWithAuthorization(
+      _controller: ASAuthorizationController,
+      authorization: ASAuthorization
+    ): void {
+      const cred = authorization.credential as ASAuthorizationAppleIDCredential;
+      const identityToken = dataToUtf8(cred.identityToken ?? null);
+      if (!identityToken) {
+        this.settle(() => this.reject(err('NATIVE_ERROR', 'appleSignIn: Apple returned no identityToken')));
+        return;
+      }
+      const authorizationCode = dataToUtf8(cred.authorizationCode ?? null);
+
+      // First-authorization-only profile. Apple omits name/email on subsequent sign-ins per Apple ID.
+      let name: { givenName?: string; familyName?: string; displayName?: string } | undefined;
+      if (cred.fullName) {
+        const givenName = cred.fullName.givenName || undefined;
+        const familyName = cred.fullName.familyName || undefined;
+        // OS-composed display name (locale-aware) — convenience; the consumer can also build its own.
+        const composed = NSPersonNameComponentsFormatter.localizedStringFromPersonNameComponentsStyleOptions(
+          cred.fullName,
+          NSPersonNameComponentsFormatterStyle.Default,
+          0 as NSPersonNameComponentsFormatterOptions
+        );
+        const displayName = (composed && String(composed)) || undefined;
+        if (givenName || familyName || displayName) name = { givenName, familyName, displayName };
+      }
+      const email = cred.email || undefined;
+      const user = name || email ? { ...(name ? { name } : {}), ...(email ? { email } : {}) } : undefined;
+
+      this.settle(() =>
+        this.resolve({ identityToken, authorizationCode, nonce: this.rawNonce, ...(user ? { user } : {}) })
+      );
+    }
+
+    authorizationControllerDidCompleteWithError(_controller: ASAuthorizationController, error: NSError): void {
+      // ASAuthorizationError.Canceled === 1001 (user dismissed the sheet) → resolve cancelled, never throw.
+      if (error.code === ASAuthorizationError.Canceled) {
+        this.settle(() => this.resolve({ cancelled: true }));
+        return;
+      }
+      this.settle(() => this.reject(err('NATIVE_ERROR', error.localizedDescription ?? 'appleSignIn failed')));
+    }
   }
+  AppleSignInDelegate = AppleSignInDelegateImpl;
 }
 
 /**
@@ -112,6 +123,7 @@ class AppleSignInDelegate extends NSObject implements ASAuthorizationControllerD
  */
 export function registerAppleSignInHandlers(): void {
   if (!isIOS) return;
+  ensureIosDelegates();
 
   bridge.register(
     'appleSignIn.signIn',

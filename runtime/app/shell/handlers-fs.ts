@@ -152,42 +152,52 @@ function iosStat(full: string, name: string): any {
 
 /**
  * Delegate for UIDocumentPickerViewController. Captures the resolve callback as an instance field
- * (the original closed over `resolve`); both selectors funnel into it.
+ * (the original closed over `resolve`); both selectors funnel into it. Built lazily INSIDE the
+ * iOS-only path (mirrors banner.ts): NSObject/UI* are iOS globals and this file is imported on Android
+ * too, so a top-level `@NativeClass extends NSObject` would crash at module load.
  */
-@NativeClass()
-class DocumentPickerDelegate extends NSObject implements UIDocumentPickerDelegate {
-  static ObjCProtocols = [UIDocumentPickerDelegate];
-  onPick!: (out: any[]) => void;
+// any: runtime-built ObjC subclass holder; the class BODY stays fully typed.
+let DocumentPickerDelegate: any;
+function documentPickerDelegateClass(): any {
+  if (!DocumentPickerDelegate) {
+    @NativeClass()
+    class DocumentPickerDelegateImpl extends NSObject implements UIDocumentPickerDelegate {
+      static ObjCProtocols = [UIDocumentPickerDelegate];
+      onPick!: (out: any[]) => void;
 
-  static new(): DocumentPickerDelegate {
-    return <DocumentPickerDelegate>super.new();
-  }
+      static new(): DocumentPickerDelegateImpl {
+        return <DocumentPickerDelegateImpl>super.new();
+      }
 
-  documentPickerDidPickDocumentsAtURLs(_controller: UIDocumentPickerViewController, urls: NSArray<NSURL>): void {
-    const out: any[] = [];
-    for (let i = 0; i < urls.count; i++) {
-      const url = urls.objectAtIndex(i);
-      const scoped = url.startAccessingSecurityScopedResource?.();
-      try {
-        const data = NSData.dataWithContentsOfURL(url);
-        if (data) {
-          out.push({
-            name: url.lastPathComponent,
-            mimeType: mimeForUrlIos(url),
-            size: data.length,
-            base64: data.base64EncodedStringWithOptions(0 as unknown as NSDataBase64EncodingOptions),
-          });
+      documentPickerDidPickDocumentsAtURLs(_controller: UIDocumentPickerViewController, urls: NSArray<NSURL>): void {
+        const out: any[] = [];
+        for (let i = 0; i < urls.count; i++) {
+          const url = urls.objectAtIndex(i);
+          const scoped = url.startAccessingSecurityScopedResource?.();
+          try {
+            const data = NSData.dataWithContentsOfURL(url);
+            if (data) {
+              out.push({
+                name: url.lastPathComponent,
+                mimeType: mimeForUrlIos(url),
+                size: data.length,
+                base64: data.base64EncodedStringWithOptions(0 as unknown as NSDataBase64EncodingOptions),
+              });
+            }
+          } finally {
+            if (scoped) url.stopAccessingSecurityScopedResource?.();
+          }
         }
-      } finally {
-        if (scoped) url.stopAccessingSecurityScopedResource?.();
+        this.onPick(out);
+      }
+
+      documentPickerWasCancelled(_controller: UIDocumentPickerViewController): void {
+        this.onPick([]);
       }
     }
-    this.onPick(out);
+    DocumentPickerDelegate = DocumentPickerDelegateImpl;
   }
-
-  documentPickerWasCancelled(_controller: UIDocumentPickerViewController): void {
-    this.onPick([]);
-  }
+  return DocumentPickerDelegate;
 }
 
 /**
@@ -211,7 +221,7 @@ function pickFileIos(types: string[] | undefined, multiple: boolean): Promise<an
         const picker = UIDocumentPickerViewController.alloc().initForOpeningContentTypes(utis as any);
         picker.allowsMultipleSelection = multiple;
 
-        const delegate = DocumentPickerDelegate.new();
+        const delegate = documentPickerDelegateClass().new();
         delegate.onPick = resolve;
         (picker as any)._appwrapDelegate = delegate; // interop: retain delegate past the present call (no typed slot)
         picker.delegate = delegate;
