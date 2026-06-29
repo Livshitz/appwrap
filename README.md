@@ -28,7 +28,7 @@ Prefer to drive it yourself? → [Get started](#get-started--wrap-your-own-pwa).
 - **[Bun](https://bun.sh)** — appwrap is bun-first; the `appwrap` binary runs as TypeScript via bun. (`curl -fsSL https://bun.sh/install | bash`)
 - **NativeScript CLI** — required for any simulator/device/store build (`appwrap init` / `sync` work *without* it; `ns run`/`ns build` need it): `bun add -g nativescript`, then run `ns doctor ios` / `ns doctor android` to verify the toolchain and fix anything it flags.
 - **iOS builds** — [Xcode](https://apps.apple.com/app/xcode/id497799835) + Command Line Tools (`xcode-select --install`; provides `xcodebuild` and `devicectl` for on-device installs) and **CocoaPods** (`brew install cocoapods`). A physical-device install also needs the device registered to your Apple team — set `teamId` in `appwrap.config.ts`.
-- **Android builds** — [Android Studio](https://developer.android.com/studio) + JDK 17, with `ANDROID_HOME` exported (e.g. `export ANDROID_HOME=$HOME/Library/Android/sdk`).
+- **Android builds** — [Android Studio](https://developer.android.com/studio) + JDK 17. `ANDROID_HOME` is auto-detected from standard SDK locations (e.g. `~/Library/Android/sdk`); export it only if your SDK lives elsewhere.
 
 ## Get started — wrap your own PWA
 

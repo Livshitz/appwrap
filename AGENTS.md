@@ -17,7 +17,7 @@ Take any PWA and ship it as a real native app — the same web app, hosted in a 
 - **[Bun](https://bun.sh)** — appwrap is bun-first (`curl -fsSL https://bun.sh/install | bash`).
 - **NativeScript CLI** — for any simulator/device/store build (`init`/`sync` don't need it): `bun add -g nativescript`, then `ns doctor ios` / `ns doctor android` to verify the toolchain.
 - **iOS** — Xcode + Command Line Tools (`xcode-select --install`; provides `xcodebuild` + `devicectl`) and CocoaPods (`brew install cocoapods`). A physical-device install needs the device registered to your Apple team — set `teamId` in `appwrap.config.ts`.
-- **Android** — Android Studio + JDK 17, with `ANDROID_HOME` exported.
+- **Android** — Android Studio + JDK 17. `ANDROID_HOME` is auto-detected from common SDK locations (export it only if yours is non-standard).
 
 ## Quick start (wrap your own PWA)
 

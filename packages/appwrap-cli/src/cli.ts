@@ -1259,13 +1259,45 @@ async function dev(cwd: string, flags: Record<string, string>): Promise<void> {
  * install when node_modules is absent — if ns later reinstalls on package.json drift it uses npm
  * (NativeScript has no bun package-manager mode), so trustedDependencies in the shell package.json
  * is what keeps the bun-installed tree behaving like npm's (parcel/watcher, ns CLI hooks). */
+/** Resolve a usable Android SDK dir: an already-valid ANDROID_HOME/ANDROID_SDK_ROOT, else the first
+ * common install location that actually contains an SDK. Lets `deploy/run android` work without the
+ * user having exported ANDROID_HOME in their shell (the #1 "ns can't find the SDK" foot-gun). */
+function resolveAndroidSdk(): string | undefined {
+  const env = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
+  if (env && existsSync(env)) return env;
+  const home = process.env.HOME || '';
+  const candidates = [
+    join(home, 'Library/Android/sdk'),    // macOS (Android Studio default)
+    join(home, 'Library/Android/Sdk'),
+    join(home, 'Android/Sdk'),            // Linux (Android Studio default)
+    '/usr/local/share/android-sdk',       // homebrew cask
+    '/opt/android-sdk',
+  ];
+  // A usable SDK has platform-tools (adb) or installed platforms; cmdline-tools-only dirs don't count.
+  return candidates.find((d) => existsSync(join(d, 'platform-tools')) || existsSync(join(d, 'platforms')));
+}
+
 function runNs(outDir: string, args: string[]): void {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  // Android: inject a discovered SDK so `ns` finds it even when the user's shell never exported
+  // ANDROID_HOME (new terminal not sourced, conda base shell, etc.) — the common deploy blocker.
+  if (args.includes('android')) {
+    const sdk = resolveAndroidSdk();
+    if (sdk) {
+      env.ANDROID_HOME = sdk;
+      env.ANDROID_SDK_ROOT = sdk;
+      env.PATH = [process.env.PATH, join(sdk, 'platform-tools'), join(sdk, 'emulator')].filter(Boolean).join(':');
+      if (!process.env.ANDROID_HOME) console.log(`  android SDK ← ${sdk}  (ANDROID_HOME not set; auto-detected)`);
+    } else {
+      console.warn('  ⚠ No Android SDK found (set ANDROID_HOME). Install Android Studio or the command-line tools, then `sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"`.');
+    }
+  }
   if (!existsSync(join(outDir, 'node_modules'))) {
     console.log(`▶ bun install  (cwd: ${outDir})`);
-    execFileSync('bun', ['install'], { cwd: outDir, stdio: 'inherit' });
+    execFileSync('bun', ['install'], { cwd: outDir, stdio: 'inherit', env });
   }
   console.log(`▶ ns ${args.join(' ')}  (cwd: ${outDir})`);
-  execFileSync('ns', args, { cwd: outDir, stdio: 'inherit' });
+  execFileSync('ns', args, { cwd: outDir, stdio: 'inherit', env });
 }
 
 /** Read the loader currently stamped into the generated shell (app/shell/config.ts). Used to
