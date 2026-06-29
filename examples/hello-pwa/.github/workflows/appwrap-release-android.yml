@@ -9,24 +9,32 @@
 #                                  exist on Play with one prior manual upload before supply works)
 name: Release Android
 on:
+  workflow_dispatch:
   push:
     tags: ['v*']
+
+# Monotonic store build number (Android versionCode): computed in the shell below — GitHub Actions
+# expressions have NO arithmetic operators, so `${{ github.run_number + 100 }}` is an INVALID workflow
+# expression → startup_failure on EVERY push (not just tags). appwrap CLI reads APPWRAP_BUILD_NUMBER
+# over the constant derived default — Play rejects a versionCode it has already seen. run_number is increasing.
 
 jobs:
   play:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Build number (run_number + 100 — arithmetic must be done in the shell, not an expression)
+        run: echo "APPWRAP_BUILD_NUMBER=$(( ${{ github.run_number }} + 100 ))" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v5
         with: { node-version: 22 }
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
       - uses: android-actions/setup-android@v3
-      - run: bun install && bun run build.ts        # → dist/ (the PWA bundle the wrapper ships)
+      - run: bun install && bun run build        # → dist/ (the PWA bundle the wrapper ships)
       # Pin global tools — unpinned installs can grab a breaking release mid-flight. Bump deliberately.
       - run: npm i -g nativescript@9.0.6
-      - run: bunx appwrap init                      # native/ is generated (gitignored) — regenerate fresh in CI
+      - run: bunx @livx.cc/appwrap init                      # native/ is generated (gitignored) — regenerate fresh in CI
       - working-directory: native
         run: npm install
       - name: Decode upload keystore
@@ -37,7 +45,7 @@ jobs:
           APPWRAP_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           APPWRAP_ANDROID_KEYSTORE_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           APPWRAP_ANDROID_KEYSTORE_ALIAS_PASSWORD: ${{ secrets.ANDROID_KEY_ALIAS_PASSWORD }}
-        run: bunx appwrap build android --release --aab
+        run: bunx @livx.cc/appwrap build android --release --aab
       - uses: actions/upload-artifact@v4            # keep the AAB even if Play upload is skipped
         with:
           name: app-release-aab
