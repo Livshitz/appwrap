@@ -1,42 +1,69 @@
-# appwrap iOS release — tag push (v*) → TestFlight via fastlane.
+# appwrap iOS → TestFlight via fastlane. On-demand (workflow_dispatch) or tag push (v*).
 # Secrets contract (repo settings → Actions secrets):
-#   MATCH_GIT_URL        private repo holding signing certs (fastlane match)
+#   MATCH_GIT_URL        private repo holding signing certs (fastlane match) — SSH form for the deploy key
+#   MATCH_DEPLOY_KEY     read-only SSH deploy key on that certs repo (so CI can clone it)
 #   MATCH_PASSWORD       match encryption passphrase
 #   ASC_KEY_ID           App Store Connect API key id
 #   ASC_ISSUER_ID        App Store Connect issuer id
 #   ASC_KEY_P8           App Store Connect .p8 key contents (base64)
-# No interactive Apple ID — API-key auth only (headless-safe).
+# No interactive Apple ID — API-key auth only (headless-safe). Certs/profiles must be seeded once
+# locally via `fastlane match appstore` before CI runs.
 name: Release iOS
 on:
+  workflow_dispatch:
   push:
     tags: ['v*']
+
+# Monotonic store build number (CFBundleVersion): computed in the shell below — GitHub Actions
+# expressions have NO arithmetic operators, so `${{ github.run_number + 100 }}` is an INVALID workflow
+# expression → startup_failure on EVERY push (not just tags). run_number is strictly increasing; +100
+# clears low derived values. The appwrap CLI reads APPWRAP_BUILD_NUMBER and it wins over the derived
+# default — without it, repeat uploads of the same marketing version 409 ("build already exists").
 
 jobs:
   testflight:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
+      - name: Build number (run_number + 100 — arithmetic must be done in the shell, not an expression)
+        run: echo "APPWRAP_BUILD_NUMBER=$(( ${{ github.run_number }} + 100 ))" >> "$GITHUB_ENV"
+      # Apple requires the iOS 26 SDK (Xcode 26+) for uploads — runners may default to older Xcode.
+      - uses: maxim-lobanov/setup-xcode@v1
+        with: { xcode-version: latest-stable }
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v5
         with: { node-version: 22 }
-      - run: bun install && bun run build.ts
+      - run: bun install && bun run build
       # Pin global tools — unpinned installs can grab a breaking release mid-flight. Bump deliberately.
       - run: npm i -g nativescript@9.0.6
-      - run: bunx appwrap init # native/ is generated (gitignored) — regenerate it fresh in CI
+      # bunx is PINNED to the appwrap version that emitted this workflow (stamped at `init`). Pinning is
+      # load-bearing: an UNPINNED `bunx @livx.cc/appwrap` resolves to whatever is currently published,
+      # which may pre-date the `init`/`release` commands and would silently run old code + exit 1 with a
+      # confusing usage dump. With the pin, CI fails LOUDLY ("No matching version") until that version is
+      # published to the @livx.cc registry. PUBLISH-ORDERING: publish the appwrap CLI BEFORE the first CI
+      # run that uses a freshly-emitted workflow.
+      - run: bunx @livx.cc/appwrap@^0.39.8 init # native/ is generated (gitignored) — regenerate it fresh in CI
       - working-directory: native
         run: npm install
       - uses: ruby/setup-ruby@v1
         with: { ruby-version: '3.3', bundler-cache: false }
       - run: gem install fastlane -v 2.236.1
+      - name: Set up match deploy key (read-only SSH on the certs repo)
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.MATCH_DEPLOY_KEY }}" > ~/.ssh/match_deploy_key
+          chmod 600 ~/.ssh/match_deploy_key
+          printf 'Host github.com\n  IdentityFile ~/.ssh/match_deploy_key\n  IdentitiesOnly yes\n' >> ~/.ssh/config
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+      # Single source of truth: the SAME command a developer runs locally. It re-stamps native/ and
+      # delegates the full archive/sign/upload to the emitted fastlane lane — no fastlane logic here.
       - name: Build & upload to TestFlight
-        working-directory: native
         env:
           MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
-        run: fastlane ios beta
+        run: bunx @livx.cc/appwrap@^0.39.8 release ios
 
-  # Production promotion is a manual gate: re-run with the `production`
-  # environment approved, or promote the TestFlight build in App Store Connect.
+  # Production promotion is a manual gate: promote the TestFlight build in App Store Connect.

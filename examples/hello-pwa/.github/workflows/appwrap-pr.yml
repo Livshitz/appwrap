@@ -11,7 +11,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install
       - run: bun test || echo "no tests"
-      - run: bun run build.ts # → dist/ (the PWA bundle the wrapper ships)
+      - run: bun run build # → dist/ (the PWA bundle the wrapper ships)
 
   ios-build:
     runs-on: macos-15
@@ -21,9 +21,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v5
         with: { node-version: 22 }
-      - run: bun install && bun run build.ts
+      - run: bun install && bun run build
       # Pin global tools — unpinned installs can grab a breaking release mid-flight. Bump deliberately.
       - run: npm i -g nativescript@9.0.6
-      - run: bunx appwrap init # native/ is generated (gitignored) — regenerate it fresh in CI
+      - run: bunx @livx.cc/appwrap init # native/ is generated (gitignored) — regenerate it fresh in CI
       - working-directory: native
         run: npm install && ns build ios --emulator
