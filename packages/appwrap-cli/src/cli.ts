@@ -741,12 +741,17 @@ function stampFcmService(outDir: string, on: boolean): void {
 }
 
 function stampAndroidAppName(outDir: string, cfg: AppwrapConfig, req: NativeReqs): void {
-  const strings = join(outDir, 'App_Resources/Android/src/main/res/values/strings.xml');
-  if (existsSync(strings)) {
-    let src = readFileSync(strings, 'utf8');
-    src = src.replace(/(<string name="app_name">)[^<]*(<\/string>)/, `$1${cfg.name}$2`);
-    writeFileSync(strings, src);
-  }
+  // Write res/values/strings.xml defining app_name = cfg.name. The NS template ships NO strings.xml
+  // (the default app_name/activity title resolve to "native" from @nativescript/core), so a regex
+  // replace was a no-op and the launcher showed "native". Write the file so app_name is authoritative
+  // (the manifest's <application> AND launcher <activity> both label off @string/app_name). XML-escape.
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const stringsDir = join(outDir, 'App_Resources/Android/src/main/res/values');
+  mkdirSync(stringsDir, { recursive: true });
+  writeFileSync(
+    join(stringsDir, 'strings.xml'),
+    `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <string name="app_name">${esc(cfg.name)}</string>\n    <string name="title_activity_kimera">${esc(cfg.name)}</string>\n</resources>\n`
+  );
   const manifest = join(outDir, 'App_Resources/Android/src/main/AndroidManifest.xml');
   if (existsSync(manifest)) {
     let src = readFileSync(manifest, 'utf8');
@@ -822,29 +827,53 @@ function findMaskableSource(cwd: string, cfg: AppwrapConfig): string | null {
   return findIconSource(cwd, cfg);
 }
 
-/** Generate iOS appiconset + Android mipmaps from the PWA's icon via sips (macOS). */
+/** Square-resize/probe abstraction over `sips` (macOS) or ImageMagick (`magick` v7 / `convert` v6),
+ * so icon generation works on Linux/CI too — not just macOS. Returns null if neither tool is present. */
+function imageRasterizer(): { width: (src: string) => number; resize: (src: string, px: number, dest: string) => void } | null {
+  const has = (cmd: string) => {
+    try { execFileSync('which', [cmd], { stdio: 'ignore' }); return true; } catch { return false; }
+  };
+  if (has('sips')) {
+    return {
+      width: (src) => parseInt(execFileSync('sips', ['-g', 'pixelWidth', src]).toString().match(/(\d+)\s*$/)?.[1] ?? '0', 10),
+      resize: (src, px, dest) => execFileSync('sips', ['-z', String(px), String(px), src, '--out', dest], { stdio: 'ignore' }),
+    };
+  }
+  const magick = has('magick') ? 'magick' : has('convert') ? 'convert' : null;
+  if (magick) {
+    // v7: `magick identify` / `magick <src> -resize`. v6: `identify` / `convert <src> -resize`. `!` forces exact (square) dims.
+    return {
+      width: (src) => {
+        const args = magick === 'magick' ? ['identify', '-format', '%w', src] : ['-format', '%w', src];
+        const bin = magick === 'magick' ? 'magick' : 'identify';
+        return parseInt(execFileSync(bin, args).toString().trim() || '0', 10);
+      },
+      resize: (src, px, dest) => execFileSync(magick, [src, '-resize', `${px}x${px}!`, dest], { stdio: 'ignore' }),
+    };
+  }
+  return null;
+}
+
+/** Generate iOS appiconset + Android mipmaps from the PWA's icon (via sips on macOS or ImageMagick on CI). */
 function generateIcons(cwd: string, outDir: string, cfg: AppwrapConfig): void {
   const source = findIconSource(cwd, cfg);
   if (!source) {
     console.warn('⚠ No app icon source found (manifest icons or config `icon`) — keeping template icons');
     return;
   }
-  // Icon rasterization uses `sips`, which is macOS-only. On Linux/CI (e.g. a GitHub Actions Android
-  // build) it's absent — skip gracefully and keep the template icons rather than throwing and failing
-  // the whole init/build. Regenerate real icons on macOS for store builds.
-  try {
-    execFileSync('which', ['sips'], { stdio: 'ignore' });
-  } catch {
-    console.warn('⚠ `sips` unavailable (non-macOS host) — keeping template icons; regenerate on macOS for store builds');
+  // Pick an image rasterizer: `sips` (macOS) OR ImageMagick (`magick` v7 / `convert` v6) so icons are
+  // generated on Linux/CI too (GitHub ubuntu runners ship ImageMagick) — NOT just macOS. Previously CI
+  // skipped icon gen entirely → the default NativeScript "N" icon shipped. If NEITHER tool exists, keep
+  // the template icons rather than failing the build.
+  const ras = imageRasterizer();
+  if (!ras) {
+    console.warn('⚠ no image tool (sips / ImageMagick) — keeping template icons; install ImageMagick or build on macOS');
     return;
   }
-  const probe = (prop: string) =>
-    parseInt(execFileSync('sips', ['-g', prop, source]).toString().match(/(\d+)\s*$/)?.[1] ?? '0', 10);
-  const w = probe('pixelWidth');
-  if (w < 512) console.warn(`⚠ Icon source is ${w}px — below the 512px App Store minimum (using it anyway)`);
+  const w = ras.width(source);
+  if (w && w < 512) console.warn(`⚠ Icon source is ${w}px — below the 512px App Store minimum (using it anyway)`);
 
-  const resize = (px: number, dest: string) =>
-    execFileSync('sips', ['-z', String(px), String(px), source, '--out', dest], { stdio: 'ignore' });
+  const resize = (px: number, dest: string) => ras.resize(source, px, dest);
 
   const iconset = join(outDir, 'App_Resources/iOS/Assets.xcassets/AppIcon.appiconset');
   if (existsSync(iconset)) {
@@ -870,8 +899,7 @@ function generateIcons(cwd: string, outDir: string, cfg: AppwrapConfig): void {
   const ADAPTIVE_DP = 108;
   const adaptiveXml = join(res, 'mipmap-anydpi-v26/ic_launcher.xml');
   if (fgSource && existsSync(adaptiveXml)) {
-    const resizeFrom = (src: string, px: number, dest: string) =>
-      execFileSync('sips', ['-z', String(px), String(px), src, '--out', dest], { stdio: 'ignore' });
+    const resizeFrom = (src: string, px: number, dest: string) => ras.resize(src, px, dest);
     for (const [density, baseline] of Object.entries(ANDROID_DENSITIES)) {
       const dir = join(res, `mipmap-${density}`);
       if (!existsSync(dir)) continue;
