@@ -829,6 +829,15 @@ function generateIcons(cwd: string, outDir: string, cfg: AppwrapConfig): void {
     console.warn('⚠ No app icon source found (manifest icons or config `icon`) — keeping template icons');
     return;
   }
+  // Icon rasterization uses `sips`, which is macOS-only. On Linux/CI (e.g. a GitHub Actions Android
+  // build) it's absent — skip gracefully and keep the template icons rather than throwing and failing
+  // the whole init/build. Regenerate real icons on macOS for store builds.
+  try {
+    execFileSync('which', ['sips'], { stdio: 'ignore' });
+  } catch {
+    console.warn('⚠ `sips` unavailable (non-macOS host) — keeping template icons; regenerate on macOS for store builds');
+    return;
+  }
   const probe = (prop: string) =>
     parseInt(execFileSync('sips', ['-g', prop, source]).toString().match(/(\d+)\s*$/)?.[1] ?? '0', 10);
   const w = probe('pixelWidth');
