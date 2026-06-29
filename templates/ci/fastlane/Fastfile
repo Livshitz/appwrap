@@ -114,6 +114,20 @@ platform :ios do
     upload_to_testflight(api_key: api_key, skip_waiting_for_build_processing: false, wait_processing_timeout_duration: tf_wait_timeout)
   end
 
+  # Build + sign ONLY — no upload. For pipelines that hand the signed .ipa to an EXTERNAL uploader
+  # (e.g. `mcp-appstores apple-upload`) instead of fastlane's own upload_to_testflight. Same archive/
+  # sign recipe as :beta, so the binary is byte-identical; it just stops before the upload step.
+  # The signed .ipa lands at `native/<scheme>.ipa` (gym default output dir = the fastlane cwd = native/).
+  # IPA_OUTPUT_PATH is also written to $GITHUB_OUTPUT (when on CI) as `ipa` for the next workflow step.
+  desc 'Build + sign the wrapper into a signed .ipa WITHOUT uploading (for an external uploader).'
+  lane :build do
+    appwrap_archive_and_sign_ios
+    ipa = lane_context[SharedValues::IPA_OUTPUT_PATH]
+    UI.success("Signed IPA (not uploaded): #{ipa}")
+    gh_out = ENV['GITHUB_OUTPUT']
+    File.write(gh_out, "ipa=#{ipa}\n", mode: 'a') if gh_out && !gh_out.empty?
+  end
+
   desc 'Build the NativeScript wrapper and promote the binary to the App Store (production).'
   lane :release do
     api_key = appwrap_archive_and_sign_ios
