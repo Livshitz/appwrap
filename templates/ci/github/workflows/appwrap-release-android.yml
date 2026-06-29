@@ -13,16 +13,18 @@ on:
   push:
     tags: ['v*']
 
-# Monotonic store build number (Android versionCode). appwrap CLI reads APPWRAP_BUILD_NUMBER over the
-# constant derived default — Play rejects a versionCode it has already seen. run_number is increasing.
-env:
-  APPWRAP_BUILD_NUMBER: ${{ github.run_number + 100 }}
+# Monotonic store build number (Android versionCode): computed in the shell below — GitHub Actions
+# expressions have NO arithmetic operators, so `${{ github.run_number + 100 }}` is an INVALID workflow
+# expression → startup_failure on EVERY push (not just tags). appwrap CLI reads APPWRAP_BUILD_NUMBER
+# over the constant derived default — Play rejects a versionCode it has already seen. run_number is increasing.
 
 jobs:
   play:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Build number (run_number + 100 — arithmetic must be done in the shell, not an expression)
+        run: echo "APPWRAP_BUILD_NUMBER=$(( ${{ github.run_number }} + 100 ))" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v5
         with: { node-version: 22 }
