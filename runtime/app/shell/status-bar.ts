@@ -27,10 +27,14 @@ export function enableAndroidEdgeToEdge(): void {
     if (!activity) return;
     try {
       // Explicit transparent status-bar colors (light + dark) so the page background — not the NS
-      // page backgroundColor — shows under the status bar. Nav bar keeps NS's default subtle scrim.
+      // page backgroundColor — shows under the status bar. In FULL edge-to-edge mode (the edgeToEdge
+      // config + wireAndroidSafeArea un-boxing) also make the NAV bar transparent so the web content
+      // draws under it too; otherwise keep NS's default nav-bar scrim (so the buttons stay legible on
+      // apps that aren't drawing their own content down there).
       Utils.android.enableEdgeToEdge(activity, {
         statusBarLightColor: transparent,
         statusBarDarkColor: transparent,
+        ...(SHELL_CONFIG.edgeToEdge ? { navigationBarLightColor: transparent, navigationBarDarkColor: transparent } : {}),
       });
     } catch (e) {
       console.warn('AppWrap: edge-to-edge setup failed', e);
@@ -52,11 +56,39 @@ export function enableAndroidEdgeToEdge(): void {
  */
 export function wireAndroidSafeArea(webView: View): void {
   if (!isAndroid || !SHELL_CONFIG.edgeToEdge) return;
-  // Un-box the layout that wraps the WebView so it (and its child WebView) fills the window UNDER the
-  // bars. 'dont-apply' = NS won't pad it with the system-bar insets.
-  const layout = (webView.parent as View) ?? webView;
-  // androidOverflowEdge: not in the public View typings — an NS edge-to-edge layout hint set dynamically.
-  (layout as any).androidOverflowEdge = 'dont-apply';
+  // Un-box the WebView so it fills the window UNDER the system bars. 'dont-apply' = NS won't pad the
+  // view with the system-bar insets. The insets are consumed/applied by the root FRAME (NS sets its
+  // androidOverflowEdge to 'ignore' by default — ui/frame/index.android.ts), NOT by the WebView's
+  // immediate parent, so overriding only webView.parent left the content boxed. Set it up the whole
+  // chain — root view (the Frame), the Page, and the WebView's parent — so whichever applies the
+  // insets stops padding. (androidOverflowEdge isn't in the public View typings — an NS layout hint.)
+  const targets: Array<View | null> = [
+    Application.getRootView() as View | null,
+    currentPage,
+    (webView.parent as View) ?? null,
+    webView,
+  ];
+  for (const t of targets) if (t) (t as any).androidOverflowEdge = 'dont-apply';
+
+  // HIDE the navigation bar (immersive) so the game is genuinely full-bleed at the bottom — drawing
+  // under a nav bar you can still see is moot. Status bar stays visible (clock/battery over the page).
+  // BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE: a swipe from the bottom edge reveals it briefly, then it
+  // re-hides — the standard game pattern. Immersive resets on resume / when transiently shown, so it's
+  // re-applied below. API 30+ (WindowInsetsController); the device floor for edge-to-edge is well above.
+  const hideNav = () => {
+    try {
+      const controller = Application.android?.startActivity?.getWindow()?.getInsetsController?.();
+      if (!controller) return;
+      controller.hide(android.view.WindowInsets.Type.navigationBars());
+      controller.setSystemBarsBehavior(
+        android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+      );
+    } catch (e) {
+      console.warn('AppWrap: hide nav bar failed', e);
+    }
+  };
+  hideNav();
+  setTimeout(hideNav, 60); // win the race against NS's own post-load bar setup
 
   const density = Screen.mainScreen.scale || 1; // physical px per dp
   const inject = (l: number, t: number, r: number, b: number) => {
@@ -102,8 +134,8 @@ export function wireAndroidSafeArea(webView: View): void {
     setTimeout(tick, 150);
   };
   setTimeout(tick, 80);
-  Application.on(Application.resumeEvent, () => setTimeout(readAndInject, 120));
-  Application.on(Application.orientationChangedEvent, () => setTimeout(readAndInject, 200));
+  Application.on(Application.resumeEvent, () => { setTimeout(readAndInject, 120); setTimeout(hideNav, 120); });
+  Application.on(Application.orientationChangedEvent, () => { setTimeout(readAndInject, 200); setTimeout(hideNav, 200); });
 }
 
 export function bindStatusBarPage(page: Page): void {

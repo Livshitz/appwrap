@@ -15,21 +15,31 @@ const err = (code: string, message: string) => Object.assign(new Error(message),
 // empty protocols list it registers under the wrong selector and AVFoundation never calls it — the
 // scanner opens but never decodes. The first decoded object is forwarded via the `onResult` instance
 // field (assigned after `new()`), replacing the original closure capture.
-@NativeClass()
-class MetadataDelegate extends NSObject implements AVCaptureMetadataOutputObjectsDelegate {
-  static ObjCProtocols = [AVCaptureMetadataOutputObjectsDelegate];
-  onResult?: (obj: AVMetadataObject) => void;
-  static new(): MetadataDelegate {
-    return <MetadataDelegate>super.new();
+// Built lazily INSIDE the iOS-only path (mirrors banner.ts): NSObject/AV* are iOS globals and this file
+// is imported on Android too, so a top-level `@NativeClass extends NSObject` would crash at module load.
+// any: runtime-built ObjC subclass holder; the class BODY stays fully typed.
+let MetadataDelegate: any;
+function metadataDelegateClass(): any {
+  if (!MetadataDelegate) {
+    @NativeClass()
+    class MetadataDelegateImpl extends NSObject implements AVCaptureMetadataOutputObjectsDelegate {
+      static ObjCProtocols = [AVCaptureMetadataOutputObjectsDelegate];
+      onResult?: (obj: AVMetadataObject) => void;
+      static new(): MetadataDelegateImpl {
+        return <MetadataDelegateImpl>super.new();
+      }
+      captureOutputDidOutputMetadataObjectsFromConnection(
+        _output: AVCaptureOutput,
+        metadataObjects: NSArray<AVMetadataObject> | AVMetadataObject[],
+        _connection: AVCaptureConnection
+      ): void {
+        const obj = (metadataObjects as NSArray<AVMetadataObject>)?.firstObject;
+        if (obj) this.onResult?.(obj);
+      }
+    }
+    MetadataDelegate = MetadataDelegateImpl;
   }
-  captureOutputDidOutputMetadataObjectsFromConnection(
-    _output: AVCaptureOutput,
-    metadataObjects: NSArray<AVMetadataObject> | AVMetadataObject[],
-    _connection: AVCaptureConnection
-  ): void {
-    const obj = (metadataObjects as NSArray<AVMetadataObject>)?.firstObject;
-    if (obj) this.onResult?.(obj);
-  }
+  return MetadataDelegate;
 }
 
 /**
@@ -124,8 +134,8 @@ function registerIos(): void {
 
           // Delegate fires on a dedicated serial queue (see dispatch_queue_create below); settle()
           // hops back to the main thread for the WKWebView bridge reply.
-          const delegate = MetadataDelegate.new();
-          delegate.onResult = (obj) => {
+          const delegate = metadataDelegateClass().new();
+          delegate.onResult = (obj: AVMetadataObject) => {
             if (!pending) return;
             const value = (obj as AVMetadataMachineReadableCodeObject).stringValue;
             if (value == null) return;

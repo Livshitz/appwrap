@@ -11,18 +11,28 @@ const err = (code: string, message: string) => Object.assign(new Error(message),
 let activeSession: ASWebAuthenticationSession | null = null;
 let activeProvider: ASWebAuthenticationPresentationContextProviding | null = null;
 
-@NativeClass()
-class OAuthPresentationContextProvider extends NSObject implements ASWebAuthenticationPresentationContextProviding {
-  static ObjCProtocols = [ASWebAuthenticationPresentationContextProviding];
-  static new(): OAuthPresentationContextProvider {
-    return <OAuthPresentationContextProvider>super.new();
+// Built lazily INSIDE the iOS-only path (mirrors banner.ts): NSObject/AS* are iOS globals and this file
+// is imported on Android too, so a top-level `@NativeClass extends NSObject` would crash at module load.
+// any: runtime-built ObjC subclass holder; the class BODY stays fully typed.
+let OAuthPresentationContextProvider: any;
+function oauthContextProviderClass(): any {
+  if (!OAuthPresentationContextProvider) {
+    @NativeClass()
+    class OAuthPresentationContextProviderImpl extends NSObject implements ASWebAuthenticationPresentationContextProviding {
+      static ObjCProtocols = [ASWebAuthenticationPresentationContextProviding];
+      static new(): OAuthPresentationContextProviderImpl {
+        return <OAuthPresentationContextProviderImpl>super.new();
+      }
+      presentationAnchorForWebAuthenticationSession(_session: ASWebAuthenticationSession): UIWindow {
+        return (
+          Utils.ios.getRootViewController()?.view?.window ??
+          UIApplication.sharedApplication.keyWindow
+        );
+      }
+    }
+    OAuthPresentationContextProvider = OAuthPresentationContextProviderImpl;
   }
-  presentationAnchorForWebAuthenticationSession(_session: ASWebAuthenticationSession): UIWindow {
-    return (
-      Utils.ios.getRootViewController()?.view?.window ??
-      UIApplication.sharedApplication.keyWindow
-    );
-  }
+  return OAuthPresentationContextProvider;
 }
 
 /**
@@ -64,7 +74,7 @@ export function registerOAuthHandlers(): void {
             }
           );
 
-          activeProvider = OAuthPresentationContextProvider.new();
+          activeProvider = oauthContextProviderClass().new();
           session.presentationContextProvider = activeProvider;
           session.prefersEphemeralWebBrowserSession = !!ephemeral;
           activeSession = session;

@@ -4,23 +4,6 @@ import { requestPermissions } from './android-helpers';
 
 const err = (code: string, message: string) => Object.assign(new Error(message), { code });
 
-// iOS speech-synthesizer delegate — both finish & cancel settle the pending speak (the JS
-// `speakPending` is captured via the `onSettle` instance field, assigned after `new()`).
-@NativeClass()
-class SpeakDelegate extends NSObject implements AVSpeechSynthesizerDelegate {
-  static ObjCProtocols = [AVSpeechSynthesizerDelegate];
-  onSettle?: () => void;
-  static new(): SpeakDelegate {
-    return <SpeakDelegate>super.new();
-  }
-  speechSynthesizerDidFinishSpeechUtterance(_s: AVSpeechSynthesizer, _u: AVSpeechUtterance): void {
-    this.onSettle?.();
-  }
-  speechSynthesizerDidCancelSpeechUtterance(_s: AVSpeechSynthesizer, _u: AVSpeechUtterance): void {
-    this.onSettle?.();
-  }
-}
-
 /**
  * Voice I/O. TTS: iOS AVSpeechSynthesizer / Android TextToSpeech — speak resolves on finish.
  * STT: iOS SFSpeechRecognizer + AVAudioEngine mic tap / Android SpeechRecognizer — listen resolves
@@ -37,6 +20,26 @@ export function registerSpeechHandlers(): void {
 }
 
 function registerIos(): void {
+  // iOS speech-synthesizer delegate — both finish & cancel settle the pending speak (the JS
+  // `speakPending` is captured via the `onSettle` instance field, assigned after `new()`). Declared
+  // INSIDE this iOS-only registrar (mirrors app.ts): NSObject/AV* are iOS globals and this shared
+  // module is imported on Android too, so a top-level `@NativeClass extends NSObject` would crash at
+  // module load.
+  @NativeClass()
+  class SpeakDelegate extends NSObject implements AVSpeechSynthesizerDelegate {
+    static ObjCProtocols = [AVSpeechSynthesizerDelegate];
+    onSettle?: () => void;
+    static new(): SpeakDelegate {
+      return <SpeakDelegate>super.new();
+    }
+    speechSynthesizerDidFinishSpeechUtterance(_s: AVSpeechSynthesizer, _u: AVSpeechUtterance): void {
+      this.onSettle?.();
+    }
+    speechSynthesizerDidCancelSpeechUtterance(_s: AVSpeechSynthesizer, _u: AVSpeechUtterance): void {
+      this.onSettle?.();
+    }
+  }
+
   // Strong refs while a session is live — ARC would otherwise free the synthesizer/engine/delegate
   // the moment the JS locals fall out of scope (same hazard as handlers-scanner/oauth).
   let synth: AVSpeechSynthesizer | null = null;

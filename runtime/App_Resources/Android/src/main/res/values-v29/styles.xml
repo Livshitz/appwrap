@@ -10,6 +10,10 @@
             but the way the app is converted may lead to visual issues 
         -->
         <item name="android:forceDarkAllowed">false</item>
+
+        <!-- Draw into the display cutout/notch region so the app can be genuinely edge-to-edge
+             (paired with runtime enableEdgeToEdge + the edgeToEdge config's WebView un-boxing). -->
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>
 
     <style name="AppTheme" parent="AppThemeBase29">
