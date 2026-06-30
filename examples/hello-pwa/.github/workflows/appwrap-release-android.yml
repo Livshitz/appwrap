@@ -41,10 +41,10 @@ jobs:
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick   # appwrap icon-gen needs an image tool (no sips on Linux)
       - run: bun install && bun run build        # → dist/ (the PWA bundle the wrapper ships)
       # Pin global tools — unpinned installs can grab a breaking release mid-flight. Bump deliberately.
-      - run: npm i -g nativescript@9.0.6
+      - run: bun add -g nativescript@9.0.6
       - run: bunx @livx.cc/appwrap init                      # native/ is generated (gitignored) — regenerate fresh in CI
       - working-directory: native
-        run: npm install
+        run: bun install
       - name: Decode upload keystore
         run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/upload.keystore"
       - name: Build signed AAB
