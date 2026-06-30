@@ -131,6 +131,21 @@ async function showDevMenu(): Promise<void> {
   }
 }
 
+/** Native build id — iOS `CFBundleVersion` / Android `versionCode`. This is the number the store shows
+ * (TestFlight/Play), so it lets a tester confirm exactly which uploaded build is running. */
+function nativeBuild(): string {
+  try {
+    if (isIOS) return String(NSBundle.mainBundle.objectForInfoDictionaryKey('CFBundleVersion'));
+    if (isAndroid) {
+      const ctx = Utils.android.getApplicationContext();
+      return String(ctx.getPackageManager().getPackageInfo(ctx.getPackageName(), 0).versionCode);
+    }
+  } catch (e) {
+    console.warn('AppWrap: devmenu nativeBuild read failed', e);
+  }
+  return '?';
+}
+
 async function showInfo(): Promise<void> {
   // Running web version: prefer what kit.updates reported, else read the page's embedded global
   // directly — so the line shows for any server-loader app exposing __APP_VERSION__, even if its
@@ -140,7 +155,8 @@ async function showInfo(): Promise<void> {
   const lines = [
     `App: ${SHELL_CONFIG.name}`,
     `ID: ${SHELL_CONFIG.appId}`,
-    `Shell: ${SHELL_CONFIG.version} (${SHELL_BUILD})`,
+    `Version: ${SHELL_CONFIG.version} (build ${nativeBuild()})`, // native CFBundleVersion/versionCode = the store build id
+    `Shell: ${SHELL_BUILD}`,
     `Platform: ${isIOS ? 'iOS' : 'Android'} ${Device.osVersion}`,
     `Loader: ${SHELL_CONFIG.loader}`,
   ];
