@@ -1714,14 +1714,16 @@ function buildFingerprint(cwd: string, cfg: { pwaDist?: string }, _outDir: strin
   return h.toString(36);
 }
 
-const BUILD_CACHE_FILE = '.appwrap-build-cache.json';
-interface BuildCache { fingerprint: string; ipaPath: string; builtAt: string }
+// Per-platform build cache (iOS .ipa / Android .apk) — separate files so the two don't clobber each
+// other's fingerprint (that's what enables the build-skip on BOTH platforms).
+const buildCacheFile = (platform: string) => `.appwrap-build-cache-${platform}.json`;
+interface BuildCache { fingerprint: string; artifactPath: string; builtAt: string }
 
-function readBuildCache(outDir: string): BuildCache | null {
-  try { return JSON.parse(readFileSync(join(outDir, BUILD_CACHE_FILE), 'utf8')); } catch { return null; }
+function readBuildCache(outDir: string, platform: string): BuildCache | null {
+  try { return JSON.parse(readFileSync(join(outDir, buildCacheFile(platform)), 'utf8')); } catch { return null; }
 }
-function writeBuildCache(outDir: string, cache: BuildCache): void {
-  try { writeFileSync(join(outDir, BUILD_CACHE_FILE), JSON.stringify(cache, null, 2)); } catch { /* non-fatal */ }
+function writeBuildCache(outDir: string, platform: string, cache: BuildCache): void {
+  try { writeFileSync(join(outDir, buildCacheFile(platform)), JSON.stringify(cache, null, 2)); } catch { /* non-fatal */ }
 }
 
 /** Discover usable physical iOS devices via devicectl (USB + network). Excludes 'unavailable'
@@ -1776,6 +1778,40 @@ function pickDevice(devices: DeviceInfo[], explicitId?: string): DeviceInfo {
  * distribution signing) — for testing on your own device. Run the PWA build first (or via the script).
  * iOS has a bespoke Debug-IPA path (below); Android delegates to `run` (NativeScript builds + installs
  * + launches), so the `deploy <platform>` surface is symmetric across both. */
+/** The project's web-build command: explicit `webBuild` in config, else `bun run build` if the
+ * project's package.json has a "build" script. null when there's nothing to run. */
+function detectWebBuildCmd(cwd: string, cfg: AppwrapConfig): string[] | null {
+  const explicit = (cfg as { webBuild?: string }).webBuild;
+  if (explicit) return explicit.trim().split(/\s+/);
+  try {
+    const pj = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf8'));
+    if (pj.scripts?.build) return ['bun', 'run', 'build'];
+  } catch { /* no package.json */ }
+  return null;
+}
+
+/** Build the web bundle before a device deploy, but ONLY for a bundled loader — a `loader:'server'`
+ * app loads the live serverUrl, so its dist is unused (building it would be wasteful + misleading).
+ * Prints exactly what it's doing either way. `--no-web-build` skips it (ship the current dist as-is,
+ * e.g. to hit the native build-skip fast-path when only the wrapper changed). */
+function buildWebIfBundled(cwd: string, cfg: AppwrapConfig, flags: Record<string, string>): void {
+  if ((cfg.loader ?? 'app') === 'server') {
+    console.log('ℹ loader:server — NOT building the web (the app loads serverUrl live; the bundle is unused).');
+    return;
+  }
+  if ('no-web-build' in flags) {
+    console.log('ℹ --no-web-build — shipping the CURRENT dist/ as-is (web NOT rebuilt).');
+    return;
+  }
+  const cmd = detectWebBuildCmd(cwd, cfg);
+  if (!cmd) {
+    console.warn('⚠ Bundled loader but no web-build command (no package.json "build" script / `webBuild` config). Shipping the CURRENT dist/ — it may be STALE.');
+    return;
+  }
+  console.log(`▶ ${cmd.join(' ')}  (bundled loader → fresh web bundle so dist isn't stale)`);
+  execFileSync(cmd[0], cmd.slice(1), { cwd, stdio: 'inherit' });
+}
+
 /** Resolve adb: $ANDROID_HOME/$ANDROID_SDK_ROOT platform-tools, else `adb` on PATH. */
 function androidAdb(): string {
   const home = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
@@ -1833,13 +1869,25 @@ async function deployAndroid(cwd: string, flags: Record<string, string>): Promis
   const adb = androidAdb();
   const device = pickAndroidDevice(adb, flags.device || undefined); // fail fast before the build
 
+  buildWebIfBundled(cwd, cfg, flags);                  // bundled → fresh web bundle; server → skip (both printed)
   await sync(cwd, flags);                              // re-stamp config + copy latest PWA dist
   stampShellConfig(outDir, { ...cfg, debug: true });   // debug: keep-awake + WebView inspector (parity with deploy ios)
 
-  console.log('▶ ns build android (debug)');
-  runNs(outDir, ['build', 'android']);                 // bun-installs deps if needed, then gradle build
   const apk = join(outDir, 'platforms/android/app/build/outputs/apk/debug/app-debug.apk');
-  if (!existsSync(apk)) { console.error(`✖ No APK produced at ${apk}`); process.exit(1); }
+  // Fingerprint build-skip (parity with deploy ios): skip the gradle build when dist + config are
+  // unchanged since the last build. --force/-f always rebuilds. (Rebuilding the web above usually
+  // bumps the fingerprint; pair with --no-web-build to actually hit this fast-path.)
+  const force = 'force' in flags || 'f' in flags;
+  const fp = buildFingerprint(cwd, cfg, outDir);
+  const cache = readBuildCache(outDir, 'android');
+  if (!force && existsSync(apk) && cache?.fingerprint === fp && cache?.artifactPath === apk) {
+    console.log(`⚡ Skipping build — inputs unchanged since last build (${apk.split('/').pop()})`);
+  } else {
+    console.log(`▶ ns build android (debug)${force ? '  [--force]' : ''}`);
+    runNs(outDir, ['build', 'android']);               // bun-installs deps if needed, then gradle build
+    if (!existsSync(apk)) { console.error(`✖ No APK produced at ${apk}`); process.exit(1); }
+    writeBuildCache(outDir, 'android', { fingerprint: fp, artifactPath: apk, builtAt: new Date().toISOString() });
+  }
 
   console.log(`▶ installing → ${device}`);
   try {
@@ -1883,6 +1931,7 @@ async function deploy(cwd: string, flags: Record<string, string>, positionals: s
   // Pick the device up front so we fail fast before a long build if nothing's connected.
   const device = pickDevice(listIosDevices(), flags.device || undefined);
 
+  buildWebIfBundled(cwd, cfg, flags); // bundled → fresh web bundle (no stale dist); server → skip (printed)
   await sync(cwd, flags); // re-stamp config + copy latest PWA dist (+ vendor backend assets)
   // Dev deploy → debug mode: keep-awake + WebView inspector for continuous troubleshooting.
   stampShellConfig(outDir, { ...cfg, debug: true });
@@ -1896,11 +1945,11 @@ async function deploy(cwd: string, flags: Record<string, string>, positionals: s
   const resume = 'resume' in flags || 'r' in flags;
   const force = 'force' in flags || 'f' in flags;
   const fp = buildFingerprint(cwd, cfg, outDir);
-  const cache = readBuildCache(outDir);
+  const cache = readBuildCache(outDir, 'ios');
   const existingIpa = existsSync(ipaDir)
     ? readdirSync(ipaDir).find((f) => f.endsWith('.ipa'))
     : undefined;
-  const fingerprintMatch = !force && existingIpa && cache?.fingerprint === fp && cache?.ipaPath === join(ipaDir, existingIpa);
+  const fingerprintMatch = !force && existingIpa && cache?.fingerprint === fp && cache?.artifactPath === join(ipaDir, existingIpa);
   // --resume also accepts a missing cache file (e.g. after a manual Xcode build or first run),
   // but ONLY when the fingerprint matches what's currently on disk — never skips a needed build.
   const noCache = existingIpa && !cache;
@@ -1932,7 +1981,7 @@ async function deploy(cwd: string, flags: Record<string, string>, positionals: s
   const ipa = builtIpa;
   if (!ipa) { console.error(`✖ No .ipa produced in ${ipaDir}`); process.exit(1); }
   const ipaPath = join(ipaDir, ipa);
-  if (!canSkipBuild) writeBuildCache(outDir, { fingerprint: fp, ipaPath, builtAt: new Date().toISOString() });
+  if (!canSkipBuild) writeBuildCache(outDir, 'ios', { fingerprint: fp, artifactPath: ipaPath, builtAt: new Date().toISOString() });
 
   console.log(`▶ installing ${ipa} → ${device.name} [${device.transport}]`);
   let installedViaUsbmux = false;
@@ -2061,11 +2110,27 @@ function libimobiledeviceUdid(): { udid: string; network: boolean } | null {
  * Headless-friendly: redirect to a file and read it. */
 async function logs(cwd: string, flags: Record<string, string>, positionals: string[]): Promise<void> {
   const platform = positionals[0] ?? 'ios';
-  if (platform !== 'ios') {
-    console.error('Usage: appwrap logs ios [--once] [--native] [--device <id|name>]');
+  if (platform !== 'ios' && platform !== 'android') {
+    console.error('Usage: appwrap logs <ios|android> [--once] [--native] [--device <id|name>]');
     process.exit(1);
   }
   const cfg = await loadConfig(cwd, flags);
+
+  // ── Android: adb logcat — WebView console (chromium tag) by default; --native = full app logcat ──
+  if (platform === 'android') {
+    const adb = androidAdb();
+    const device = pickAndroidDevice(adb, flags.device || undefined);
+    const once = 'once' in flags;
+    if ('native' in flags) {
+      const pid = (() => { try { return execFileSync(adb, ['-s', device, 'shell', 'pidof', cfg.id], { encoding: 'utf8' }).trim().split(/\s+/)[0]; } catch { return ''; } })();
+      console.log(`▶ logcat for ${cfg.id}${pid ? ` (pid ${pid})` : ' (not running — full stream)'}${once ? ' [once]' : ''} — Ctrl-C to stop.`);
+      try { execFileSync(adb, ['-s', device, 'logcat', ...(once ? ['-d'] : []), ...(pid ? ['--pid', pid] : [])], { stdio: 'inherit' }); } catch { process.exit(1); }
+      return;
+    }
+    console.log(`▶ WebView console (chromium) for ${cfg.id}${once ? ' [once]' : ''} — Ctrl-C to stop.  (--native for full app logcat)`);
+    try { execFileSync(adb, ['-s', device, 'logcat', ...(once ? ['-d'] : []), '-s', 'chromium:I'], { stdio: 'inherit' }); } catch { process.exit(1); }
+    return;
+  }
 
   if ('native' in flags) {
     const li = libimobiledeviceUdid();
@@ -2116,6 +2181,40 @@ async function logs(cwd: string, flags: Record<string, string>, positionals: str
 
 /** CLI dispatch. Guarded by `import.meta.main` so importing this module (e.g. for the `AppwrapConfig`
  * type via the package entry) doesn't run a command. */
+/** `appwrap debug <ios|android>` — point at the WebView inspector for the (debug-built) app, then
+ * stream its console. Debug builds enable the inspector (deploy installs one); this just opens the
+ * door + tails logs — no rebuild. Android: adb-forwards the WebView devtools socket → chrome://inspect.
+ * iOS: prints the Safari Web Inspector path. Both then fall through to `logs` for the live console. */
+async function debug(cwd: string, flags: Record<string, string>, positionals: string[]): Promise<void> {
+  const platform = positionals[0];
+  if (platform !== 'ios' && platform !== 'android') {
+    console.error('Usage: appwrap debug <ios|android> [--device <id|name>]');
+    process.exit(1);
+  }
+  const cfg = await loadConfig(cwd, flags);
+  if (platform === 'android') {
+    const adb = androidAdb();
+    const device = pickAndroidDevice(adb, flags.device || undefined);
+    const pid = (() => { try { return execFileSync(adb, ['-s', device, 'shell', 'pidof', cfg.id], { encoding: 'utf8' }).trim().split(/\s+/)[0]; } catch { return ''; } })();
+    if (pid) {
+      try {
+        execFileSync(adb, ['-s', device, 'forward', 'tcp:9222', `localabstract:webview_devtools_remote_${pid}`], { stdio: 'pipe' });
+        console.log('✓ WebView devtools forwarded → open chrome://inspect (or http://localhost:9222) in desktop Chrome to inspect the page.');
+      } catch {
+        console.log('⚠ Could not forward the devtools socket — open chrome://inspect and look for the device there.');
+      }
+    } else {
+      console.log(`⚠ ${cfg.id} not running — launch it (or \`appwrap deploy android\`), then open chrome://inspect.`);
+    }
+    console.log('  (Needs a DEBUG build — `appwrap deploy android` installs one with the inspector enabled.)\n');
+  } else {
+    console.log('▶ iOS WebView inspector: Safari → Develop → [your iPhone] → [the app]. Enable it first in iOS Settings → Safari → Advanced → Web Inspector.');
+    console.log('  (Needs a DEBUG build — `appwrap deploy ios` installs one.)\n');
+  }
+  // Tail the live console (reuses logs' per-platform streaming).
+  await logs(cwd, flags, positionals);
+}
+
 async function main(): Promise<void> {
   const { command, flags, positionals } = parseArgs(process.argv.slice(2));
   const cwd = process.cwd();
@@ -2148,14 +2247,20 @@ async function main(): Promise<void> {
     case 'logs':
       await logs(cwd, flags, positionals);
       break;
+    case 'debug':
+      await debug(cwd, flags, positionals);
+      break;
     default:
-      console.log('Usage: appwrap <init|sync|dev|run|build|deploy|release|submit|logs> [--config <path>] [--out native]\n' +
+      console.log('Usage: appwrap <init|sync|dev|run|build|deploy|release|submit|logs|debug> [--config <path>] [--out native]\n' +
         '  config: appwrap.config.ts (preferred) → .js → appwrap.json\n' +
         '  run <ios|android> [--device <id|name>]    (compile + boot in a simulator/emulator, live reload)\n' +
-        '  build <ios|android> [--release] [--aab]   deploy <ios|android> [--device <id|name>] [--no-launch]\n' +
+        '  deploy <ios|android> [--device <id|name>] [--no-launch] [--no-web-build] [-f]  (build → install to device → launch; builds web if bundled)\n' +
+        '  build <ios|android> [--release] [--aab]   (store artifact)\n' +
         '  release ios [--server-url <url>] [--env <name>] [--build-number <n>]  (build+sign+upload to TestFlight)\n' +
         '  submit ios [--build-number <n>] [--submit-for-review]  (promote the binary to the App Store; metadata stays in ASC)\n' +
-        '  logs ios [--once] [--native]   dev [--url <url> | --port <p>]');
+        '  logs <ios|android> [--once] [--native]    (stream WebView console; --native = full OS log)\n' +
+        '  debug <ios|android> [--device <id|name>]  (open the WebView inspector + stream console)\n' +
+        '  dev [--url <url> | --port <p>]');
       process.exit(command ? 1 : 0);
   }
 }
