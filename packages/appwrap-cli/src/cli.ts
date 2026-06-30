@@ -1318,19 +1318,23 @@ function readStampedLoader(outDir: string): { loader: string; serverUrl: string;
   }
 }
 
-/** `appwrap run <ios|android> [--device <id|name>]` — compile + boot the wrapper in a
- * simulator/emulator (or named device) with live reload: the appwrap-managed replacement for raw
- * `ns run`, driven from the PWA project root with deps auto-installed.
+/** `appwrap run <ios|android> [sim] [--device <id|name>] [-d] [--watch]` — live-dev.
  *
- * Refreshes the generated wrapper from the source template + PWA first (same regenerateCore as
- * `sync`/`build`) so framework `runtime/` edits and PWA rebuilds actually reach the device — `run`
- * used to skip this and silently ship the STALE generated shell (the run-without-sync footgun). An
- * ACTIVE `dev` loader (loader:'server', stamped by `appwrap dev`) is preserved so dev→run
- * live-reload isn't clobbered back to the bundled loader. */
+ *  DEFAULT target = the physical DEVICE. On a device we MUST NOT use `ns run` (NativeScript's livesync
+ *  throws `Invalid version. Must be a string. Got type "object"` after a successful install on a
+ *  physical Android device — an ns-internal semver bug, unfixable by us, fires even with --no-hmr). So
+ *  device-run = exactly the clean `deploy` path (build → install → launch → exit) THEN stream the
+ *  WebView console (the shared `logs` streamer). `--watch` instead loops: on a source change it
+ *  rebuilds+reinstalls (a plain watch loop — NOT ns livesync/HMR).
+ *
+ *  The `sim` positional targets the simulator/emulator, where `ns run` (HMR) IS reliable + fast — so
+ *  `run ios sim` / `run android sim` use the appwrap-managed `ns run` wrapper (refreshing the generated
+ *  wrapper from the template + PWA first, preserving an active `dev` loader). */
 async function run(cwd: string, flags: Record<string, string>, positionals: string[]): Promise<void> {
   const platform = positionals[0];
+  const target = positionals[1]; // 'sim' → emulator/simulator; else the physical device
   if (platform !== 'ios' && platform !== 'android') {
-    console.error('Usage: appwrap run <ios|android> [--device <id|name>] [--out native]');
+    console.error('Usage: appwrap run <ios|android> [sim] [--device <id|name>] [-d] [--watch] [--out native]');
     process.exit(1);
   }
   const outDir = resolve(cwd, flags.out ?? 'native');
@@ -1338,18 +1342,56 @@ async function run(cwd: string, flags: Record<string, string>, positionals: stri
     console.error(`✖ Wrapper not found at ${outDir} — run \`appwrap init\` first`);
     process.exit(1);
   }
-  const cfg = await loadConfig(cwd, flags);
-  const stamped = readStampedLoader(outDir);
-  const devActive = stamped?.loader === 'server';
-  // Preserve a live dev loader; otherwise regenerate from the appwrap config (bundled loader).
-  const effectiveCfg = devActive
-    ? { ...cfg, loader: 'server' as const, serverUrl: stamped!.serverUrl, debug: stamped!.debug }
-    : cfg;
-  regenerateCore(cwd, outDir, effectiveCfg, { flags });
-  applyOverrides(cwd, outDir, effectiveCfg); // overrides win last — same order as sync (else run wipes them)
-  stampVersionManifest(outDir, effectiveCfg); // keep the managed-marker / provenance current
-  console.log(devActive ? `✓ Refreshed wrapper (preserved dev loader → ${stamped!.serverUrl})` : '✓ Refreshed wrapper from template + PWA');
-  runNs(outDir, ['run', platform, ...(flags.device ? ['--device', flags.device] : [])]);
+
+  // ── sim/emulator: ns run (HMR) is reliable here — keep the managed ns-run wrapper. ──
+  if (target === 'sim') {
+    const cfg = await loadConfig(cwd, flags);
+    const stamped = readStampedLoader(outDir);
+    const devActive = stamped?.loader === 'server';
+    const effectiveCfg = devActive
+      ? { ...cfg, loader: 'server' as const, serverUrl: stamped!.serverUrl, debug: stamped!.debug }
+      : cfg;
+    regenerateCore(cwd, outDir, effectiveCfg, { flags });
+    applyOverrides(cwd, outDir, effectiveCfg); // overrides win last — same order as sync (else run wipes them)
+    stampVersionManifest(outDir, effectiveCfg);
+    console.log(devActive ? `✓ Refreshed wrapper (preserved dev loader → ${stamped!.serverUrl})` : '✓ Refreshed wrapper from template + PWA');
+    runNs(outDir, ['run', platform, ...(flags.device ? ['--device', flags.device] : [])]);
+    return;
+  }
+
+  // ── device: clean deploy (NO ns livesync → no "Invalid version" error), then stream logs / watch. ──
+  await deploy(cwd, flags, [platform]);
+  // After deploy resolves+persists the device, follow-ups reuse it from last-device memory — drop an
+  // interactive `-d` so we don't re-prompt for the same phone we just deployed to.
+  const followFlags = { ...flags }; delete followFlags.d;
+  if ('watch' in flags) {
+    await watchAndRedeploy(cwd, followFlags, platform);
+  } else {
+    console.log('\n▶ streaming WebView console (run = deploy + logs). Edit + `appwrap run ' + platform + ' --watch` to auto-redeploy. Ctrl-C to stop.');
+    await logs(cwd, followFlags, [platform]);
+  }
+}
+
+/** Lean watch loop for `run <platform> --watch`: re-run the clean deploy path whenever a project
+ * source file changes (debounced). Skips generated/output dirs. NOT ns livesync — a full rebuild+
+ * reinstall, which is the only device-safe path (see `run`'s note). macOS recursive fs.watch. */
+async function watchAndRedeploy(cwd: string, flags: Record<string, string>, platform: 'ios' | 'android'): Promise<void> {
+  const { watch } = await import('fs');
+  const ignore = /(^|\/)(native|node_modules|dist|\.git|\.appwrap)(\/|$)/;
+  console.log(`\n👀 watching ${cwd} for changes → rebuild+reinstall on save (Ctrl-C to stop).`);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let busy = false;
+  watch(cwd, { recursive: true }, (_evt, file) => {
+    if (!file || ignore.test(String(file)) || busy) return;
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      busy = true;
+      console.log(`\n🔁 change: ${file} → redeploying…`);
+      try { await deploy(cwd, flags, [platform]); } catch (e) { console.error(`⚠ redeploy failed: ${(e as Error).message}`); }
+      busy = false;
+    }, 600);
+  });
+  await new Promise<void>(() => { /* run until Ctrl-C */ });
 }
 
 /** `appwrap build <ios|android> [--release] [--aab]` — store-readiness build path. Re-stamps config,
@@ -1748,29 +1790,73 @@ function listIosDevices(): DeviceInfo[] {
   }
 }
 
-/** Pick a device: explicit --device wins; else auto-select the only one; else list + prompt. */
-function pickDevice(devices: DeviceInfo[], explicitId?: string): DeviceInfo {
-  if (explicitId) {
-    const m = devices.find((d) => d.id === explicitId || d.name === explicitId);
-    if (!m) { console.error(`✖ --device "${explicitId}" not found among connected devices.`); process.exit(1); }
-    return m;
-  }
-  if (devices.length === 0) {
-    console.error('✖ No connected iOS device found. Plug in via USB (unlocked, "Trust") or pair over Wi-Fi.');
-    process.exit(1);
-  }
-  if (devices.length === 1) {
-    console.log(`📱 Using ${devices[0].name} (${devices[0].model || devices[0].transport})`);
-    return devices[0];
-  }
-  console.log('Multiple devices connected:');
-  devices.forEach((d, i) => console.log(`  ${i + 1}) ${d.name} — ${d.model || 'iPhone'} [${d.transport}]`));
+// ─── Shared device resolver ───────────────────────────────────────────────────────────────────────
+// One helper used by deploy/run/debug/logs/publish so every command shares the SAME device-selection
+// UX + last-device memory. Resolution order:
+//   --device <id|name> → exact match (error if not connected)
+//   -d                 → always show the interactive list + number prompt
+//   else               → the LAST chosen device (persisted) if still connected; else the only one;
+//                        else the interactive list; none → clear error. The choice is persisted on
+//                        success so the next command (e.g. `run`→`logs`) reuses it without re-asking.
+// Persist the last device under the wrapper outDir (already gitignored by consumers, like the build
+// cache) — not the consumer root, so it never shows up as a stray untracked file.
+const lastDeviceFile = (outDir: string, platform: string) => join(outDir, `.appwrap-last-device-${platform}`);
+function readLastDevice(outDir: string, platform: string): string | null {
+  try { return readFileSync(lastDeviceFile(outDir, platform), 'utf8').trim() || null; } catch { return null; }
+}
+function writeLastDevice(outDir: string, platform: string, id: string): void {
+  try { writeFileSync(lastDeviceFile(outDir, platform), id); } catch { /* non-fatal */ }
+}
+
+/** Enumerate connected devices for a platform as a uniform DeviceInfo[] (iOS via devicectl, Android
+ * via adb — adb serials enriched with the product model for a readable picker). */
+function listDevices(platform: 'ios' | 'android'): DeviceInfo[] {
+  if (platform === 'ios') return listIosDevices();
+  const adb = androidAdb();
+  return listAndroidDevices(adb).map((serial) => {
+    let model = '';
+    try { model = execFileSync(adb, ['-s', serial, 'shell', 'getprop', 'ro.product.model'], { encoding: 'utf8' }).trim(); } catch { /* offline */ }
+    return { id: serial, name: model || serial, model, transport: 'usb' };
+  });
+}
+
+/** Interactive number-prompt picker over a device list. */
+function pickInteractively(devices: DeviceInfo[]): DeviceInfo {
+  console.log('Connected devices:');
+  devices.forEach((d, i) => console.log(`  ${i + 1}) ${d.name}${d.model && d.model !== d.name ? ` — ${d.model}` : ''}${d.transport ? ` [${d.transport}]` : ''}  (${d.id})`));
   const ans = (globalThis as { prompt(msg?: string): string | null }).prompt(`Select device [1-${devices.length}]: `);
   const idx = Number(ans) - 1;
-  if (!Number.isInteger(idx) || idx < 0 || idx >= devices.length) {
-    console.error('✖ Invalid selection.'); process.exit(1);
-  }
+  if (!Number.isInteger(idx) || idx < 0 || idx >= devices.length) { console.error('✖ Invalid selection.'); process.exit(1); }
   return devices[idx];
+}
+
+/** Resolve the target device for a platform command (the reusable core). Persists the choice under
+ * `outDir` so the next command (e.g. `run`→`logs`) reuses it. */
+function resolveDevice(outDir: string, platform: 'ios' | 'android', flags: Record<string, string>): DeviceInfo {
+  const devices = listDevices(platform);
+  const noneMsg = platform === 'ios'
+    ? '✖ No connected iOS device found. Plug in via USB (unlocked, "Trust") or pair over Wi-Fi.'
+    : '✖ No authorized Android device. Connect via USB + accept the "Allow USB debugging" prompt (check with `adb devices`).';
+
+  // --device <id|name> — exact (or unambiguous prefix) match against connected devices.
+  if (flags.device) {
+    const m = devices.find((d) => d.id === flags.device || d.name === flags.device) ?? devices.find((d) => d.id.startsWith(flags.device));
+    if (!m) { console.error(`✖ --device "${flags.device}" not connected/authorized. Connected: ${devices.map((d) => d.id).join(', ') || '(none)'}`); process.exit(1); }
+    writeLastDevice(outDir, platform, m.id);
+    return m;
+  }
+  if (devices.length === 0) { console.error(noneMsg); process.exit(1); }
+
+  // -d → always prompt. Otherwise prefer the remembered device, then the sole device.
+  if (!('d' in flags)) {
+    const last = readLastDevice(outDir, platform);
+    const remembered = last ? devices.find((d) => d.id === last) : undefined;
+    if (remembered) { console.log(`📱 Using ${remembered.name} (${remembered.id}) — last used.`); return remembered; }
+    if (devices.length === 1) { console.log(`📱 Using ${devices[0].name} (${devices[0].id}) — only device connected.`); writeLastDevice(outDir, platform, devices[0].id); return devices[0]; }
+  }
+  const picked = pickInteractively(devices);
+  writeLastDevice(outDir, platform, picked.id);
+  return picked;
 }
 
 /** `appwrap deploy <ios|android> [--device <id|name>] [--no-launch]` — build for a device, auto-pick
@@ -1835,26 +1921,6 @@ function listAndroidDevices(adb: string): string[] {
   }
 }
 
-/** Pick the target Android device (fail fast, like iOS's pickDevice): explicit --device, else the
- * single connected one; clear errors for none / multiple / unauthorized. */
-function pickAndroidDevice(adb: string, flag?: string): string {
-  const devices = listAndroidDevices(adb);
-  if (flag) {
-    if (devices.includes(flag)) return flag;
-    console.error(`✖ Device "${flag}" not connected/authorized. Authorized: ${devices.join(', ') || '(none)'}`);
-    process.exit(1);
-  }
-  if (devices.length === 0) {
-    console.error('✖ No authorized Android device. Connect via USB + accept the "Allow USB debugging" prompt (check with `adb devices`).');
-    process.exit(1);
-  }
-  if (devices.length > 1) {
-    console.error(`✖ Multiple devices — pass --device <id>: ${devices.join(', ')}`);
-    process.exit(1);
-  }
-  return devices[0];
-}
-
 /** `appwrap deploy android` — ONE-SHOT device deploy, the Android twin of `deploy ios`: sync + debug
  * config → `ns build android` (debug APK) → `adb install -r` to the device → launch (unless --no-launch)
  * → exit. Unlike `run android` (ns watch-mode), it doesn't stay attached. NOTE: like `deploy ios`, it
@@ -1867,7 +1933,7 @@ async function deployAndroid(cwd: string, flags: Record<string, string>): Promis
     process.exit(1);
   }
   const adb = androidAdb();
-  const device = pickAndroidDevice(adb, flags.device || undefined); // fail fast before the build
+  const device = resolveDevice(outDir, 'android', flags).id; // shared resolver (fail fast before the build)
 
   buildWebIfBundled(cwd, cfg, flags);                  // bundled → fresh web bundle; server → skip (both printed)
   await sync(cwd, flags);                              // re-stamp config + copy latest PWA dist
@@ -1941,7 +2007,7 @@ async function deploy(cwd: string, flags: Record<string, string>, positionals: s
     process.exit(1);
   }
   // Pick the device up front so we fail fast before a long build if nothing's connected.
-  const device = pickDevice(listIosDevices(), flags.device || undefined);
+  const device = resolveDevice(outDir, 'ios', flags);
 
   buildWebIfBundled(cwd, cfg, flags); // bundled → fresh web bundle (no stale dist); server → skip (printed)
   await sync(cwd, flags); // re-stamp config + copy latest PWA dist (+ vendor backend assets)
@@ -2127,11 +2193,12 @@ async function logs(cwd: string, flags: Record<string, string>, positionals: str
     process.exit(1);
   }
   const cfg = await loadConfig(cwd, flags);
+  const outDir = resolve(cwd, flags.out ?? 'native'); // for last-device memory (shared resolver)
 
   // ── Android: adb logcat — WebView console (chromium tag) by default; --native = full app logcat ──
   if (platform === 'android') {
     const adb = androidAdb();
-    const device = pickAndroidDevice(adb, flags.device || undefined);
+    const device = resolveDevice(outDir, 'android', flags).id;
     const once = 'once' in flags;
     if ('native' in flags) {
       const pid = (() => { try { return execFileSync(adb, ['-s', device, 'shell', 'pidof', cfg.id], { encoding: 'utf8' }).trim().split(/\s+/)[0]; } catch { return ''; } })();
@@ -2159,7 +2226,7 @@ async function logs(cwd: string, flags: Record<string, string>, positionals: str
     return;
   }
 
-  const device = pickDevice(listIosDevices(), flags.device || undefined);
+  const device = resolveDevice(outDir, 'ios', flags);
   const dest = join(tmpdir(), `appwrap-weblog-${process.pid}.log`);
   const pull = (): string => {
     try {
@@ -2193,20 +2260,30 @@ async function logs(cwd: string, flags: Record<string, string>, positionals: str
 
 /** CLI dispatch. Guarded by `import.meta.main` so importing this module (e.g. for the `AppwrapConfig`
  * type via the package entry) doesn't run a command. */
-/** `appwrap debug <ios|android>` — point at the WebView inspector for the (debug-built) app, then
- * stream its console. Debug builds enable the inspector (deploy installs one); this just opens the
- * door + tails logs — no rebuild. Android: adb-forwards the WebView devtools socket → chrome://inspect.
- * iOS: prints the Safari Web Inspector path. Both then fall through to `logs` for the live console. */
+/** `appwrap debug <ios|android> [sim] [--attach]` — `run` + open the debugger. By default it deploys a
+ * fresh debug build (which enables the inspector) then attaches; `--attach` skips the (re)deploy and
+ * attaches to whatever's already running. Android: adb-forwards the WebView devtools socket →
+ * chrome://inspect. iOS: prints the Safari Web Inspector path. Both then fall through to `logs` for the
+ * live console. `sim` defers to `ns debug` (the emulator/simulator's own inspector wiring). */
 async function debug(cwd: string, flags: Record<string, string>, positionals: string[]): Promise<void> {
   const platform = positionals[0];
+  const target = positionals[1];
   if (platform !== 'ios' && platform !== 'android') {
-    console.error('Usage: appwrap debug <ios|android> [--device <id|name>]');
+    console.error('Usage: appwrap debug <ios|android> [sim] [--device <id|name>] [--attach]');
     process.exit(1);
   }
   const cfg = await loadConfig(cwd, flags);
+  const outDir = resolve(cwd, flags.out ?? 'native');
+  if (target === 'sim') {
+    runNs(outDir, ['debug', platform]); // ns wires the emulator/sim inspector + log stream
+    return;
+  }
+  // debug = run + attach: deploy a fresh debug build (inspector on) unless --attach (just attach).
+  if (!('attach' in flags)) await deploy(cwd, flags, [platform]);
+  const followFlags = { ...flags }; delete followFlags.d; // reuse the just-deployed device, don't re-prompt
   if (platform === 'android') {
     const adb = androidAdb();
-    const device = pickAndroidDevice(adb, flags.device || undefined);
+    const device = resolveDevice(outDir, 'android', followFlags).id;
     const pid = (() => { try { return execFileSync(adb, ['-s', device, 'shell', 'pidof', cfg.id], { encoding: 'utf8' }).trim().split(/\s+/)[0]; } catch { return ''; } })();
     if (pid) {
       try {
@@ -2224,7 +2301,56 @@ async function debug(cwd: string, flags: Record<string, string>, positionals: st
     console.log('  (Needs a DEBUG build — `appwrap deploy ios` installs one.)\n');
   }
   // Tail the live console (reuses logs' per-platform streaming).
-  await logs(cwd, flags, positionals);
+  await logs(cwd, followFlags, [platform]);
+}
+
+/** `appwrap publish <ios|android> [prod]` — distribution. DEFAULT = BETA (iOS TestFlight via the
+ * proven `release` lane; Android → Play internal track via the mcp-appstores `android-upload` CLI).
+ * `prod` → store (iOS App Store via `submit`; Android Play production track). Consolidates the existing
+ * `release`/`submit` (kept as aliases). Android upload reuses the same contract as the CI release
+ * workflow: a signed AAB from `build android --release --aab` + `APPSTORES_REGISTRY` env for the Play
+ * service-account/package mapping (see the emitted appwrap-release-android.yml). */
+async function publish(cwd: string, flags: Record<string, string>, positionals: string[]): Promise<void> {
+  const platform = positionals[0];
+  const prod = positionals[1] === 'prod';
+  if (platform !== 'ios' && platform !== 'android') {
+    console.error('Usage: appwrap publish <ios|android> [prod]   (default: beta — TestFlight / Play internal)');
+    process.exit(1);
+  }
+  if (platform === 'ios') {
+    // iOS rides the proven fastlane path unchanged: beta → TestFlight, prod → App Store promote.
+    return release(cwd, flags, ['ios'], prod ? 'release' : 'beta');
+  }
+
+  // ── Android: build a signed AAB, then upload via the mcp-appstores CLI (Play Developer API). ──
+  const track = flags.track || (prod ? 'production' : 'internal');
+  console.log(`▶ appwrap build android --release --aab  (for Play ${track} track)`);
+  await build(cwd, { ...flags, release: '', aab: '' }, ['android']);
+  const aab = join(resolve(cwd, flags.out ?? 'native'), 'platforms/android/app/build/outputs/bundle/release/app-release.aab');
+  if (!existsSync(aab)) { console.error(`✖ No AAB produced at ${aab}`); process.exit(1); }
+
+  if (!process.env.APPSTORES_REGISTRY) {
+    console.error(
+      '\n✖ Android publish needs the Play upload contract (same as the CI release workflow):\n' +
+      '  • APPSTORES_REGISTRY env — JSON mapping org→serviceAccountPath + app→packageName.\n' +
+      '  • A Play service-account JSON + the app already created in the Play Console (one prior manual release).\n' +
+      `  The signed AAB is ready: ${aab}\n` +
+      '  Then: APPSTORES_ALLOW_WRITES=true bunx @livx.cc/mcp-appstores android-upload \\\n' +
+      `      --org <org> --app <app> --file "${aab}" --track ${track} --status completed`
+    );
+    process.exit(1);
+  }
+  const org = flags.org || (await loadConfig(cwd, flags)).id;
+  const app = flags.app || 'app';
+  console.log(`▶ bunx @livx.cc/mcp-appstores android-upload --org ${org} --app ${app} --track ${track}`);
+  try {
+    execFileSync('bunx', ['@livx.cc/mcp-appstores', 'android-upload', '--org', org, '--app', app, '--file', aab, '--track', track, '--status', 'completed'],
+      { cwd, stdio: 'inherit', env: { ...process.env, APPSTORES_ALLOW_WRITES: process.env.APPSTORES_ALLOW_WRITES ?? 'true' } });
+  } catch {
+    console.error(`\n✖ Play upload failed. Check APPSTORES_REGISTRY (org "${org}", app "${app}") + the service-account permissions. The AAB is ready: ${aab}`);
+    process.exit(1);
+  }
+  console.log(`✓ Uploaded to Play ${track} track.`);
 }
 
 async function main(): Promise<void> {
@@ -2250,10 +2376,13 @@ async function main(): Promise<void> {
     case 'deploy':
       await deploy(cwd, flags, positionals);
       break;
-    case 'release':
+    case 'publish':
+      await publish(cwd, flags, positionals);
+      break;
+    case 'release': // alias: publish <ios|android> (beta)
       await release(cwd, flags, positionals, 'beta');
       break;
-    case 'submit':
+    case 'submit': // alias: publish <ios> prod
       await release(cwd, flags, positionals, 'release');
       break;
     case 'logs':
@@ -2263,16 +2392,17 @@ async function main(): Promise<void> {
       await debug(cwd, flags, positionals);
       break;
     default:
-      console.log('Usage: appwrap <init|sync|dev|run|build|deploy|release|submit|logs|debug> [--config <path>] [--out native]\n' +
+      console.log('Usage: appwrap <init|sync|dev|run|build|deploy|debug|publish|logs> [--config <path>] [--out native]\n' +
         '  config: appwrap.config.ts (preferred) → .js → appwrap.json\n' +
-        '  run <ios|android> [--device <id|name>]    (compile + boot in a simulator/emulator, live reload)\n' +
-        '  deploy <ios|android> [--device <id|name>] [--no-launch] [--no-web-build] [-f]  (build → install to device → launch; builds web if bundled)\n' +
-        '  build <ios|android> [--release] [--aab]   (store artifact)\n' +
-        '  release ios [--server-url <url>] [--env <name>] [--build-number <n>]  (build+sign+upload to TestFlight)\n' +
-        '  submit ios [--build-number <n>] [--submit-for-review]  (promote the binary to the App Store; metadata stays in ASC)\n' +
+        '  Device selection (deploy/run/debug/logs/publish): --device <id|name> | -d (pick from a list) | else last-used / sole device.\n\n' +
+        '  deploy <ios|android> [--no-launch] [--no-web-build] [-f]   (clean: build → install to DEVICE → launch → exit)\n' +
+        '  run <ios|android> [sim] [--watch]         (DEVICE: deploy + stream logs; --watch = rebuild on save. `sim` = ns run/HMR on emulator)\n' +
+        '  debug <ios|android> [sim] [--attach]      (run + open the WebView inspector + stream console; --attach skips redeploy)\n' +
+        '  publish <ios|android> [prod]              (beta: TestFlight / Play internal. prod: App Store / Play production)\n' +
+        '  build <ios|android> [--release] [--aab]   (store artifact only — no install/upload)\n' +
         '  logs <ios|android> [--once] [--native]    (stream WebView console; --native = full OS log)\n' +
-        '  debug <ios|android> [--device <id|name>]  (open the WebView inspector + stream console)\n' +
-        '  dev [--url <url> | --port <p>]');
+        '  dev [--url <url> | --port <p>]            (point the wrapper at a LAN dev server)\n' +
+        '  aliases: `release ios` = `publish ios`; `submit ios` = `publish ios prod`.');
       process.exit(command ? 1 : 0);
   }
 }
