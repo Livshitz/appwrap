@@ -1891,11 +1891,20 @@ async function deployAndroid(cwd: string, flags: Record<string, string>): Promis
 
   console.log(`▶ installing → ${device}`);
   try {
-    execFileSync(adb, ['-s', device, 'install', '-r', apk], { stdio: 'inherit' });
+    // Capture (not inherit) so we can recognize the MIUI install-restriction and print guidance.
+    const out = execFileSync(adb, ['-s', device, 'install', '-r', apk], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'pipe'] });
+    process.stdout.write(out);
   } catch (e: unknown) {
     const log = execErrText(e);
-    if (/INSTALL_FAILED_USER_RESTRICTED|user is restricted/i.test(log)) {
-      console.error('\n✖ Install blocked by the device. On MIUI/Xiaomi: Developer options → enable "Install via USB" (may need mobile data + a SIM, no VPN).');
+    process.stderr.write(log);
+    if (/INSTALL_FAILED_USER_RESTRICTED|user is restricted|canceled by user/i.test(log)) {
+      console.error(
+        '\n✖ Install blocked/canceled by the device (MIUI/Xiaomi restriction — NOT a build problem).\n' +
+        '  → Unlock the phone and watch for the "Install via USB?" prompt → tap OK/Install.\n' +
+        '  → Developer options: enable "Install via USB" AND "USB debugging (Security settings)".\n' +
+        '    (Toggling these pings Xiaomi servers — needs mobile data + a SIM, no VPN.)\n' +
+        `  The built APK is ready: ${apk}`
+      );
     }
     process.exit(1);
   }
