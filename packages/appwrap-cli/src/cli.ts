@@ -1891,8 +1891,11 @@ async function deployAndroid(cwd: string, flags: Record<string, string>): Promis
 
   console.log(`▶ installing → ${device}`);
   try {
-    // Capture (not inherit) so we can recognize the MIUI install-restriction and print guidance.
-    const out = execFileSync(adb, ['-s', device, 'install', '-r', apk], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'pipe'] });
+    // `--user 0` (primary user) is the robust install target: on MIUI/Xiaomi a BARE `adb install` is
+    // silently auto-denied ("user is restricted from installing apps" — no popup), but scoping it to
+    // user 0 succeeds. On normal single-user devices it's a no-op (install already targets user 0).
+    // Capture (not inherit) so we can still surface guidance if it fails for another reason.
+    const out = execFileSync(adb, ['-s', device, 'install', '-r', '--user', '0', apk], { encoding: 'utf8', stdio: ['inherit', 'pipe', 'pipe'] });
     process.stdout.write(out);
   } catch (e: unknown) {
     const log = execErrText(e);
