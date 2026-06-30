@@ -1776,11 +1776,99 @@ function pickDevice(devices: DeviceInfo[], explicitId?: string): DeviceInfo {
  * distribution signing) — for testing on your own device. Run the PWA build first (or via the script).
  * iOS has a bespoke Debug-IPA path (below); Android delegates to `run` (NativeScript builds + installs
  * + launches), so the `deploy <platform>` surface is symmetric across both. */
+/** Resolve adb: $ANDROID_HOME/$ANDROID_SDK_ROOT platform-tools, else `adb` on PATH. */
+function androidAdb(): string {
+  const home = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
+  if (home) {
+    const p = join(home, 'platform-tools', 'adb');
+    if (existsSync(p)) return p;
+  }
+  return 'adb';
+}
+
+/** Authorized (`device` state) adb serials. Skips `unauthorized`/`offline`. */
+function listAndroidDevices(adb: string): string[] {
+  try {
+    return execFileSync(adb, ['devices'], { encoding: 'utf8' })
+      .split('\n').slice(1)
+      .filter((l) => /\tdevice\b/.test(l))
+      .map((l) => l.split('\t')[0].trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/** Pick the target Android device (fail fast, like iOS's pickDevice): explicit --device, else the
+ * single connected one; clear errors for none / multiple / unauthorized. */
+function pickAndroidDevice(adb: string, flag?: string): string {
+  const devices = listAndroidDevices(adb);
+  if (flag) {
+    if (devices.includes(flag)) return flag;
+    console.error(`✖ Device "${flag}" not connected/authorized. Authorized: ${devices.join(', ') || '(none)'}`);
+    process.exit(1);
+  }
+  if (devices.length === 0) {
+    console.error('✖ No authorized Android device. Connect via USB + accept the "Allow USB debugging" prompt (check with `adb devices`).');
+    process.exit(1);
+  }
+  if (devices.length > 1) {
+    console.error(`✖ Multiple devices — pass --device <id>: ${devices.join(', ')}`);
+    process.exit(1);
+  }
+  return devices[0];
+}
+
+/** `appwrap deploy android` — ONE-SHOT device deploy, the Android twin of `deploy ios`: sync + debug
+ * config → `ns build android` (debug APK) → `adb install -r` to the device → launch (unless --no-launch)
+ * → exit. Unlike `run android` (ns watch-mode), it doesn't stay attached. NOTE: like `deploy ios`, it
+ * ships the CURRENT `dist/` — build the web first (`bun run build`, or use the `bun run android` script). */
+async function deployAndroid(cwd: string, flags: Record<string, string>): Promise<void> {
+  const cfg = await loadConfig(cwd, flags);
+  const outDir = resolve(cwd, flags.out ?? 'native');
+  if (!existsSync(outDir)) {
+    console.error(`✖ Wrapper not found at ${outDir} — run \`appwrap init\` first`);
+    process.exit(1);
+  }
+  const adb = androidAdb();
+  const device = pickAndroidDevice(adb, flags.device || undefined); // fail fast before the build
+
+  await sync(cwd, flags);                              // re-stamp config + copy latest PWA dist
+  stampShellConfig(outDir, { ...cfg, debug: true });   // debug: keep-awake + WebView inspector (parity with deploy ios)
+
+  console.log('▶ ns build android (debug)');
+  runNs(outDir, ['build', 'android']);                 // bun-installs deps if needed, then gradle build
+  const apk = join(outDir, 'platforms/android/app/build/outputs/apk/debug/app-debug.apk');
+  if (!existsSync(apk)) { console.error(`✖ No APK produced at ${apk}`); process.exit(1); }
+
+  console.log(`▶ installing → ${device}`);
+  try {
+    execFileSync(adb, ['-s', device, 'install', '-r', apk], { stdio: 'inherit' });
+  } catch (e: unknown) {
+    const log = execErrText(e);
+    if (/INSTALL_FAILED_USER_RESTRICTED|user is restricted/i.test(log)) {
+      console.error('\n✖ Install blocked by the device. On MIUI/Xiaomi: Developer options → enable "Install via USB" (may need mobile data + a SIM, no VPN).');
+    }
+    process.exit(1);
+  }
+
+  if (!('no-launch' in flags)) {
+    console.log(`▶ launching ${cfg.id}`);
+    try {
+      execFileSync(adb, ['-s', device, 'shell', 'monkey', '-p', cfg.id, '-c', 'android.intent.category.LAUNCHER', '1'], { stdio: 'ignore' });
+    } catch {
+      console.error('⚠ Launch failed — the app is installed; tap its icon.');
+    }
+  }
+  console.log(`✓ Deployed to ${device}.`);
+}
+
 async function deploy(cwd: string, flags: Record<string, string>, positionals: string[]): Promise<void> {
   const platform = positionals[0];
   if (platform === 'android') {
-    // Aligned surface: `deploy android` == `run android` (Android's run already does build+install+launch).
-    return run(cwd, flags, positionals);
+    // Parity with `deploy ios`: a clean ONE-SHOT build → install-to-device → launch → exit (NOT `ns run`,
+    // which is watch-mode + hangs on some devices). Mirrors the iOS path with the adb toolchain.
+    return deployAndroid(cwd, flags);
   }
   if (platform !== 'ios') {
     console.error('Usage: appwrap deploy <ios|android> [--device <id|name>] [--no-launch]');
