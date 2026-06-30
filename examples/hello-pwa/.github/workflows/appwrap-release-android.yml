@@ -30,6 +30,13 @@ jobs:
         with: { node-version: 22 }
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
+          restore-keys: gradle-${{ runner.os }}-
       - uses: android-actions/setup-android@v3
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick   # appwrap icon-gen needs an image tool (no sips on Linux)
       - run: bun install && bun run build        # → dist/ (the PWA bundle the wrapper ships)
@@ -42,6 +49,7 @@ jobs:
         run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/upload.keystore"
       - name: Build signed AAB
         env:
+          GRADLE_OPTS: "-Dorg.gradle.caching=true -Dorg.gradle.parallel=true -Dorg.gradle.daemon=false"
           APPWRAP_ANDROID_KEYSTORE: ${{ runner.temp }}/upload.keystore
           APPWRAP_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           APPWRAP_ANDROID_KEYSTORE_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
