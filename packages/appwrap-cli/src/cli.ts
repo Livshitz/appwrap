@@ -1280,7 +1280,7 @@ async function dev(cwd: string, flags: Record<string, string>, positionals: stri
   const sim = 'sim' in flags || positionals[1] === 'sim';
   const wantDebug = 'debug' in flags;
   if (platform !== 'ios' && platform !== 'android') {
-    console.error('Usage: appwrap dev <ios|android> [--sim] [--detached] [--debug] [--url <devserver>|--port <p>]');
+    console.error('Usage: appwrap dev <ios|android> [--sim] [--detached] [--debug] [--wifi] [--device <id|ip[:port]>] [--url <devserver>|--port <p>]');
     process.exit(1);
   }
   const cfg = await loadConfig(cwd, flags);
@@ -1933,7 +1933,8 @@ function listDevices(platform: 'ios' | 'android'): DeviceInfo[] {
   return listAndroidDevices(adb).map((serial) => {
     let model = '';
     try { model = execFileSync(adb, ['-s', serial, 'shell', 'getprop', 'ro.product.model'], { encoding: 'utf8' }).trim(); } catch { /* offline */ }
-    return { id: serial, name: model || serial, model, transport: 'usb' };
+    // A network adb serial is `host:port` (USB serials never contain ':') → label it wifi.
+    return { id: serial, name: model || serial, model, transport: serial.includes(':') ? 'wifi' : 'usb' };
   });
 }
 
@@ -1955,10 +1956,21 @@ function pickInteractively(devices: DeviceInfo[]): DeviceInfo {
 /** Resolve the target device for a platform command (the reusable core). Persists the choice under
  * `outDir` so the next command (e.g. `run`→`logs`) reuses it. */
 function resolveDevice(outDir: string, platform: 'ios' | 'android', flags: Record<string, string>): DeviceInfo {
-  const devices = listDevices(platform);
+  const adb = platform === 'android' ? androidAdb() : '';
+
+  // --wifi (android): flip a USB device to wireless adb (or reconnect a remembered one), then target it.
+  if (platform === 'android' && 'wifi' in flags) enableWifiAdb(adb, outDir, flags);
+
+  // --device <ip[:port]> (android): if it's a network target that isn't attached yet, `adb connect` it.
+  if (platform === 'android' && flags.device && looksLikeAdbHost(flags.device)) {
+    const target = withAdbPort(flags.device);
+    if (!listAndroidDevices(adb).includes(target)) { adbConnect(adb, target); flags.device = target; }
+  }
+
+  let devices = listDevices(platform);
   const noneMsg = platform === 'ios'
     ? '✖ No connected iOS device found. Plug in via USB (unlocked, "Trust") or pair over Wi-Fi.'
-    : '✖ No authorized Android device. Connect via USB + accept the "Allow USB debugging" prompt (check with `adb devices`).';
+    : '✖ No authorized Android device.\n  USB: plug in + accept "Allow USB debugging".\n  Wireless: `appwrap dev android --wifi` (flip a USB device to wireless) or `--device <ip[:port]>` (an already-paired device).\n  (check with `adb devices`)';
 
   // --device <id|name> — exact (or unambiguous prefix) match against connected devices.
   if (flags.device) {
@@ -1967,6 +1979,14 @@ function resolveDevice(outDir: string, platform: 'ios' | 'android', flags: Recor
     writeLastDevice(outDir, platform, m.id);
     return m;
   }
+
+  // Android: nothing attached but a wireless device was remembered → auto-reconnect it (survives sleep /
+  // USB-unplug, so plain `appwrap dev android` keeps working cordless after the first `--wifi`).
+  if (platform === 'android' && !('d' in flags)) {
+    const last = readLastDevice(outDir, 'android');
+    if (last && last.includes(':') && !devices.find((d) => d.id === last) && adbConnect(adb, last)) devices = listDevices(platform);
+  }
+
   if (devices.length === 0) { console.error(noneMsg); process.exit(1); }
 
   // -d → always prompt. Otherwise prefer the remembered device, then the sole device.
@@ -2028,6 +2048,74 @@ function androidAdb(): string {
     if (existsSync(p)) return p;
   }
   return 'adb';
+}
+
+/** Synchronous sleep — the device-resolution path is all sync execFileSync, so we can't await. */
+function sleepSync(ms: number): void { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
+
+/** A `--device` value that looks like a network target (ip / hostname[:port]) vs a USB serial — USB
+ * adb serials are bare alphanumerics, never containing a '.' (ip/host) or ':' (host:port). */
+function looksLikeAdbHost(s: string): boolean { return s.includes('.') || s.includes(':'); }
+/** Normalize a wireless target to host:port (adb's default tcpip port is 5555). */
+function withAdbPort(host: string): string { return /:\d+$/.test(host) ? host : `${host}:5555`; }
+
+/** `adb connect <target>` — true if connected (or already was). Prints the outcome. */
+function adbConnect(adb: string, target: string): boolean {
+  try {
+    const out = execFileSync(adb, ['connect', target], { encoding: 'utf8' }).trim();
+    const ok = /connected to|already connected/i.test(out);
+    console.log(ok ? `🔗 ${out}` : `⚠ adb connect ${target}: ${out}`);
+    return ok;
+  } catch (e) {
+    console.error(`⚠ adb connect ${target} failed: ${execErrText(e).trim()}`);
+    return false;
+  }
+}
+
+/** Read a USB-connected device's Wi-Fi (wlan0) IPv4, or null if it isn't on Wi-Fi. */
+function androidWifiIp(adb: string, serial: string): string | null {
+  for (const args of [
+    ['-s', serial, 'shell', 'ip', '-o', 'route', 'get', '1.1.1.1'],   // "... src 192.168.1.50"
+    ['-s', serial, 'shell', 'ip', '-o', '-f', 'inet', 'addr', 'show', 'wlan0'], // "inet 192.168.1.50/24"
+  ]) {
+    try {
+      const m = execFileSync(adb, args, { encoding: 'utf8' }).match(/(?:src|inet)\s+(\d+\.\d+\.\d+\.\d+)/);
+      if (m && !m[1].startsWith('127.')) return m[1];
+    } catch { /* try next */ }
+  }
+  return null;
+}
+
+/** `--wifi`: flip a USB-connected device into TCP/IP mode and `adb connect` it over the LAN, so the user
+ * can unplug and keep iterating cordless. If nothing's on USB but a wireless device was remembered, just
+ * reconnect that. Sets `flags.device` to the wireless target (and clears `wifi`) so the rest of the
+ * resolve/deploy path — and any later resolveDevice call — targets it without re-flipping. */
+function enableWifiAdb(adb: string, outDir: string, flags: Record<string, string>): void {
+  const usb = listAndroidDevices(adb).filter((s) => !s.includes(':')); // USB-attached serials only
+  if (usb.length === 0) {
+    const last = readLastDevice(outDir, 'android');
+    if (last && last.includes(':') && adbConnect(adb, last)) { flags.device = last; delete flags.wifi; return; }
+    console.error('✖ --wifi needs a USB-connected device to flip to wireless (none found). Plug in once + accept "Allow USB debugging", or pass --device <ip[:port]> for an already-paired device.');
+    process.exit(1);
+  }
+  const serial = flags.device && usb.includes(flags.device) ? flags.device : usb[0];
+  if (usb.length > 1 && serial === usb[0] && !(flags.device && usb.includes(flags.device))) {
+    console.log(`  (multiple USB devices; flipping ${serial} — pass --device <serial> to choose another)`);
+  }
+  const ip = androidWifiIp(adb, serial);
+  if (!ip) { console.error(`✖ Couldn't read ${serial}'s Wi-Fi IP — is it on Wi-Fi? (try: adb -s ${serial} shell ip route)`); process.exit(1); }
+  console.log(`📶 ${serial}: enabling wireless adb on :5555…`);
+  try { execFileSync(adb, ['-s', serial, 'tcpip', '5555'], { stdio: 'pipe' }); }
+  catch (e) { console.error(`✖ adb tcpip failed: ${execErrText(e).trim()}`); process.exit(1); }
+  const target = `${ip}:5555`;
+  // tcpip restarts adbd on the device — connect with a few retries while it comes back up.
+  let connected = false;
+  for (let i = 0; i < 6 && !connected; i++) { sleepSync(700); connected = adbConnect(adb, target); }
+  if (!connected) { console.error(`✖ Couldn't connect to ${target} after tcpip — same Wi-Fi network? firewall blocking :5555?`); process.exit(1); }
+  writeLastDevice(outDir, 'android', target);
+  console.log(`✓ Wireless adb ready → ${target}. You can unplug USB now.`);
+  flags.device = target;
+  delete flags.wifi;
 }
 
 /** Authorized (`device` state) adb serials. Skips `unauthorized`/`offline`. */
@@ -2470,8 +2558,10 @@ async function main(): Promise<void> {
     default:
       console.log('Usage: appwrap <init|sync|dev|build|deploy|publish|logs> [--config <path>] [--out native]\n' +
         '  config: appwrap.config.ts (preferred) → .js → appwrap.json\n' +
-        '  Device selection (dev/deploy/logs/publish): --device <id|name> | -d (pick from a list) | else last-used / sole device.\n\n' +
-        '  dev <ios|android> [--sim] [--detached] [--debug] [--url <devserver>|--port <p>]\n' +
+        '  Device selection (dev/deploy/logs/publish): --device <id|name|ip[:port]> | -d (pick from a list) | else last-used / sole device.\n' +
+        '  Android wireless: --wifi flips a USB device to wireless adb (unplug + keep going); a remembered\n' +
+        '       wireless device auto-reconnects; --device <ip[:port]> `adb connect`s an already-paired one.\n\n' +
+        '  dev <ios|android> [--sim] [--detached] [--debug] [--wifi] [--url <devserver>|--port <p>]\n' +
         '       live-dev: ANDROID device → ns run livesync (true on-device HMR) + re-stage on save;\n' +
         '       iOS device → deploy + rebuild/reinstall on save. --sim = ns run/HMR on emulator;\n' +
         '       --url/--port = web HMR from a dev server inside the WebView; --detached = install & exit.\n' +
