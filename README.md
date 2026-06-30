@@ -46,7 +46,7 @@ EOF
 # 3 · build your PWA, scaffold the native wrapper, run it
 bun run build                            # your existing build → dist/
 bunx @livx.cc/appwrap init                        # generates native/ from your config
-bunx @livx.cc/appwrap run ios            # compile + boot in the simulator (or: run android)
+bunx @livx.cc/appwrap dev ios --sim        # compile + boot in the simulator (or: dev android --sim)
 
 # iterate — rebuild the PWA and re-sync (fast path, no full regen)
 bunx @livx.cc/appwrap sync
@@ -308,7 +308,7 @@ manifest + your overrides — so **gitignore `native/`** and regenerate it any t
 # upgrade the framework, then regenerate the shell — like `expo prebuild`
 bun update @livx.cc/native-kit @livx.cc/appwrap
 appwrap init        # idempotent: re-running regenerates an appwrap-managed wrapper in place
-appwrap run ios
+appwrap dev ios
 ```
 
 - **`init` vs `sync`** — `init` (re)generates the whole shell; use it after a framework upgrade,

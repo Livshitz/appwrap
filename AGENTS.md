@@ -25,7 +25,7 @@ Take any PWA and ship it as a real native app — the same web app, hosted in a 
 bun add -d @livx.cc/appwrap @livx.cc/native-kit
 bun run build                 # your build → dist/
 bunx appwrap init             # generate native/ (gitignore it)
-bunx appwrap run ios          # compile + boot in the simulator (or: run android)
+bunx appwrap dev ios --sim    # compile + boot in the simulator (or: dev android --sim)
 ```
 
 Describe the app in a typed config (preferred — autocomplete + type-checking via `defineConfig`):
@@ -48,7 +48,7 @@ if (kit.haptics.capability === 'native') await kit.haptics.impact('medium');
 
 - **`appwrap init`** — generate `native/` from the config (+ first-time scaffold + `.gitignore`). Idempotent; won't clobber a `native/` it didn't generate without `--force`. Run after a framework upgrade or a fresh clone.
 - **`appwrap sync`** — refresh `native/` from source (re-stamp config + re-copy built PWA + shell). Routine iteration.
-- **`appwrap dev [--url <url>]`** — point the shell at a live dev server (loader `server`); reverts on the next `sync`. Dev server must bind `0.0.0.0` so a device can reach it.
+- **`appwrap dev <ios|android> [--url <url>]`** — live-dev: deploy + attach + watch (rebuild on save); `--url` points the shell at a live dev server (loader `server`, web HMR inside the WebView; reverts on the next `sync`). Dev server must bind `0.0.0.0`. `--sim` = ns run/HMR on emulator; `--detached` = deploy + exit; `--debug` = open the inspector.
 - **`appwrap build ios|android [--release] [--aab]`** — release builds. Android signing from env (`APPWRAP_ANDROID_KEYSTORE` + password/alias — never in the config).
 - **`appwrap deploy ios`** — build + install + launch on a connected device via `devicectl` (`ns run`/`ns deploy` can't see a physical device). `--device`, `--no-launch`, `--resume`/`-r` (skip build if ipa exists and inputs unchanged), `--force`/`-f` (always rebuild, ignoring cache). If `teamId` is unset an arrow-key team picker runs automatically (reads from keychain + provisioning profiles, shows paid/free badge).
 - **`appwrap logs ios`** — stream the WebView console (forwarded to a file, since NativeScript native `console.log` doesn't reach `devicectl`/`idevicesyslog`). `--once`, `--native`.
