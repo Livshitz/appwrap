@@ -1268,23 +1268,26 @@ function openInspector(cfg: AppwrapConfig, flags: Record<string, string>, platfo
 /** `appwrap dev <ios|android> [--sim] [--detached] [--debug] [--url <devserver>|--port <p>]` — the
  * live-dev loop. Subsumes the old `run`/`debug` verbs AND the old `dev` (loader:server stamp).
  *
- *  Default target = the physical DEVICE: clean deploy (== `deploy`, the shared path — NOT reimplemented)
- *  → stay ATTACHED streaming the WebView console + watch project sources → rebuild+reinstall on save.
- *  We MUST NOT use `ns run` livesync on a device — it throws `Invalid version … Got type "object"`, an
- *  ns-internal semver bug we can't fix; so device-dev is deploy + logs + a plain rebuild watch loop.
+ *  Default target = the physical DEVICE.
+ *   • ANDROID: `ns run` livesync for true on-device HMR (incremental, no full reinstall) + a source
+ *     watcher that rebuilds the web & re-stages www on save so PWA edits flow into the livesync. The old
+ *     "Invalid version … Got type object" crash that made this look unfixable was just the shell
+ *     package.json failing to declare @nativescript/android → ns read the runtime version as null.
+ *   • iOS: the proven deploy + redeploy-on-save loop (NOT ns run — `ns run ios --device` hits the
+ *     personal-team signing/registration path `deploy ios` handles bespokely; pending device-verify).
  *
  *  Flags:
  *   --sim       → emulator/simulator via `ns run` (HMR is reliable there); `--debug` → `ns debug`.
  *   --url/--port→ stamp loader:'server' at that dev-server URL (web hot-reloads inside the WebView), deploy + attach.
- *   --detached  → deploy + exit (install & launch only; don't attach/watch).
- *   --debug     → also open the WebView inspector (chrome://inspect / Safari), then attach.
+ *   --detached  → deploy + exit (install & launch only; don't attach/watch — the MIUI-safe `--user 0` install).
+ *   --debug     → android: `ns debug` (inspector); iOS/url: open the WebView inspector then attach.
  */
 async function dev(cwd: string, flags: Record<string, string>, positionals: string[]): Promise<void> {
   const platform = positionals[0];
   const sim = 'sim' in flags || positionals[1] === 'sim';
   const wantDebug = 'debug' in flags;
   if (platform !== 'ios' && platform !== 'android') {
-    console.error('Usage: appwrap dev <ios|android> [--sim] [--detached] [--debug] [--url <devserver>|--port <p>]');
+    console.error('Usage: appwrap dev <ios|android> [--sim] [--detached] [--debug] [--wifi] [--device <id|ip[:port]>] [--url <devserver>|--port <p>]');
     process.exit(1);
   }
   const cfg = await loadConfig(cwd, flags);
@@ -1326,39 +1329,62 @@ async function dev(cwd: string, flags: Record<string, string>, positionals: stri
     return;
   }
 
-  // ── device: clean deploy (the shared `deploy` path — NO ns livesync) ──
+  // ── ANDROID device + bundled loader: ns run livesync = true on-device HMR (incremental, no reinstall) ──
+  // Unblocked by declaring @nativescript/android in the shell package.json: ns reads the android runtime
+  // version on the livesync path; when it's undeclared that lookup returns null → `semver.gt(null, …)` →
+  // the "Invalid version … Got type object" crash that long made on-device livesync look unfixable.
+  // ns watches native/app + native/www-src; since the PWA SOURCE lives OUTSIDE native/, we run a source
+  // watcher alongside that rebuilds the web + re-stages www on save — ns's livesync then pushes it.
+  // (Must spawn ns async, not execFileSync: a sync exec freezes the fs.watch loop.)
+  // iOS is intentionally NOT on ns run here: `ns run ios --device` hits the personal-team device
+  // registration/signing path that `deploy ios` handles bespokely — unverified, so iOS keeps the proven
+  // deploy + redeploy-on-save loop below until it's device-verified.
+  if (platform === 'android' && !devUrl && !('detached' in flags)) {
+    const device = resolveDevice(outDir, 'android', flags);
+    // MIUI/Xiaomi auto-denies a bare `adb install`; only `--user 0` works (deploy uses it). Pre-installing
+    // via deploy establishes the package so `ns run`'s subsequent install lands as an allowed UPDATE
+    // rather than a blocked fresh bare-install — the device-verified path. (~one extra fast install.)
+    await deploy(cwd, { ...flags, 'no-launch': '' }, ['android'], cfg);
+    const nsArgs = [wantDebug ? 'debug' : 'run', 'android', '--device', device.id];
+    const env = prepareNsEnv(outDir, nsArgs);
+    console.log(`\n▶ dev: ns ${nsArgs.join(' ')} (on-device HMR) + watching sources → re-stage on save. Ctrl-C to stop.`);
+    // Own process group so Ctrl-C / kill reaps ns AND its grandchildren (gradle, adb logcat, webpack).
+    const nsChild = spawn('ns', nsArgs, { cwd: outDir, stdio: 'inherit', detached: true, env });
+    const stop = () => { try { if (nsChild.pid) process.kill(-nsChild.pid); } catch { /* already gone */ } };
+    process.on('exit', stop);
+    process.on('SIGINT', () => { stop(); process.exit(0); });
+    nsChild.on('exit', (code) => process.exit(code ?? 0));
+    await watchAndSync(cwd, flags, outDir, cfg); // rebuild + re-stage on save; ns livesync pushes it
+    return;
+  }
+
+  // ── iOS device (bundled), --url, or --detached: the proven one-shot deploy path ──
   await deploy(cwd, flags, [platform], devUrl ? effectiveCfg : undefined);
   // Follow-ups reuse the just-deployed device from last-device memory — drop an interactive `-d`.
   const followFlags = { ...flags }; delete followFlags.d;
-
   if (wantDebug) openInspector(effectiveCfg, followFlags, platform, outDir);
-
   if ('detached' in flags) {
     console.log('\n✓ --detached — installed & launched; not attaching/watching.');
     return;
   }
-
-  // Attach: stream the WebView console. With a bundled loader we ALSO watch sources → rebuild+reinstall
-  // on save. With a dev-server loader (--url) the web hot-reloads from the server INSIDE the WebView, so
-  // a native rebuild is pointless (and would re-stamp the bundled loader) — just stream the console.
   if (devUrl) {
+    // --url: the web hot-reloads from the dev server INSIDE the WebView; just stream the console.
     console.log('\n▶ dev: web hot-reloads from the dev server inside the WebView; streaming the console. Ctrl-C to stop.');
     await logs(cwd, followFlags, [platform]);
     return;
   }
-  console.log(`\n▶ dev: streaming WebView console + watching sources (edit a file → rebuild+reinstall). Ctrl-C to stop.`);
+  // iOS bundled device: stream the WebView console + redeploy (rebuild+reinstall) on save. No ns livesync
+  // on an iOS device yet (see above), so a full redeploy is the device-safe refresh path.
+  console.log('\n▶ dev: streaming WebView console + watching sources (edit a file → rebuild+reinstall). Ctrl-C to stop.');
   const logArgs = [import.meta.path, 'logs', platform];
   if (followFlags.device) logArgs.push('--device', followFlags.device);
   if (followFlags.out) logArgs.push('--out', followFlags.out);
   if (followFlags.config) logArgs.push('--config', followFlags.config);
-  // `detached: true` puts the log child in its OWN process group so we can kill the WHOLE group —
-  // the child is `bun … logs`, which itself spawns `adb logcat`; `logChild.kill()` would only reap the
-  // `bun` and orphan the `adb logcat` grandchild when the signal hits the leader pid (e.g. `kill <pid>`
-  // / a supervisor, not interactive Ctrl-C which signals the group). `process.kill(-pid)` reaps both.
+  // `detached: true` → own process group so we reap the whole tree (bun → adb/idevicesyslog) on Ctrl-C.
   const logChild = spawn('bun', logArgs, { stdio: 'inherit', detached: true });
-  const stop = () => { try { if (logChild.pid) process.kill(-logChild.pid); } catch { /* already gone */ } };
-  process.on('exit', stop);
-  process.on('SIGINT', () => { stop(); process.exit(0); });
+  const stopLog = () => { try { if (logChild.pid) process.kill(-logChild.pid); } catch { /* already gone */ } };
+  process.on('exit', stopLog);
+  process.on('SIGINT', () => { stopLog(); process.exit(0); });
   await watchAndRedeploy(cwd, followFlags, platform);
 }
 
@@ -1386,7 +1412,9 @@ function resolveAndroidSdk(): string | undefined {
   return candidates.find((d) => existsSync(join(d, 'platform-tools')) || existsSync(join(d, 'platforms')));
 }
 
-function runNs(outDir: string, args: string[]): void {
+/** Build the env for an `ns` invocation in `outDir` (auto-detect Android SDK, ensure bun-installed deps).
+ * Shared by the blocking `runNs` (sim) and the non-blocking spawn in `dev` (device livesync). */
+function prepareNsEnv(outDir: string, args: string[]): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   // Android: inject a discovered SDK so `ns` finds it even when the user's shell never exported
   // ANDROID_HOME (new terminal not sourced, conda base shell, etc.) — the common deploy blocker.
@@ -1405,6 +1433,11 @@ function runNs(outDir: string, args: string[]): void {
     console.log(`▶ bun install  (cwd: ${outDir})`);
     execFileSync('bun', ['install'], { cwd: outDir, stdio: 'inherit', env });
   }
+  return env;
+}
+
+function runNs(outDir: string, args: string[]): void {
+  const env = prepareNsEnv(outDir, args);
   console.log(`▶ ns ${args.join(' ')}  (cwd: ${outDir})`);
   execFileSync('ns', args, { cwd: outDir, stdio: 'inherit', env });
 }
@@ -1427,22 +1460,58 @@ function readStampedLoader(outDir: string): { loader: string; serverUrl: string;
   }
 }
 
-/** Lean watch loop for `dev <platform>`: re-run the clean deploy path whenever a project
- * source file changes (debounced). Skips generated/output dirs. NOT ns livesync — a full rebuild+
- * reinstall, which is the only device-safe path (see `run`'s note). macOS recursive fs.watch. */
+/** Watch loop for iOS `dev` (no on-device ns livesync yet): re-run the clean deploy path on a project
+ * source change (debounced) — a full rebuild+reinstall, the device-safe refresh for iOS. Skips
+ * generated/output dirs. macOS recursive fs.watch. (Android uses watchAndSync + ns livesync instead.) */
 async function watchAndRedeploy(cwd: string, flags: Record<string, string>, platform: 'ios' | 'android'): Promise<void> {
   const { watch } = await import('fs');
-  const ignore = /(^|\/)(native|node_modules|dist|\.git|\.appwrap)(\/|$)/;
+  const ignore = /(^|\/)(native|node_modules|dist|public|\.git|\.appwrap)(\/|$)/;
   console.log(`\n👀 watching ${cwd} for changes → rebuild+reinstall on save (Ctrl-C to stop).`);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let busy = false;
+  let quietUntil = 0;
   watch(cwd, { recursive: true }, (_evt, file) => {
-    if (!file || ignore.test(String(file)) || busy) return;
+    if (!file || ignore.test(String(file)) || busy || Date.now() < quietUntil) return;
     clearTimeout(timer);
     timer = setTimeout(async () => {
       busy = true;
       console.log(`\n🔁 change: ${file} → redeploying…`);
       try { await deploy(cwd, flags, [platform]); } catch (e) { console.error(`⚠ redeploy failed: ${(e as Error).message}`); }
+      quietUntil = Date.now() + 1500;
+      busy = false;
+    }, 600);
+  });
+  await new Promise<void>(() => { /* run until Ctrl-C */ });
+}
+
+/** Lean watch loop for Android `dev`: on a project source change, rebuild the web + RE-STAGE only
+ * the web bundle (dist → native/www-src) — debounced. Deliberately NOT a full `regenerateCore`: that
+ * re-copies App_Resources/package.json and makes ns do a full native rebuild+reinstall (defeating HMR
+ * and tripping MIUI). Staging www-src only keeps the `ns run` livesync on the JS hot-push path. The
+ * watcher sees the PROJECT dir, so it only catches PWA source edits (the shell template lives elsewhere).
+ * Skips generated/output dirs. macOS recursive fs.watch. */
+async function watchAndSync(cwd: string, flags: Record<string, string>, outDir: string, cfg: AppwrapConfig): Promise<void> {
+  const { watch } = await import('fs');
+  // Skip generated/output trees. `dist` is the web build output; `public` is where many build steps
+  // ALSO emit (e.g. a copied bundle / stamped index) — both must be ignored or the rebuild's own writes
+  // re-trigger the watch in a loop. A post-rebuild cooldown is the generic backstop for any other
+  // output dir we don't know about (the project's build target is project-specific).
+  const ignore = /(^|\/)(native|node_modules|dist|public|\.git|\.appwrap)(\/|$)/;
+  console.log(`👀 watching ${cwd} → rebuild + re-stage on save (ns livesync pushes it).`);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let busy = false;
+  let quietUntil = 0; // ignore events for a beat after a rebuild — its own file writes aren't user edits
+  watch(cwd, { recursive: true }, (_evt, file) => {
+    if (!file || ignore.test(String(file)) || busy || Date.now() < quietUntil) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      busy = true;
+      console.log(`\n🔁 change: ${file} → rebuild web + re-stage www…`);
+      try {
+        buildWebIfBundled(cwd, cfg, flags);
+        copyPwa(cwd, outDir, cfg); // stage dist → www-src only; ns livesync hot-pushes it (no reinstall)
+      } catch (e) { console.error(`⚠ re-stage failed: ${(e as Error).message}`); }
+      quietUntil = Date.now() + 1500;
       busy = false;
     }, 600);
   });
@@ -1871,7 +1940,8 @@ function listDevices(platform: 'ios' | 'android'): DeviceInfo[] {
   return listAndroidDevices(adb).map((serial) => {
     let model = '';
     try { model = execFileSync(adb, ['-s', serial, 'shell', 'getprop', 'ro.product.model'], { encoding: 'utf8' }).trim(); } catch { /* offline */ }
-    return { id: serial, name: model || serial, model, transport: 'usb' };
+    // A network adb serial is `host:port` (USB serials never contain ':') → label it wifi.
+    return { id: serial, name: model || serial, model, transport: serial.includes(':') ? 'wifi' : 'usb' };
   });
 }
 
@@ -1893,10 +1963,21 @@ function pickInteractively(devices: DeviceInfo[]): DeviceInfo {
 /** Resolve the target device for a platform command (the reusable core). Persists the choice under
  * `outDir` so the next command (e.g. `run`→`logs`) reuses it. */
 function resolveDevice(outDir: string, platform: 'ios' | 'android', flags: Record<string, string>): DeviceInfo {
-  const devices = listDevices(platform);
+  const adb = platform === 'android' ? androidAdb() : '';
+
+  // --wifi (android): flip a USB device to wireless adb (or reconnect a remembered one), then target it.
+  if (platform === 'android' && 'wifi' in flags) enableWifiAdb(adb, outDir, flags);
+
+  // --device <ip[:port]> (android): if it's a network target that isn't attached yet, `adb connect` it.
+  if (platform === 'android' && flags.device && looksLikeAdbHost(flags.device)) {
+    const target = withAdbPort(flags.device);
+    if (!listAndroidDevices(adb).includes(target)) { adbConnect(adb, target); flags.device = target; }
+  }
+
+  let devices = listDevices(platform);
   const noneMsg = platform === 'ios'
     ? '✖ No connected iOS device found. Plug in via USB (unlocked, "Trust") or pair over Wi-Fi.'
-    : '✖ No authorized Android device. Connect via USB + accept the "Allow USB debugging" prompt (check with `adb devices`).';
+    : '✖ No authorized Android device.\n  USB: plug in + accept "Allow USB debugging".\n  Wireless: `appwrap dev android --wifi` (flip a USB device to wireless), enable the phone\'s "Wireless debugging" (auto-discovered via mDNS), or `--device <ip[:port]>` (an already-paired device).\n  (check with `adb devices`)';
 
   // --device <id|name> — exact (or unambiguous prefix) match against connected devices.
   if (flags.device) {
@@ -1905,6 +1986,22 @@ function resolveDevice(outDir: string, platform: 'ios' | 'android', flags: Recor
     writeLastDevice(outDir, platform, m.id);
     return m;
   }
+
+  // Android: nothing attached but a wireless device was remembered → auto-reconnect it (survives sleep /
+  // USB-unplug, so plain `appwrap dev android` keeps working cordless after the first `--wifi`).
+  if (platform === 'android' && !('d' in flags)) {
+    const last = readLastDevice(outDir, 'android');
+    if (last && last.includes(':') && !devices.find((d) => d.id === last) && adbConnect(adb, last)) devices = listDevices(platform);
+  }
+
+  // Android passive discovery (iOS parity): still nothing → pick up any mDNS-advertised wireless device
+  // (tcpip / "Wireless debugging" on) and adb-connect it, so plain `dev android` finds it with no flag —
+  // the same zero-config a network-paired iPhone gets from devicectl.
+  if (platform === 'android' && devices.length === 0 && !flags.device) {
+    const found = androidMdnsTargets(adb).filter((t) => !listAndroidDevices(adb).includes(t) && adbConnect(adb, t));
+    if (found.length) devices = listDevices(platform);
+  }
+
   if (devices.length === 0) { console.error(noneMsg); process.exit(1); }
 
   // -d → always prompt. Otherwise prefer the remembered device, then the sole device.
@@ -1966,6 +2063,86 @@ function androidAdb(): string {
     if (existsSync(p)) return p;
   }
   return 'adb';
+}
+
+/** Synchronous sleep — the device-resolution path is all sync execFileSync, so we can't await. */
+function sleepSync(ms: number): void { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
+
+/** A `--device` value that looks like a network target (ip / hostname[:port]) vs a USB serial — USB
+ * adb serials are bare alphanumerics, never containing a '.' (ip/host) or ':' (host:port). */
+function looksLikeAdbHost(s: string): boolean { return s.includes('.') || s.includes(':'); }
+/** Normalize a wireless target to host:port (adb's default tcpip port is 5555). */
+function withAdbPort(host: string): string { return /:\d+$/.test(host) ? host : `${host}:5555`; }
+
+/** `adb connect <target>` — true if connected (or already was). Prints the outcome. */
+function adbConnect(adb: string, target: string): boolean {
+  try {
+    const out = execFileSync(adb, ['connect', target], { encoding: 'utf8' }).trim();
+    const ok = /connected to|already connected/i.test(out);
+    console.log(ok ? `🔗 ${out}` : `⚠ adb connect ${target}: ${out}`);
+    return ok;
+  } catch (e) {
+    console.error(`⚠ adb connect ${target} failed: ${execErrText(e).trim()}`);
+    return false;
+  }
+}
+
+/** mDNS-discovered wireless adb targets (`ip:port`) — the passive path that matches iOS devicectl's
+ * network listing. The device advertises once tcpip is on (`--wifi`) or Android-11+ "Wireless debugging"
+ * is enabled, so `appwrap dev android` finds it with NO flag (parity with `dev ios` over the network). */
+function androidMdnsTargets(adb: string): string[] {
+  try {
+    return execFileSync(adb, ['mdns', 'services'], { encoding: 'utf8', timeout: 8000 })
+      .split('\n')
+      .map((l) => l.match(/(\d+\.\d+\.\d+\.\d+:\d+)\s*$/)?.[1])
+      .filter((x): x is string => !!x);
+  } catch { return []; }
+}
+
+/** Read a USB-connected device's Wi-Fi (wlan0) IPv4, or null if it isn't on Wi-Fi. */
+function androidWifiIp(adb: string, serial: string): string | null {
+  for (const args of [
+    ['-s', serial, 'shell', 'ip', '-o', 'route', 'get', '1.1.1.1'],   // "... src 192.168.1.50"
+    ['-s', serial, 'shell', 'ip', '-o', '-f', 'inet', 'addr', 'show', 'wlan0'], // "inet 192.168.1.50/24"
+  ]) {
+    try {
+      const m = execFileSync(adb, args, { encoding: 'utf8' }).match(/(?:src|inet)\s+(\d+\.\d+\.\d+\.\d+)/);
+      if (m && !m[1].startsWith('127.')) return m[1];
+    } catch { /* try next */ }
+  }
+  return null;
+}
+
+/** `--wifi`: flip a USB-connected device into TCP/IP mode and `adb connect` it over the LAN, so the user
+ * can unplug and keep iterating cordless. If nothing's on USB but a wireless device was remembered, just
+ * reconnect that. Sets `flags.device` to the wireless target (and clears `wifi`) so the rest of the
+ * resolve/deploy path — and any later resolveDevice call — targets it without re-flipping. */
+function enableWifiAdb(adb: string, outDir: string, flags: Record<string, string>): void {
+  const usb = listAndroidDevices(adb).filter((s) => !s.includes(':')); // USB-attached serials only
+  if (usb.length === 0) {
+    const last = readLastDevice(outDir, 'android');
+    if (last && last.includes(':') && adbConnect(adb, last)) { flags.device = last; delete flags.wifi; return; }
+    console.error('✖ --wifi needs a USB-connected device to flip to wireless (none found). Plug in once + accept "Allow USB debugging", or pass --device <ip[:port]> for an already-paired device.');
+    process.exit(1);
+  }
+  const serial = flags.device && usb.includes(flags.device) ? flags.device : usb[0];
+  if (usb.length > 1 && serial === usb[0] && !(flags.device && usb.includes(flags.device))) {
+    console.log(`  (multiple USB devices; flipping ${serial} — pass --device <serial> to choose another)`);
+  }
+  const ip = androidWifiIp(adb, serial);
+  if (!ip) { console.error(`✖ Couldn't read ${serial}'s Wi-Fi IP — is it on Wi-Fi? (try: adb -s ${serial} shell ip route)`); process.exit(1); }
+  console.log(`📶 ${serial}: enabling wireless adb on :5555…`);
+  try { execFileSync(adb, ['-s', serial, 'tcpip', '5555'], { stdio: 'pipe' }); }
+  catch (e) { console.error(`✖ adb tcpip failed: ${execErrText(e).trim()}`); process.exit(1); }
+  const target = `${ip}:5555`;
+  // tcpip restarts adbd on the device — connect with a few retries while it comes back up.
+  let connected = false;
+  for (let i = 0; i < 6 && !connected; i++) { sleepSync(700); connected = adbConnect(adb, target); }
+  if (!connected) { console.error(`✖ Couldn't connect to ${target} after tcpip — same Wi-Fi network? firewall blocking :5555?`); process.exit(1); }
+  writeLastDevice(outDir, 'android', target);
+  console.log(`✓ Wireless adb ready → ${target}. You can unplug USB now.`);
+  flags.device = target;
+  delete flags.wifi;
 }
 
 /** Authorized (`device` state) adb serials. Skips `unauthorized`/`offline`. */
@@ -2408,11 +2585,14 @@ async function main(): Promise<void> {
     default:
       console.log('Usage: appwrap <init|sync|dev|build|deploy|publish|logs> [--config <path>] [--out native]\n' +
         '  config: appwrap.config.ts (preferred) → .js → appwrap.json\n' +
-        '  Device selection (dev/deploy/logs/publish): --device <id|name> | -d (pick from a list) | else last-used / sole device.\n\n' +
-        '  dev <ios|android> [--sim] [--detached] [--debug] [--url <devserver>|--port <p>]\n' +
-        '       live-dev: DEVICE → clean deploy + stream console + watch sources (rebuild on save).\n' +
-        '       --sim = ns run/HMR on emulator; --url/--port = web HMR from a dev server inside the WebView;\n' +
-        '       --detached = install & launch then exit; --debug = also open the WebView inspector.\n' +
+        '  Device selection (dev/deploy/logs/publish): --device <id|name|ip[:port]> | -d (pick from a list) | else last-used / sole device.\n' +
+        '  Android wireless: --wifi flips a USB device to wireless adb (unplug + keep going); thereafter the\n' +
+        '       device is auto-discovered via mDNS — plain `dev android` finds it with NO flag (iOS parity).\n' +
+        '       --device <ip[:port]> `adb connect`s an already-paired one.\n\n' +
+        '  dev <ios|android> [--sim] [--detached] [--debug] [--wifi] [--url <devserver>|--port <p>]\n' +
+        '       live-dev: ANDROID device → ns run livesync (true on-device HMR) + re-stage on save;\n' +
+        '       iOS device → deploy + rebuild/reinstall on save. --sim = ns run/HMR on emulator;\n' +
+        '       --url/--port = web HMR from a dev server inside the WebView; --detached = install & exit.\n' +
         '  deploy <ios|android> [--no-launch] [--no-web-build] [-f]   (clean ship-once: build → install → launch → exit)\n' +
         '  publish <ios|android> [prod]              (beta: TestFlight / Play internal. prod: App Store / Play production)\n' +
         '  build <ios|android> [--release] [--aab]   (store artifact only — no install/upload)\n' +
