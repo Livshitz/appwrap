@@ -164,6 +164,11 @@ export interface AppwrapConfig {
    * same ids are what `kit.backgroundTask.register(id, …)` / `.schedule({id})` use. No-op when absent
    * or the module is inactive. */
   backgroundTasks?: string[];
+  /** Opt in to the `audio` UIBackgroundMode — ONLY for apps that genuinely keep playing audio while
+   * backgrounded/screen-locked (music/streaming/podcast players). Off by default: declaring `audio`
+   * without a real background-audio feature is an App Store 2.5.4 rejection. Stamps `audio` into
+   * Info.plist UIBackgroundModes when true; no-op/stripped when absent. */
+  backgroundAudio?: boolean;
   /** Remote push (APNs/FCM). Off unless set — gating matters: an `aps-environment` entitlement on a
    * team that can't hold the Push capability (e.g. a personal team) BREAKS code signing, and the
    * handshake should honestly report `push: 'none'` on an un-provisioned build. The kit returns a raw

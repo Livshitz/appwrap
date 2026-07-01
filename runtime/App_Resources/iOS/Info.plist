@@ -50,11 +50,9 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
-	<!-- Background audio so music-player PWAs keep playing when backgrounded /
-	     screen-locked. Remove for apps that never play audio in the background. -->
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>audio</string>
-	</array>
+	<!-- No UIBackgroundModes by default. Declaring a mode with no matching feature is an App Store
+	     2.5.4 rejection, so modules stamp only what they need: push → `remote-notification`,
+	     backgroundTask → `fetch`+`processing`, config `backgroundAudio:true` → `audio` (each creates
+	     the key if absent). Keep the default clean; apps opt into capabilities in appwrap.config. -->
 </dict>
 </plist>

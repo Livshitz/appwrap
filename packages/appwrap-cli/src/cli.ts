@@ -33,6 +33,7 @@ import {
   stampPlistBackgroundTasks,
   stampPlistOrientations,
   stampPrivacyTracking,
+  stripEmptyBackgroundModes,
 } from './derive';
 import type { WebManifest } from './derive';
 
@@ -510,19 +511,25 @@ function stampIOSDisplayName(outDir: string, cfg: AppwrapConfig, req: NativeReqs
     );
   }
 
-  // Remote push needs the `remote-notification` background mode. The template already ships a
-  // UIBackgroundModes array (for `audio`), so MERGE in-place — a second <key> would be a duplicate
-  // (invalid plist). Idempotent both ways: add when enabled+missing, strip when disabled.
-  const iosPush = !!cfg.push?.enabled && cfg.push?.ios !== false;
+  // UIBackgroundModes is opt-in per module/config (the template ships none). Toggle each mode in the
+  // shared array — a second <key> would be a duplicate (invalid plist). Idempotent both ways: MERGE
+  // in-place (creating the key when absent) if wanted, strip when not.
   const bgArray = /(<key>UIBackgroundModes<\/key>\s*<array>)([\s\S]*?)(<\/array>)/;
-  const hasRN = /<string>remote-notification<\/string>/.test(src);
-  if (iosPush && !hasRN) {
-    src = bgArray.test(src)
-      ? src.replace(bgArray, (_m, open, inner, close) => `${open}${inner}\t<string>remote-notification</string>\n\t${close}`)
-      : src.replace(/<\/dict>\s*<\/plist>\s*$/, `  <key>UIBackgroundModes</key>\n  <array>\n    <string>remote-notification</string>\n  </array>\n</dict>\n</plist>\n`);
-  } else if (!iosPush && hasRN) {
-    src = src.replace(/\s*<string>remote-notification<\/string>/, '');
-  }
+  const toggleBgMode = (s: string, mode: string, want: boolean): string => {
+    const has = new RegExp(`<string>${mode}</string>`).test(s);
+    if (want && !has) {
+      return bgArray.test(s)
+        ? s.replace(bgArray, (_m, open, inner, close) => `${open}${inner}\t<string>${mode}</string>\n\t${close}`)
+        : s.replace(/<\/dict>\s*<\/plist>\s*$/, `  <key>UIBackgroundModes</key>\n  <array>\n    <string>${mode}</string>\n  </array>\n</dict>\n</plist>\n`);
+    }
+    if (!want && has) return s.replace(new RegExp(`\\s*<string>${mode}</string>`), '');
+    return s;
+  };
+  // Remote push needs `remote-notification`; apps that genuinely play audio in the background opt in
+  // via `backgroundAudio: true` (Apple 2.5.4 rejects `audio` without a real background-audio feature).
+  src = toggleBgMode(src, 'remote-notification', !!cfg.push?.enabled && cfg.push?.ios !== false);
+  src = toggleBgMode(src, 'audio', !!cfg.backgroundAudio);
+  src = stripEmptyBackgroundModes(src);
 
   writeFileSync(plist, src);
 }

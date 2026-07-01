@@ -195,20 +195,15 @@ export function stampAndroidOrientation(src: string, value: string): string {
  * `remote-notification`). `ids` empty/undefined → strips the block + removes the two modes it added.
  */
 export function stampPlistBackgroundTasks(src: string, ids: string[] | undefined): string {
-  // 1) Always rewrite the marker block (permitted identifiers). Strip first → idempotent.
+  // 1) Strip the marker block first (idempotent). It is re-added LAST (step 3) so its position is
+  //    stable regardless of whether the UIBackgroundModes array below was pre-existing or freshly
+  //    created — otherwise the marker and a created array flip order between runs (non-idempotent).
   src = src.replace(/\s*<!-- appwrap:bgtask -->[\s\S]*?<!-- \/appwrap:bgtask -->/g, '');
   const list = (ids ?? []).filter(Boolean);
-  if (list.length) {
-    const items = list.map((s) => `    <string>${s}</string>`).join('\n');
-    const block =
-      `  <!-- appwrap:bgtask -->\n` +
-      `  <key>BGTaskSchedulerPermittedIdentifiers</key>\n  <array>\n${items}\n  </array>\n` +
-      `  <!-- /appwrap:bgtask -->`;
-    src = src.replace(/<\/dict>\s*<\/plist>\s*$/, `${block}\n</dict>\n</plist>\n`);
-  }
 
-  // 2) Merge/remove the fetch + processing background modes (separate from the marker — they live in
-  //    the shared UIBackgroundModes array, which may also hold audio/remote-notification).
+  // 2) Merge/remove the fetch + processing background modes — they live in the shared
+  //    UIBackgroundModes array (which may also hold audio/remote-notification). Create the key when
+  //    absent; strip the two modes (and, via stripEmptyBackgroundModes, the emptied key) when off.
   const modes = ['fetch', 'processing'];
   const bgArray = /(<key>UIBackgroundModes<\/key>\s*<array>)([\s\S]*?)(<\/array>)/;
   if (list.length) {
@@ -225,7 +220,24 @@ export function stampPlistBackgroundTasks(src: string, ids: string[] | undefined
   } else {
     for (const m of modes) src = src.replace(new RegExp(`\\s*<string>${m}</string>`), '');
   }
+  src = stripEmptyBackgroundModes(src);
+
+  // 3) Re-add the permitted-identifiers marker block LAST, right before </dict> (stable position).
+  if (list.length) {
+    const items = list.map((s) => `    <string>${s}</string>`).join('\n');
+    const block =
+      `  <!-- appwrap:bgtask -->\n` +
+      `  <key>BGTaskSchedulerPermittedIdentifiers</key>\n  <array>\n${items}\n  </array>\n` +
+      `  <!-- /appwrap:bgtask -->`;
+    src = src.replace(/<\/dict>\s*<\/plist>\s*$/, `${block}\n</dict>\n</plist>\n`);
+  }
   return src;
+}
+
+/** Remove a now-empty `UIBackgroundModes` key+array so a plist that opts into no modes carries no
+ * dangling empty key (keeps the default tidy). Pure + idempotent; no-op when the array has members. */
+export function stripEmptyBackgroundModes(src: string): string {
+  return src.replace(/\s*<key>UIBackgroundModes<\/key>\s*<array>\s*<\/array>/g, '');
 }
 
 /**
