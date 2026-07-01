@@ -1970,7 +1970,7 @@ function resolveDevice(outDir: string, platform: 'ios' | 'android', flags: Recor
   let devices = listDevices(platform);
   const noneMsg = platform === 'ios'
     ? '✖ No connected iOS device found. Plug in via USB (unlocked, "Trust") or pair over Wi-Fi.'
-    : '✖ No authorized Android device.\n  USB: plug in + accept "Allow USB debugging".\n  Wireless: `appwrap dev android --wifi` (flip a USB device to wireless) or `--device <ip[:port]>` (an already-paired device).\n  (check with `adb devices`)';
+    : '✖ No authorized Android device.\n  USB: plug in + accept "Allow USB debugging".\n  Wireless: `appwrap dev android --wifi` (flip a USB device to wireless), enable the phone\'s "Wireless debugging" (auto-discovered via mDNS), or `--device <ip[:port]>` (an already-paired device).\n  (check with `adb devices`)';
 
   // --device <id|name> — exact (or unambiguous prefix) match against connected devices.
   if (flags.device) {
@@ -1985,6 +1985,14 @@ function resolveDevice(outDir: string, platform: 'ios' | 'android', flags: Recor
   if (platform === 'android' && !('d' in flags)) {
     const last = readLastDevice(outDir, 'android');
     if (last && last.includes(':') && !devices.find((d) => d.id === last) && adbConnect(adb, last)) devices = listDevices(platform);
+  }
+
+  // Android passive discovery (iOS parity): still nothing → pick up any mDNS-advertised wireless device
+  // (tcpip / "Wireless debugging" on) and adb-connect it, so plain `dev android` finds it with no flag —
+  // the same zero-config a network-paired iPhone gets from devicectl.
+  if (platform === 'android' && devices.length === 0 && !flags.device) {
+    const found = androidMdnsTargets(adb).filter((t) => !listAndroidDevices(adb).includes(t) && adbConnect(adb, t));
+    if (found.length) devices = listDevices(platform);
   }
 
   if (devices.length === 0) { console.error(noneMsg); process.exit(1); }
@@ -2070,6 +2078,18 @@ function adbConnect(adb: string, target: string): boolean {
     console.error(`⚠ adb connect ${target} failed: ${execErrText(e).trim()}`);
     return false;
   }
+}
+
+/** mDNS-discovered wireless adb targets (`ip:port`) — the passive path that matches iOS devicectl's
+ * network listing. The device advertises once tcpip is on (`--wifi`) or Android-11+ "Wireless debugging"
+ * is enabled, so `appwrap dev android` finds it with NO flag (parity with `dev ios` over the network). */
+function androidMdnsTargets(adb: string): string[] {
+  try {
+    return execFileSync(adb, ['mdns', 'services'], { encoding: 'utf8', timeout: 8000 })
+      .split('\n')
+      .map((l) => l.match(/(\d+\.\d+\.\d+\.\d+:\d+)\s*$/)?.[1])
+      .filter((x): x is string => !!x);
+  } catch { return []; }
 }
 
 /** Read a USB-connected device's Wi-Fi (wlan0) IPv4, or null if it isn't on Wi-Fi. */
@@ -2559,8 +2579,9 @@ async function main(): Promise<void> {
       console.log('Usage: appwrap <init|sync|dev|build|deploy|publish|logs> [--config <path>] [--out native]\n' +
         '  config: appwrap.config.ts (preferred) → .js → appwrap.json\n' +
         '  Device selection (dev/deploy/logs/publish): --device <id|name|ip[:port]> | -d (pick from a list) | else last-used / sole device.\n' +
-        '  Android wireless: --wifi flips a USB device to wireless adb (unplug + keep going); a remembered\n' +
-        '       wireless device auto-reconnects; --device <ip[:port]> `adb connect`s an already-paired one.\n\n' +
+        '  Android wireless: --wifi flips a USB device to wireless adb (unplug + keep going); thereafter the\n' +
+        '       device is auto-discovered via mDNS — plain `dev android` finds it with NO flag (iOS parity).\n' +
+        '       --device <ip[:port]> `adb connect`s an already-paired one.\n\n' +
         '  dev <ios|android> [--sim] [--detached] [--debug] [--wifi] [--url <devserver>|--port <p>]\n' +
         '       live-dev: ANDROID device → ns run livesync (true on-device HMR) + re-stage on save;\n' +
         '       iOS device → deploy + rebuild/reinstall on save. --sim = ns run/HMR on emulator;\n' +
