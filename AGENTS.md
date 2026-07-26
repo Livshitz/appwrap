@@ -86,6 +86,7 @@ The handshake capability map + optional-handler barrel are generated into `nativ
 6. **Service workers don't register under a custom scheme** in WKWebView (platform limit) — route their jobs to native lanes (`kit.push`, background-fetch, the shell's offline serving). Plain `Worker`/`SharedWorker` are fine.
 7. **OAuth (Google etc.) is blocked in embedded WebViews** (`403 disallowed_useragent`) — use the `oauth` module (`kit.oauth.authorize` → system browser) then exchange the code → `signInWithCredential`.
 8. **In-call audio routes to the earpiece** — WebRTC `getUserMedia` drives the iOS audio session to the receiver; the `media` module re-routes a call to the loudspeaker.
+9. **Android: we REPLACE NS's `WebChromeClient`/`WebViewClient`** (`custom-webview.android.ts`) — whatever the platform or NS handled by default is gone unless re-implemented there. `<input type=file>` was silently inert for exactly this reason until `onShowFileChooser` was added (`file-chooser.android.ts`); its callback must fire exactly once on every path or the input wedges permanently. Suspect this first when a stock WebView behavior "just doesn't work" on Android but works on iOS.
 
 ## Verify loop
 
