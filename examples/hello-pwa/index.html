@@ -118,6 +118,16 @@
 
   <main id="view">
     <section id="page-home" class="page">
+      <!-- <input type="file"> device probe. Not a native-kit capability — this exercises the
+           WebView's OWN file chooser (Android needs WebChromeClient.onShowFileChooser; iOS is
+           built in). Kept in the example so the picker stays device-verifiable after shell edits. -->
+      <div class="card">
+        <h2>📎 File input (WebView chooser)</h2>
+        <input id="fi-single" type="file" accept="image/*" />
+        <input id="fi-multi" type="file" accept="image/*" multiple />
+        <input id="fi-capture" type="file" accept="image/*" capture="environment" />
+        <div class="note" id="fi-out">no selection yet</div>
+      </div>
       <div id="pills"></div>
       <div class="grid" id="tiles"></div>
     </section>
@@ -149,6 +159,19 @@
   </main>
 
   <div id="log"><button id="copylog">copy</button><div id="last">ready</div><div id="loglines"></div></div>
+  <script>
+    // Plain (non-module) so the file-input probe reports even if main.js fails to load.
+    window.__fileProbe = { single: null, multi: null, capture: null };
+    ['single', 'multi', 'capture'].forEach(function (k) {
+      var el = document.getElementById('fi-' + k);
+      el.addEventListener('change', function () {
+        var files = Array.prototype.map.call(el.files, function (f) { return { name: f.name, size: f.size, type: f.type }; });
+        window.__fileProbe[k] = files;
+        document.getElementById('fi-out').textContent = k + ': ' + files.length + ' file(s) — ' +
+          files.map(function (f) { return f.name + ' (' + f.size + 'b)'; }).join(', ');
+      });
+    });
+  </script>
   <script type="module" src="main.js"></script>
 </body>
 </html>

@@ -4,6 +4,7 @@ import { mimeFor } from './mime';
 import { APPWRAP_GLOBALS_JS, NATIVE_FEEL_JS, serviceWorkerGuardJs, externalNavGuardJs } from './web-quirks';
 import { envGlobalsJs } from './env';
 import { requestPermissions } from './android-helpers';
+import { showFileChooser } from './file-chooser.android';
 import { hostOf } from './env-switcher';
 
 // `android` + `java` resolve to the real types-android namespaces (no declare needed).
@@ -79,6 +80,17 @@ function getChromeClientClass(): any {
       requestPermissions(Array.from(perms)).then((ok) =>
         Utils.dispatchToMainThread(() => (ok ? request.grant(request.getResources()) : request.deny()))
       );
+    },
+
+    // <input type="file"> — NOT optional here: replacing NS's WebChromeClient removed the
+    // platform's default handling, so without this the input is completely inert. All state is
+    // per-invocation closure state inside showFileChooser (the class is shared across webviews).
+    onShowFileChooser(
+      _view: android.webkit.WebView,
+      filePathCallback: android.webkit.ValueCallback<androidNative.Array<android.net.Uri>>,
+      fileChooserParams: android.webkit.WebChromeClient.FileChooserParams
+    ): boolean {
+      return showFileChooser(filePathCallback, fileChooserParams);
     },
   });
   return chromeClientClass;
