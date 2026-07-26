@@ -1,0 +1,61 @@
+appId: cc.livx.hellowrap
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "Hello AppWrap"
+    timeout: 20000
+
+# ── Handshake: native context resolved over the bridge ──────────────
+- assertVisible: "NATIVE"
+- assertVisible: ".*platform: ios.*"
+- assertVisible: ".*cc.livx.hellowrap.*"
+- takeScreenshot: demo-01-handshake
+
+# ── Haptics: every impact style + every notify type ─────────────────
+- tapOn:
+    text: "light"
+    index: 0
+- tapOn: "medium"
+- tapOn: "heavy"
+- tapOn: "success"
+- tapOn: "error"
+- assertVisible: ".*Haptics/light ✓.*"
+- assertVisible: ".*Haptics/error ✓.*"
+- takeScreenshot: demo-02-haptics
+
+# ── Storage: set / get / remove round-trip through ApplicationSettings ──
+- tapOn: "set"
+- tapOn: "get"
+- assertVisible: ".*Storage/get ✓ → 1.*"
+- tapOn: "remove"
+- assertVisible: ".*Storage/remove ✓.*"
+- takeScreenshot: demo-03-storage
+
+# ── Toast: native iOS HUD (short + long) ────────────────────────────
+- tapOn: "short"
+- assertVisible: "Hello from the kit 👋"
+- takeScreenshot: demo-04-toast
+- tapOn: "long"
+- assertVisible: "This one sticks around a bit longer…"
+
+# ── Status bar: dark ↔ light over the bridge ────────────────────────
+- tapOn: "dark"
+- takeScreenshot: demo-05-statusbar-dark
+- tapOn:
+    text: "light"
+    index: 1
+- assertVisible: ".*Status bar/light ✓.*"
+- takeScreenshot: demo-06-statusbar-light
+
+# ── Share: native UIActivityViewController sheet ────────────────────
+- tapOn: "share link"
+- extendedWaitUntil:
+    visible: ".*livx.cc.*"
+    timeout: 8000
+- takeScreenshot: demo-07-share-sheet
+# dismiss the sheet
+- tapOn:
+    point: "50%,20%"
+- assertVisible: "Hello AppWrap"
+- takeScreenshot: demo-08-final

@@ -1,0 +1,71 @@
+name: Publish to npm
+
+# Publishes @livx.cc/native-kit and @livx.cc/appwrap to the public npm registry on push to main.
+# Idempotent: only publishes when package.json's version isn't already on npm,
+# so bumping the version in a commit is what triggers a release.
+# Auth via NPM_TOKEN (an npm *automation* token — bypasses 2FA/OTP).
+# The CLI's prepack (node scripts/stage-assets.mjs) bundles runtime/ + templates/ into its tarball.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+jobs:
+  publish-native-kit:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/native-kit
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org/'
+
+      - name: Publish if version is new
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "$NAME@$VERSION already published — nothing to do."
+          else
+            echo "Publishing $NAME@$VERSION…"
+            npm publish --access public
+          fi
+
+  publish-cli:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/appwrap-cli
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org/'
+
+      - name: Publish if version is new
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "$NAME@$VERSION already published — nothing to do."
+          else
+            echo "Publishing $NAME@$VERSION… (prepack bundles runtime/ + templates/)"
+            npm publish --access public
+          fi

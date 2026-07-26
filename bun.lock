@@ -1,0 +1,59 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "appwrap-monorepo",
+    },
+    "examples/hello-pwa": {
+      "name": "hello-pwa",
+      "version": "0.2.0",
+      "dependencies": {
+        "@livx.cc/native-kit": "workspace:*",
+      },
+      "devDependencies": {
+        "@livx.cc/appwrap": "workspace:*",
+      },
+    },
+    "examples/mobile-plugin-demo": {
+      "name": "mobile-plugin-demo",
+      "version": "0.1.0",
+      "dependencies": {
+        "@livx.cc/native-kit": "workspace:*",
+      },
+      "devDependencies": {
+        "@livx.cc/appwrap": "workspace:*",
+      },
+    },
+    "examples/push-relay": {
+      "name": "appwrap-push-relay",
+    },
+    "packages/appwrap-cli": {
+      "name": "@livx.cc/appwrap",
+      "version": "0.55.0",
+      "bin": {
+        "appwrap": "src/cli.ts",
+      },
+    },
+    "packages/native-kit": {
+      "name": "@livx.cc/native-kit",
+      "version": "0.42.0",
+      "devDependencies": {
+        "typescript": "^5.4.0",
+      },
+    },
+  },
+  "packages": {
+    "@livx.cc/appwrap": ["@livx.cc/appwrap@workspace:packages/appwrap-cli"],
+
+    "@livx.cc/native-kit": ["@livx.cc/native-kit@workspace:packages/native-kit"],
+
+    "appwrap-push-relay": ["appwrap-push-relay@workspace:examples/push-relay"],
+
+    "hello-pwa": ["hello-pwa@workspace:examples/hello-pwa"],
+
+    "mobile-plugin-demo": ["mobile-plugin-demo@workspace:examples/mobile-plugin-demo"],
+
+    "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
+  }
+}

@@ -1,0 +1,18 @@
+{
+  // Type-only gate for the kit. The package ships via `bun build` (a bundler, no type-checking),
+  // so without this a type error — e.g. a used-but-unimported symbol — stays invisible until runtime.
+  // `bun run typecheck` runs this with the pinned TS 5.x (real diagnostics, unlike the 6.0-beta -p path).
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "types": [],
+    "verbatimModuleSyntax": false,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src"]
+}

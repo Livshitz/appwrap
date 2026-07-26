@@ -1,0 +1,178 @@
+import { Application, Connectivity, isAndroid } from '@nativescript/core';
+import type { AndroidActivityNewIntentEventData, OrientationChangedEventData } from '@nativescript/core';
+import { bridge } from './bridge';
+import { connectivityStatus } from './handlers-extended';
+import { isEnvDeepLink, handleEnvDeepLink } from './env-switcher';
+
+let pendingDeepLink: string | null = null;
+// A cold-launch env-switch deep link (`<scheme>://env?url=…`). Buffered like `pendingDeepLink` until the
+// PWA handshake, so the confirm dialog + WebView reload run when the shell is actually ready (not during
+// iOS didFinishLaunching / the Android launch-intent read, when no WebView exists yet).
+let pendingEnvDeepLink: string | null = null;
+let pendingPushTap: { data: Record<string, string> } | null = null;
+let pendingShortcut: string | null = null;
+// True only once the PWA's JS has handshaked — i.e. the WebView is actually
+// running our bundle and about to subscribe. Native page-load is too early:
+// a deeplink.open emitted then lands in a WebView with no listener and is lost
+// (the cold-start-from-notification bug). So we gate delivery on the handshake.
+let pwaReady = false;
+
+/** A pending native-side consumer of an inbound deep link (e.g. the Android OAuth flow waiting for
+ * the provider's `callbackScheme://…` redirect). Returns true if it CONSUMED the URL — then it's an
+ * internal callback, not an app deep link, and must NOT reach the PWA. Set by handlers-oauth. */
+let deepLinkInterceptor: ((url: string) => boolean) | null = null;
+export function setDeepLinkInterceptor(fn: ((url: string) => boolean) | null): void {
+  deepLinkInterceptor = fn;
+}
+
+/** A pending native-side REWRITER of an inbound deep link (e.g. shareTarget on iOS relocating shared
+ * files from the App Group container into the app cache and rewriting the link to point at them).
+ * Runs before the interceptor; returns the URL to deliver (usually unchanged). Set by
+ * handlers-share-target. Distinct from the interceptor: a transform forwards, an interceptor consumes. */
+let deepLinkTransformer: ((url: string) => string) | null = null;
+export function setDeepLinkTransformer(fn: ((url: string) => string) | null): void {
+  deepLinkTransformer = fn;
+}
+
+/** Called by the iOS delegate (cold start or while running) and Android intents. */
+export function onDeepLink(url: string): void {
+  if (deepLinkTransformer) {
+    try { url = deepLinkTransformer(url); } catch (e) { console.warn('AppWrap: deep-link transform failed', e); }
+  }
+  // Give a native consumer (OAuth callback) first refusal — a matched OAuth redirect is internal
+  // plumbing, not an app deep link, so it's swallowed here and never forwarded to the PWA.
+  if (deepLinkInterceptor?.(url)) return;
+  // Env-switch deep link (config-gated): a shared PR-preview link that re-points the shell. CONSUMED
+  // here — never forwarded to the PWA (it's a shell command, not an app route). The allowlist + confirm
+  // gate lives in handleEnvDeepLink; disabled/absent switcher → isEnvDeepLink is false → normal path.
+  if (isEnvDeepLink(url)) {
+    if (pwaReady) void handleEnvDeepLink(url);
+    else pendingEnvDeepLink = url; // cold launch — replay after the handshake, when the WebView is ready
+    return;
+  }
+  if (pwaReady) bridge.emit('deeplink.open', { url });
+  else pendingDeepLink = url; // buffer until the PWA handshakes — delivered IN the handshake response
+}
+
+/**
+ * Hand the cold-start deep link back IN the handshake response (read-once), so the PWA knows the
+ * target route BEFORE first paint and routes immediately — no `/home` flash, no fragile event timer.
+ * Returns null when the launch wasn't from a link (or it was already consumed / delivered warm).
+ */
+export function consumePendingDeepLink(): string | null {
+  let url = pendingDeepLink;
+  pendingDeepLink = null;
+  // Re-apply the transformer: an iOS cold-launch link is ingested in didFinishLaunching, BEFORE
+  // main-page init registers transformers (e.g. shareTarget's gfile=→file= relocation) — so the
+  // buffered URL may still be raw. Transformers are idempotent (guard on their own markers), so a
+  // link already transformed at ingress passes through unchanged.
+  if (url && deepLinkTransformer) {
+    try { url = deepLinkTransformer(url); } catch (e) { console.warn('AppWrap: deep-link transform failed', e); }
+  }
+  return url;
+}
+
+/** A home-screen shortcut was activated (iOS performActionForShortcutItem / cold-start launchOptions;
+ * Android the launch intent's `appwrap_shortcut` extra). Buffered until the handshake like deep links
+ * (cold-start: a shortcut that launched the app would otherwise land in a WebView with no listener). */
+export function onShortcut(id: string): void {
+  if (!id) return;
+  if (pwaReady) bridge.emit('app.shortcut', { id });
+  else pendingShortcut = id;
+}
+
+/** Android: a tray notification (FCM) was tapped → re-launched the activity with the data payload as
+ * intent extras. Buffered until handshake like deep links (cold-start-from-notification). iOS routes
+ * taps via the AppDelegate (handlers-push onRemoteMessage). */
+export function onPushTap(payload: { data: Record<string, string> }): void {
+  if (pwaReady) bridge.emit('push.tap', payload);
+  else pendingPushTap = payload;
+}
+
+/**
+ * The PWA completed app.handshake → its JS is live and registers its lifecycle listeners right after
+ * kit.ready() resolves. A cold-start DEEP LINK is delivered IN the handshake response itself (see
+ * `consumePendingDeepLink`), so the PWA routes before first paint — it is NOT flushed here. Push taps
+ * and shortcuts still flush as events (after a beat for listener install) — they aren't route-shaped,
+ * so a flash isn't a concern and the event path is the established contract.
+ */
+export function onPwaHandshake(): void {
+  if (pwaReady) return;
+  pwaReady = true;
+  if (pendingPushTap) {
+    const payload = pendingPushTap;
+    pendingPushTap = null;
+    setTimeout(() => bridge.emit('push.tap', payload), 500);
+  }
+  if (pendingShortcut) {
+    const id = pendingShortcut;
+    pendingShortcut = null;
+    setTimeout(() => bridge.emit('app.shortcut', { id }), 500);
+  }
+  if (pendingEnvDeepLink) {
+    const link = pendingEnvDeepLink;
+    pendingEnvDeepLink = null;
+    // Small beat so the just-handshaked WebView is fully attached before the confirm/reload.
+    setTimeout(() => void handleEnvDeepLink(link), 500);
+  }
+}
+
+/** Wire lifecycle + connectivity event forwarding (the PWA subscribes to these). */
+export function startEventForwarding(): void {
+  Application.on(Application.suspendEvent, () => bridge.emit('app.pause'));
+  Application.on(Application.resumeEvent, () => bridge.emit('app.resume'));
+  Application.on(Application.orientationChangedEvent, (args: OrientationChangedEventData) =>
+    bridge.emit('screen.orientation.change', args?.newValue === 'landscape' ? 'landscape' : 'portrait')
+  );
+
+  Connectivity.startMonitoring(() => bridge.emit('network.change', connectivityStatus()));
+
+  if (isAndroid) wireAndroidDeepLinks();
+}
+
+/** Intents: launch intent (cold start) + onNewIntent (warm, singleTask). Carries both VIEW deep links
+ * and FCM notification-tap extras. */
+function wireAndroidDeepLinks(): void {
+  const emitFromIntent = (intent: android.content.Intent | null | undefined) => {
+    try {
+      const data = intent?.getData?.();
+      if (data) onDeepLink(String(data.toString()));
+      const tap = readFcmTapExtras(intent);
+      if (tap) onPushTap(tap);
+      const shortcutId = intent?.getStringExtra?.('appwrap_shortcut');
+      if (shortcutId) {
+        onShortcut(String(shortcutId));
+        intent.removeExtra?.('appwrap_shortcut'); // consume — don't re-fire on the next relayout read
+      }
+    } catch (e) {
+      console.warn('AppWrap: intent read failed', e);
+    }
+  };
+
+  Application.android.on(Application.android.activityNewIntentEvent, (args: AndroidActivityNewIntentEventData) =>
+    emitFromIntent(args.intent)
+  );
+  emitFromIntent(Application.android.startActivity?.getIntent?.());
+}
+
+/** A tapped FCM notification re-launches the activity with the message's data payload as string
+ * extras, alongside FCM's own `google.*`/`gcm.*`/`from`/`collapse_key` bookkeeping keys. Detect via
+ * those markers; return the app's data keys only. Null when this isn't an FCM-originated intent. */
+function readFcmTapExtras(intent: android.content.Intent | null | undefined): { data: Record<string, string> } | null {
+  try {
+    const extras = intent?.getExtras?.();
+    if (!extras || (!extras.containsKey('google.message_id') && !extras.containsKey('from'))) return null;
+    const data: Record<string, string> = {};
+    const it = extras.keySet().iterator();
+    while (it.hasNext()) {
+      const k = String(it.next());
+      if (k.startsWith('google.') || k.startsWith('gcm.') || k === 'from' || k === 'collapse_key') continue;
+      const v = extras.get(k);
+      if (v != null) data[k] = String(v);
+    }
+    return { data };
+  } catch (e) {
+    console.warn('AppWrap: FCM extras read failed', e);
+    return null;
+  }
+}

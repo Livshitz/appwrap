@@ -1,0 +1,206 @@
+# appwrap fastlane — emitted by `appwrap init` into native/fastlane/. App id + team are stamped
+# from the appwrap config. Auth is App Store Connect API key only (headless-safe; no interactive Apple ID).
+
+default_platform(:ios)
+
+APP_ID = '__APP_ID__'.freeze
+TEAM_ID = '__TEAM_ID__'.freeze
+
+# iOS app-extension targets discovered from the generated wrapper. Each dir under
+# App_Resources/iOS/extensions/ carrying an extension.json is a SEPARATE Xcode target (name = dir
+# name, e.g. AppwrapWidget / NotificationService). Its bundle id MUST be a child `<APP_ID>.<name>`
+# (Apple rejects an extension whose id equals the app's or has >1 extra period), and it needs its
+# OWN App Store profile. NS already stamps the correct child PRODUCT_BUNDLE_IDENTIFIER at prepare —
+# the per-target signing below must NOT clobber it (a single unscoped update_code_signing_settings
+# rewrites EVERY target's bundle id to APP_ID → collision at upload).
+def appwrap_ios_extensions
+  ext_root = File.expand_path('../App_Resources/iOS/extensions', __dir__)
+  return [] unless Dir.exist?(ext_root)
+  Dir.children(ext_root)
+     .select { |name| File.file?(File.join(ext_root, name, 'extension.json')) }
+     .sort
+end
+
+# Run `ns prepare` (which shells out to `pod install`) with a SANITIZED gem env.
+#
+# Why: fastlane runs under its own Ruby and exports GEM_HOME/GEM_PATH into every child process. On a
+# Mac, NativeScript's `pod` is the system one (`/usr/local/bin/pod`, shebang-pinned to Ruby 2.6, whose
+# CocoaPods lives in /Library/Ruby/Gems/2.6.0). The inherited GEM_HOME redirects its gem lookup to
+# fastlane's Ruby dir → `can't find gem cocoapods (Gem::GemNotFoundException)` → NS prints
+# `'arch install' command failed` (exit 127). Interactively `pod` works because no GEM_HOME is set.
+#
+# Fix: only when the active `pod` is that system-Ruby-2.6 binary, drop the leaked GEM_* vars so it
+# falls back to its own default gem dir. CI runners use a self-managed Ruby (setup-ruby) whose `pod`
+# is NOT the system 2.6 one, so the env is left untouched there — no behavior change on CI.
+def appwrap_prepare_ios
+  prepare = "cd '#{File.expand_path('..', __dir__)}' && ns prepare ios --release"
+  pod = `command -v pod`.strip
+  system_pod = !pod.empty? && File.exist?(pod) &&
+               File.read(pod, 256).include?('Ruby.framework/Versions/2.6')
+  unless system_pod
+    sh(prepare)
+    return
+  end
+  leaked = %w[GEM_HOME GEM_PATH RUBYLIB RUBYOPT BUNDLE_GEMFILE BUNDLE_BIN_PATH]
+  saved = {}
+  leaked.each { |k| saved[k] = ENV[k]; ENV.delete(k) }
+  begin
+    sh(prepare)
+  ensure
+    saved.each { |k, v| ENV[k] = v unless v.nil? }
+  end
+end
+
+# Shared archive-and-sign sequence for BOTH the TestFlight (:beta) and App Store (:release) lanes.
+# Returns the ASC API-key object so each lane can reuse it for its final upload step — the lanes
+# differ ONLY in that final step (upload_to_testflight vs upload_to_app_store). Keep the recipe here,
+# not duplicated per-lane.
+def appwrap_archive_and_sign_ios
+  setup_ci # on CI: provisions a temporary unlocked keychain so codesign can use the match cert
+
+  api_key = app_store_connect_api_key(
+    key_id: ENV['ASC_KEY_ID'],
+    issuer_id: ENV['ASC_ISSUER_ID'],
+    key_content: ENV['ASC_KEY_P8'],
+    is_key_content_base64: true
+  )
+
+  # The app AND each extension sign with their OWN App Store profile — pull them all here.
+  # readonly: certs/profiles must be seeded once via `fastlane match appstore` (see workflow header);
+  # regenerate them (incl. per-extension) via the `regen_profiles` lane if capabilities changed.
+  extensions = appwrap_ios_extensions
+  ext_ids = extensions.map { |name| "#{APP_ID}.#{name}" }
+  match(type: 'appstore', readonly: true, app_identifier: [APP_ID, *ext_ids],
+        git_url: ENV['MATCH_GIT_URL'], api_key: api_key)
+
+  # NativeScript prepares the Xcode project inside the wrapper dir (native/ = parent of fastlane/).
+  # Wrapped to sanitize the gem env so the system `pod` can find CocoaPods (see appwrap_prepare_ios).
+  appwrap_prepare_ios
+
+  # NS defaults the project to automatic signing → archive can't find a profile. Pin manual signing
+  # PER TARGET to the match-provided App Store profile (name exported by match into ENV). `targets:`
+  # is REQUIRED so each call scopes to ONE target — an unscoped call rewrites EVERY target's
+  # bundle_identifier to APP_ID, clobbering the extensions' child ids → CFBundleIdentifier collision.
+  provisioning = {}
+  resolve_profile = ->(bundle_id) { ENV["sigh_#{bundle_id}_appstore_profile-name"] || "match AppStore #{bundle_id}" }
+
+  app_profile = resolve_profile.call(APP_ID)
+  provisioning[APP_ID] = app_profile
+  update_code_signing_settings(
+    use_automatic_signing: false,
+    path: 'platforms/ios/native.xcodeproj',
+    targets: ['native'], # main app target only — leave NS's child ids on the extensions untouched
+    team_id: TEAM_ID,
+    bundle_identifier: APP_ID,
+    code_sign_identity: 'Apple Distribution',
+    profile_name: app_profile
+  )
+
+  extensions.each do |name|
+    ext_id = "#{APP_ID}.#{name}"
+    ext_profile = resolve_profile.call(ext_id)
+    provisioning[ext_id] = ext_profile
+    update_code_signing_settings(
+      use_automatic_signing: false,
+      path: 'platforms/ios/native.xcodeproj',
+      targets: [name],
+      team_id: TEAM_ID,
+      bundle_identifier: ext_id,
+      code_sign_identity: 'Apple Distribution',
+      profile_name: ext_profile
+    )
+  end
+
+  build_app(
+    workspace: 'platforms/ios/native.xcworkspace',
+    scheme: 'native',
+    export_method: 'app-store',
+    export_options: { provisioningProfiles: provisioning }
+  )
+
+  api_key
+end
+
+# Restore the login keychain as the system default and drop fastlane's temp keychain. `setup_ci`/`match`
+# create `fastlane_tmp_keychain` and point the default keychain at it; if a lane dies mid-run before
+# fastlane's own teardown, that stray keychain is left as the DEFAULT — so macOS (com.apple.iCloudHelper
+# etc.) keeps prompting for its password forever. CI runners are ephemeral so this is a no-op there;
+# locally it prevents the recurring keychain prompt. Best-effort: never fail the lane on cleanup.
+def appwrap_keychain_cleanup
+  login = File.expand_path('~/Library/Keychains/login.keychain-db')
+  return unless File.exist?(login)
+  sh("security default-keychain -s '#{login}'", error_callback: ->(_) {})
+  sh('security delete-keychain ~/Library/Keychains/fastlane_tmp_keychain-db 2>/dev/null || true',
+     error_callback: ->(_) {})
+rescue StandardError => e
+  UI.message("keychain cleanup skipped: #{e}")
+end
+
+platform :ios do
+  after_all { appwrap_keychain_cleanup }
+  error { |_lane, _exception| appwrap_keychain_cleanup }
+
+  desc 'Build the NativeScript wrapper and upload to TestFlight'
+  lane :beta do
+    api_key = appwrap_archive_and_sign_ios
+
+    # Wait for App Store Connect to finish processing and FAIL if it doesn't — Apple can accept the
+    # upload yet silently drop the build (e.g. an out-of-range CFBundleVersion). skip:true hides that.
+    # APPWRAP_TF_WAIT_TIMEOUT (seconds) tunes the wait: real builds can exceed 30 min under Apple
+    # processing load and crash the lane (BuildWatcher exceeded) — default to 1h, raise it if needed.
+    # Guard BOTH unset (nil) and empty/blank env: nil.to_i and "".to_i are 0, which would crash the
+    # lane instantly (BuildWatcher exceeded '0'). Only a positive integer overrides the 3600 default.
+    tf_wait_env = ENV['APPWRAP_TF_WAIT_TIMEOUT'].to_s.strip
+    tf_wait_timeout = tf_wait_env.to_i > 0 ? tf_wait_env.to_i : 3600
+    upload_to_testflight(api_key: api_key, skip_waiting_for_build_processing: false, wait_processing_timeout_duration: tf_wait_timeout)
+  end
+
+  # Build + sign ONLY — no upload. For pipelines that hand the signed .ipa to an EXTERNAL uploader
+  # (e.g. `mcp-appstores apple-upload`) instead of fastlane's own upload_to_testflight. Same archive/
+  # sign recipe as :beta, so the binary is byte-identical; it just stops before the upload step.
+  # The signed .ipa lands at `native/<scheme>.ipa` (gym default output dir = the fastlane cwd = native/).
+  # IPA_OUTPUT_PATH is also written to $GITHUB_OUTPUT (when on CI) as `ipa` for the next workflow step.
+  desc 'Build + sign the wrapper into a signed .ipa WITHOUT uploading (for an external uploader).'
+  lane :build do
+    appwrap_archive_and_sign_ios
+    ipa = lane_context[SharedValues::IPA_OUTPUT_PATH]
+    UI.success("Signed IPA (not uploaded): #{ipa}")
+    gh_out = ENV['GITHUB_OUTPUT']
+    File.write(gh_out, "ipa=#{ipa}\n", mode: 'a') if gh_out && !gh_out.empty?
+  end
+
+  desc 'Build the NativeScript wrapper and promote the binary to the App Store (production).'
+  lane :release do
+    api_key = appwrap_archive_and_sign_ios
+
+    # Binary-only promote: the listing/metadata/screenshots/IAP stay in App Store Connect — this lane
+    # only ships the signed binary. SAFE by default: no review submit, no automatic release, headless
+    # (force: true → no HTML preview). Set APPWRAP_SUBMIT_FOR_REVIEW=true to also submit for review.
+    # Guard BOTH unset (nil) and blank env the same way as APPWRAP_TF_WAIT_TIMEOUT above.
+    submit_for_review = ENV['APPWRAP_SUBMIT_FOR_REVIEW'].to_s.strip.downcase == 'true'
+    upload_to_app_store(
+      api_key: api_key,
+      submit_for_review: submit_for_review,
+      automatic_release: false,
+      skip_metadata: true,
+      skip_screenshots: true,
+      precheck_include_in_app_purchases: false,
+      force: true
+    )
+  end
+end
+
+platform :android do
+  desc 'Upload the appwrap-built AAB to Play (internal track). Build it first with `appwrap build android --release --aab`.'
+  lane :beta do
+    upload_to_play_store(
+      track: 'internal',
+      aab: 'platforms/android/app/build/outputs/bundle/release/app-release.aab',
+      json_key_data: ENV['PLAY_SERVICE_ACCOUNT_JSON'],
+      # Binary-only upload: listing/screenshots are managed in the Play Console, not CI.
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+  end
+end

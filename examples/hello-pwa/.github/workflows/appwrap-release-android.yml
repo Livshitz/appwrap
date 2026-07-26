@@ -1,0 +1,69 @@
+# appwrap Android release — tag push (v*) → Play internal track.
+# Build is the appwrap CLI (`appwrap build android --release --aab` → signed AAB);
+# upload is fastlane supply. Secrets contract (repo settings → Actions secrets):
+#   ANDROID_KEYSTORE_BASE64        upload keystore, base64-encoded
+#   ANDROID_KEYSTORE_PASSWORD      keystore store password
+#   ANDROID_KEY_ALIAS              key alias
+#   ANDROID_KEY_ALIAS_PASSWORD     key (alias) password
+#   PLAY_SERVICE_ACCOUNT_JSON      Play Developer API service-account JSON (the app must already
+#                                  exist on Play with one prior manual upload before supply works)
+name: Release Android
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+# Monotonic store build number (Android versionCode): computed in the shell below — GitHub Actions
+# expressions have NO arithmetic operators, so `${{ github.run_number + 100 }}` is an INVALID workflow
+# expression → startup_failure on EVERY push (not just tags). appwrap CLI reads APPWRAP_BUILD_NUMBER
+# over the constant derived default — Play rejects a versionCode it has already seen. run_number is increasing.
+
+jobs:
+  play:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build number (run_number + 100 — arithmetic must be done in the shell, not an expression)
+        run: echo "APPWRAP_BUILD_NUMBER=$(( ${{ github.run_number }} + 100 ))" >> "$GITHUB_ENV"
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v5
+        with: { node-version: 22 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('bun.lock', 'package.json') }}
+          restore-keys: gradle-${{ runner.os }}-
+      - uses: android-actions/setup-android@v3
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick   # appwrap icon-gen needs an image tool (no sips on Linux)
+      - run: bun install && bun run build        # → dist/ (the PWA bundle the wrapper ships)
+      # Pin global tools — unpinned installs can grab a breaking release mid-flight. Bump deliberately.
+      - run: bun add -g nativescript@9.0.6
+      - run: bunx @livx.cc/appwrap init                      # native/ is generated (gitignored) — regenerate fresh in CI
+      - working-directory: native
+        run: bun install
+      - name: Decode upload keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/upload.keystore"
+      - name: Build signed AAB
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.caching=true -Dorg.gradle.parallel=true -Dorg.gradle.daemon=false"
+          APPWRAP_ANDROID_KEYSTORE: ${{ runner.temp }}/upload.keystore
+          APPWRAP_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          APPWRAP_ANDROID_KEYSTORE_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          APPWRAP_ANDROID_KEYSTORE_ALIAS_PASSWORD: ${{ secrets.ANDROID_KEY_ALIAS_PASSWORD }}
+        run: bunx @livx.cc/appwrap build android --release --aab
+      - uses: actions/upload-artifact@v4            # keep the AAB even if Play upload is skipped
+        with:
+          name: app-release-aab
+          path: native/platforms/android/app/build/outputs/bundle/release/app-release.aab
+      - uses: ruby/setup-ruby@v1
+        with: { ruby-version: '3.3', bundler-cache: false }
+      - run: gem install fastlane -v 2.236.1
+      - name: Upload to Play (internal)
+        working-directory: native
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: fastlane android beta
