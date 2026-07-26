@@ -1,0 +1,28 @@
+node_modules/
+dist/
+platforms/
+hooks/
+.DS_Store
+examples/hello-pwa/native/
+.tmp/
+examples/hello-pwa/*.png
+!examples/hello-pwa/public/**
+.agent/
+.mcp-ios/
+.claude/
+# staged into the CLI tarball at prepack (tarball-only, never committed)
+packages/appwrap-cli/runtime/
+packages/appwrap-cli/runtime-desktop/
+packages/appwrap-cli/templates/
+# npm pack artifacts
+*.tgz
+# private internal ops skill (personal device/team/app context — not for publish)
+.claude/skills/appwrap-ops/
+examples/hello-pwa/native-desktop/
+native-desktop/
+
+# mobile-plugin-demo generated wrapper
+examples/mobile-plugin-demo/native/
+
+# runtime/ deps are installed transiently for typecheck/test; never commit its lockfile
+runtime/bun.lock

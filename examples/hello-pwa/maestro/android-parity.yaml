@@ -1,0 +1,40 @@
+# Android capability parity — contacts / calendar / camera now native.
+# Asserts the native flow runs & returns gracefully (OK or honest ERR), not iosOnly.
+appId: cc.livx.hellowrap
+---
+- launchApp: { clearState: true }
+- extendedWaitUntil: { visible: ".*NATIVE.*platform: android.*", timeout: 30000 }
+
+# scroll to the bottom band (Contacts / Calendar / Camera)
+- swipe: { start: "50%, 85%", end: "50%, 15%", duration: 900 }
+- swipe: { start: "50%, 85%", end: "50%, 15%", duration: 900 }
+- swipe: { start: "50%, 85%", end: "50%, 15%", duration: 900 }
+- swipe: { start: "50%, 85%", end: "50%, 15%", duration: 900 }
+
+# ── Camera (MediaStore capture; AVD without a camera app → honest UNSUPPORTED) ──
+- tapOn: "capture"
+- runFlow:
+    when: { visible: "Allow" }
+    commands: [ { tapOn: "Allow" } ]
+- extendedWaitUntil: { visible: ".*Camera/capture (OK|ERR).*", timeout: 20000 }
+- takeScreenshot: /tmp/ap-camera
+
+# ── Contacts (picker opens; empty AVD book → back out → graceful) ─────
+- tapOn: "pick contact"
+- runFlow:
+    when: { visible: "Allow" }
+    commands: [ { tapOn: "Allow" } ]
+- runFlow:
+    when: { visible: "Choose a contact" }
+    commands:
+      - back
+- extendedWaitUntil: { visible: ".*Contacts/pick contact (OK|ERR).*", timeout: 20000 }
+- takeScreenshot: /tmp/ap-contacts
+
+# ── Calendar (CalendarContract insert; no account on bare AVD → UNSUPPORTED) ──
+- tapOn: "add event"
+- runFlow:
+    when: { visible: "Allow" }
+    commands: [ { tapOn: "Allow" } ]
+- extendedWaitUntil: { visible: ".*Calendar/add event (OK|ERR).*", timeout: 20000 }
+- takeScreenshot: /tmp/ap-calendar

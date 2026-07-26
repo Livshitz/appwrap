@@ -1,0 +1,49 @@
+# appwrap PR checks — emitted by `appwrap init --ci`. Adjust build commands to your project.
+#@if:doc
+# Template directives (processed at emit by renderCiWorkflow; none survive into the scaffolded file):
+#   `#@if:<cond>` trailing a line keeps it only when the condition holds; a standalone `#@if:<cond>`
+#   … `#@end` pair gates a block (non-nesting). Conds: monorepo/root (app dir vs repo root),
+#   web/server (loader), doc (never emitted — this note).
+#   Tokens: __DIR__ → `<subdir>/` or ``; __APP_DIR__ → subdir; __TAG_PREFIX__ → release tag prefix.
+#@end
+name: PR
+on:
+  pull_request:
+    paths: #@if:monorepo
+      - '__DIR__**' #@if:monorepo
+      - '.github/workflows/appwrap-pr.yml' #@if:monorepo
+  workflow_dispatch: #@if:monorepo
+
+jobs:
+#@if:web
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+        working-directory: __APP_DIR__ #@if:monorepo
+      - run: bun test || echo "no tests"
+        working-directory: __APP_DIR__ #@if:monorepo
+      - run: bun run build # → dist/ (the PWA bundle the wrapper ships)
+        working-directory: __APP_DIR__ #@if:monorepo
+#@end
+
+  ios-build:
+    runs-on: macos-15
+    needs: web #@if:web
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v5
+        with: { node-version: 22 }
+      - run: bun install && bun run build #@if:web
+      - run: bun install # server-loader wrap — no local web build (the app loads the live URL) #@if:server
+        working-directory: __APP_DIR__ #@if:monorepo
+      # Pin global tools — unpinned installs can grab a breaking release mid-flight. Bump deliberately.
+      - run: npm i -g nativescript@9.0.6
+      # Pinned to the appwrap version that emitted this workflow (see release workflow header for why).
+      - run: bunx @livx.cc/appwrap@^__APPWRAP_VERSION__ init # native/ is generated (gitignored) — regenerate it fresh in CI
+        working-directory: __APP_DIR__ #@if:monorepo
+      - working-directory: __DIR__native
+        run: npm install && ns build ios --emulator

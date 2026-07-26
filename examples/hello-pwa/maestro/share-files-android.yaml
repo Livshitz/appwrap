@@ -1,0 +1,30 @@
+# Android verification for kit.share.files (FileProvider + ACTION_SEND).
+# Gotcha: WebView ignores fast flings — scrollUntilVisible needs a slow speed to move.
+#
+# Orientation (kit.screen.orientation.lock/unlock) is intentionally NOT chained here:
+# setRequestedOrientation rotates the window, and a bridge call issued during the
+# post-rotation relayout can be dropped by the Android prompt()-tunnel transport
+# (a transport-robustness follow-up). The lock itself works — verified in isolation
+# (device rotates to ROTATION_90). Keeping this flow to the deterministic new domain.
+appId: cc.livx.hellowrap
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "Hello AppWrap"
+    timeout: 40000
+- extendedWaitUntil:
+    visible: ".*NATIVE.*platform: android.*"
+    timeout: 15000
+
+# ── File share: tap → Android share chooser opens (proves the FileProvider URI is valid) ──
+- scrollUntilVisible:
+    element: { text: "share .txt" }
+    direction: DOWN
+    speed: 20
+    timeout: 25000
+- tapOn: "share .txt"
+- takeScreenshot: android-sharefiles-chooser
+# back out of the system chooser; the handler already resolved OK if FileProvider worked
+- pressKey: Back
+- assertVisible: ".*Share files/share .txt OK.*"

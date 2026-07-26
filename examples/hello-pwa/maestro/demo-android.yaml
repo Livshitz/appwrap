@@ -1,0 +1,184 @@
+# Android capability demo — domains the Android shell implements natively.
+# reviews/motion/contacts/calendar/camera report 'none' on Android (honest map) — not exercised.
+# Gotcha: WebView ignores fast flings here — swipes need duration ≥900ms (slow drag) to scroll.
+appId: cc.livx.hellowrap
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "Hello AppWrap"
+    timeout: 40000
+
+# ── Handshake (Android exposes the whole context line as one a11y node) ──
+- extendedWaitUntil:
+    visible: ".*NATIVE.*platform: android.*"
+    timeout: 15000
+- takeScreenshot: android-01-handshake
+
+# ── Band 1: Haptics / Storage / Toast / Status bar / Device / Clipboard / Secure store ──
+- tapOn: { text: "light", index: 0 }
+- tapOn: "medium"
+- tapOn: "heavy"
+- tapOn: "success"
+- tapOn: "error"
+- assertVisible: ".*Haptics/error OK.*"
+
+- tapOn: { text: "set", index: 0 }
+- tapOn: { text: "get", index: 0 }
+- assertVisible: ".*Storage/get OK 1.*"
+- tapOn: { text: "remove", index: 0 }
+- tapOn: "kv-clear"
+- assertVisible: ".*kv-clear OK.*"
+
+- tapOn: "short"
+- assertVisible: "Hello from the kit 👋"
+
+- tapOn: "dark"
+- tapOn: { text: "light", index: 1 }
+- assertVisible: ".*Status bar/light OK.*"
+
+- tapOn: "info"
+- extendedWaitUntil:
+    visible: ".*Device/info OK.*"
+    timeout: 8000
+
+- tapOn: "copy"
+- tapOn: "read"
+- extendedWaitUntil:
+    visible: ".*Clipboard/read OK.*"
+    timeout: 8000
+
+- tapOn: "lock-set"
+- tapOn: "lock-get"
+- extendedWaitUntil:
+    visible: ".*lock-get OK.*"
+    timeout: 8000
+- tapOn: "lock-del"
+- takeScreenshot: android-02-core
+
+# ── Band 2: Notifications / Biometrics / Location / Photos / Network / Screen / Dialogs ──
+- swipe:
+    start: "50%, 85%"
+    end: "50%, 15%"
+    duration: 900
+
+- tapOn: "permission"
+- runFlow:
+    when:
+      visible: "Allow"
+    commands:
+      - tapOn: "Allow"
+- extendedWaitUntil:
+    visible: ".*permission OK.*"
+    timeout: 8000
+- tapOn: "schedule 2s"
+- tapOn: "pending"
+- extendedWaitUntil:
+    visible: ".*Notifications/pending OK.*"
+    timeout: 8000
+- tapOn: "badge 3"
+- assertVisible: ".*badge 3 OK.*"
+- tapOn: { text: "clear", index: 0 }
+
+# Biometrics: emulator has no enrollment → honest {available:false} is still OK
+- tapOn: "available"
+- extendedWaitUntil:
+    visible: ".*Biometrics/available OK.*"
+    timeout: 8000
+
+# Location: runtime permission + emulator GPS fix (pumped by the runner)
+- tapOn: "current"
+- runFlow:
+    when:
+      visible: ".*While using the app.*"
+    commands:
+      - tapOn: ".*While using the app.*"
+- extendedWaitUntil:
+    visible: ".*Location/current OK.*"
+    timeout: 20000
+- tapOn: "geo-watch"
+- extendedWaitUntil:
+    visible: ".*geo-watch OK.*"
+    timeout: 20000
+- takeScreenshot: android-03-location
+
+# Photos: system picker over the page; back = graceful cancel ({picked:false})
+- tapOn: { text: "pick", index: 0 }
+- waitForAnimationToEnd
+- takeScreenshot: android-04-photo-picker
+- back
+- extendedWaitUntil:
+    visible: ".*Photos/pick OK.*"
+    timeout: 8000
+
+- tapOn: "status"
+- extendedWaitUntil:
+    visible: ".*Network/status OK.*"
+    timeout: 8000
+
+- tapOn: "safe area"
+- extendedWaitUntil:
+    visible: ".*safe area OK.*"
+    timeout: 8000
+- tapOn: "dim"
+- tapOn: "bright"
+- tapOn: "awake on"
+- assertVisible: ".*awake on OK.*"
+- tapOn: "awake off"
+
+# Dialogs (native NS Dialogs)
+- tapOn: "alert"
+- extendedWaitUntil:
+    visible: "Native alert via the kit"
+    timeout: 8000
+- tapOn: "OK"
+- extendedWaitUntil:
+    visible: ".*Dialogs/alert OK.*"
+    timeout: 8000
+- tapOn: "confirm"
+- extendedWaitUntil:
+    visible: "Proceed with the demo?"
+    timeout: 8000
+- tapOn: "OK"
+- assertVisible: ".*confirm OK true.*"
+- tapOn: "sheet"
+- extendedWaitUntil:
+    visible: "Banana"
+    timeout: 8000
+- tapOn: "Banana"
+- assertVisible: ".*sheet OK 1.*"
+- takeScreenshot: android-05-dialogs
+
+# ── Band 3: Theme ────────────────────────────────────────────────────
+- swipe:
+    start: "50%, 85%"
+    end: "50%, 15%"
+    duration: 900
+- tapOn: "indigo"
+- assertVisible: ".*indigo OK.*"
+- takeScreenshot: android-06-theme
+
+# ── Deep link (VIEW intent through the OS) ───────────────────────────
+- openLink: "hellowrap://demo/path?from=maestro"
+- extendedWaitUntil:
+    visible: ".*event deeplink hellowrap.*"
+    timeout: 10000
+- takeScreenshot: android-07-deeplink
+
+# ── Share (chooser, last — leaves overlay) ───────────────────────────
+- swipe:
+    start: "50%, 15%"
+    end: "50%, 85%"
+    duration: 900
+- swipe:
+    start: "50%, 15%"
+    end: "50%, 85%"
+    duration: 900
+- tapOn: "share link"
+- extendedWaitUntil:
+    visible: ".*Wrapped with appwrap.*"
+    timeout: 8000
+- takeScreenshot: android-08-share
+- back
+- assertVisible: "Hello AppWrap"
+- takeScreenshot: android-09-final

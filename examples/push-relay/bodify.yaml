@@ -1,0 +1,6 @@
+name: appwrap-push-relay
+type: server
+entry: src/server.ts
+resources:
+  memoryMax: "256M"
+  cpuQuota: "50%"
