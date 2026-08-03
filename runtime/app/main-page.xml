@@ -9,7 +9,7 @@
     <!-- loader:'server' load-failure fallback (App Review 2.1a): shown by main-page.ts when the
          server navigation fails (offline / server down) so the reviewer never sees a white screen. -->
     <StackLayout id="loadFallback" row="0" visibility="collapse" backgroundColor="#ffffff" verticalAlignment="center" padding="32">
-      <Label text="Blank" fontSize="34" fontWeight="700" color="#000000" textAlignment="center" />
+      <Label text="{{ appName }}" fontSize="34" fontWeight="700" color="#000000" textAlignment="center" />
       <Label text="Can't connect" fontSize="17" fontWeight="600" color="#333333" textAlignment="center" marginTop="18" />
       <Label text="Check your internet connection — we'll keep trying." fontSize="14" color="#777777" textAlignment="center" textWrap="true" marginTop="6" />
       <Button id="loadRetryBtn" text="Retry" fontSize="16" fontWeight="600" color="#ffffff" backgroundColor="#000000" borderRadius="22" height="44" width="160" marginTop="24" />

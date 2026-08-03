@@ -86,7 +86,7 @@ function armNativeSurfaceRecovery(webView: CustomWebView): void {
 
 export function onPageLoaded(args: EventData): void {
   const page = args.object as Page;
-  page.bindingContext = { backgroundColor: SHELL_CONFIG.backgroundColor };
+  page.bindingContext = { backgroundColor: SHELL_CONFIG.backgroundColor, appName: SHELL_CONFIG.name };
   bindStatusBarPage(page);
   if (isAndroid) enableAndroidEdgeToEdge();
   applyThemeColor(SHELL_CONFIG.themeColor); // manifest/config theme_color → native chrome at boot
