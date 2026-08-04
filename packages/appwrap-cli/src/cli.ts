@@ -3148,7 +3148,29 @@ function buildInputStats(cwd: string, cfg: { pwaDist?: string; overrides?: strin
    }
   }
   stats.push({ sum: runtime, newest: runtimeNewest });
-  return { parts: stats.map((s) => s.sum), newest: Math.max(...stats.map((s) => s.newest)) };
+  const parts = stats.map((s) => s.sum);
+  // The STAMPED shell config (native/app/shell/config.ts) — compiled into bundle.js, and the ONLY
+  // input that carries values which never touch a fingerprinted file. `dev --url` / `deploy` stamp it
+  // from the EFFECTIVE cfg (serverUrl, loader, debug), so with `--url` every other input is byte-identical
+  // and the fingerprint matched → "inputs unchanged" → the previous .ipa (carrying the PREVIOUS
+  // serverUrl) was reinstalled while the on-disk config said the new one. Silent stale deploy.
+  // CONTENT, not mtime: sync/stamp rewrites this file unconditionally on every run, so its mtime is
+  // pure noise (it would bust the cache always). Deliberately excluded from `newest` for the same
+  // reason — an always-now mtime would make the `--resume` gate unusable, and the fingerprint is the
+  // real gate; --resume is the evidence-relaxed first-run path by construction.
+  parts.push(stringHash(readFileIfExists(join(resolve(cwd, flags.out ?? 'native'), 'app/shell/config.ts'))));
+  return { parts, newest: Math.max(...stats.map((s) => s.newest)) };
+}
+
+function readFileIfExists(p: string): string {
+  try { return readFileSync(p, 'utf8'); } catch { return ''; }
+}
+
+/** djb2 over a string — same family as the fingerprint hash; only needs to change when content does. */
+function stringHash(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = (((h << 5) + h) ^ s.charCodeAt(i)) >>> 0;
+  return h;
 }
 
 /** Newest mtime across every build input — the evidence the `--resume` gate needs when no build cache
@@ -3662,6 +3684,11 @@ async function deploy(cwd: string, flags: Record<string, string>, positionals: s
   // ungated. (A fingerprintMatch skip already has an identical cache; nothing to write.)
   if (!canSkipBuild || adoptCache) writeBuildCache(outDir, 'ios', { fingerprint: fp, artifactPath: ipaPath, builtAt: new Date().toISOString() });
 
+  // Prove the .ipa we're about to install actually carries the serverUrl we just stamped — the CLI used
+  // to print "✓ Deployed" while shipping an artifact built from a PREVIOUS URL (a build-skip whose cache
+  // key ignored the stamped shell config). Cheap, and it fails BEFORE the install rather than silently.
+  assertShippedServerUrl(ipaPath, cfg);
+
   console.log(`▶ installing ${ipa} → ${device.name} [${device.transport}]`);
   let installedViaUsbmux = false;
   let installed = false;
@@ -3753,6 +3780,31 @@ async function deploy(cwd: string, flags: Record<string, string>, positionals: s
   console.log(installedViaUsbmux
     ? `✓ Installed to ${device.name} via usbmux (devicectl was stuck). Tap the app icon to open it.`
     : `✓ Deployed to ${device.name}.`);
+}
+
+/** Deploy-time verification for `loader:'server'`: the .ipa's compiled bundle must contain the exact
+ * `serverUrl` we stamped. Reads the bundle straight out of the zip (no extraction). Exits on mismatch —
+ * shipping a shell pointed at the WRONG origin looks like a working deploy and is the hardest class of
+ * bug to see from the outside. Unverifiable (no unzip / bundle not found) → warn, never block. */
+function assertShippedServerUrl(ipaPath: string, cfg: AppwrapConfig): void {
+  if ((cfg.loader ?? 'app') !== 'server' || !cfg.serverUrl) return;
+  let bundle = '';
+  try {
+    bundle = execFileSync('sh', ['-c', `unzip -p ${JSON.stringify(ipaPath)} 'Payload/*.app/app/bundle.js'`], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+  } catch { /* no unzip / unexpected layout → fall through to the unverifiable warning */ }
+  if (!bundle) return void console.warn(`  ⚠ could not read the bundle out of ${ipaPath.split('/').pop()} — shipped serverUrl NOT verified.`);
+  if (bundle.includes(JSON.stringify(cfg.serverUrl))) {
+    console.log(`✓ verified shipped serverUrl → ${cfg.serverUrl}`);
+    return;
+  }
+  const shipped = [...bundle.matchAll(/serverUrl:\s*("(?:[^"\\]|\\.)*")/g)].map((m) => m[1]);
+  console.error(
+    `\n✖ The .ipa does NOT carry the serverUrl that was just stamped.\n` +
+      `  stamped: ${cfg.serverUrl}\n` +
+      (shipped.length ? `  in .ipa: ${shipped.join(', ')}\n` : '') +
+      `  → a stale artifact was about to be installed. Re-run with --force to rebuild.\n`
+  );
+  process.exit(1);
 }
 
 /** Install an .ipa over usbmux via ideviceinstaller — a separate stack from devicectl/CoreDevice, so it
