@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, utimesSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { buildFingerprint, applyOverrides, decideIosBuildSkip, newestBuildInputMtime, type BuildCache } from '../src/cli';
+import { buildFingerprint, applyOverrides, decideIosBuildSkip, newestBuildInputMtime, stampShellConfig, type BuildCache } from '../src/cli';
 
 function scratch(): string {
   return mkdtempSync(join(tmpdir(), 'appwrap-regen-'));
@@ -181,6 +181,50 @@ describe('newestBuildInputMtime — the evidence the --resume gate runs on', () 
       const t = new Date(Date.now() + 10_000);
       utimesSync(f, t, t);
       expect(newestBuildInputMtime(cwd, {})).toBeGreaterThan(before);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+// Regression: `appwrap dev ios --url <new>` restamped native/app/shell/config.ts correctly, but that
+// STAMPED file was not a fingerprint input — and `--url` touches nothing else. So the fingerprint
+// matched, the build was skipped, and the PREVIOUS .ipa (carrying the PREVIOUS serverUrl) was
+// reinstalled + relaunched under a "✓ Deployed" print. Observed on para-li: the phone kept loading the
+// old LAN dev URL across three consecutive deploys of a different URL.
+describe('buildFingerprint includes the stamped shell config (dev --url)', () => {
+  function fixture(): string {
+    const cwd = scratch();
+    mkdirSync(join(cwd, 'native/app/shell'), { recursive: true });
+    writeFileSync(join(cwd, 'appwrap.config.ts'), 'export default {}');
+    return cwd;
+  }
+  const base = { id: 'x', name: 'X', version: '1.0.0', loader: 'server' as const };
+
+  test('changes when only serverUrl changes', () => {
+    const cwd = fixture();
+    try {
+      stampShellConfig(join(cwd, 'native'), { ...base, serverUrl: 'https://10.0.0.1:4012/?native=1' });
+      const fp1 = buildFingerprint(cwd, {});
+      stampShellConfig(join(cwd, 'native'), { ...base, serverUrl: 'https://example.com/?native=1' });
+      expect(buildFingerprint(cwd, {})).not.toBe(fp1);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  // Negative control — the stamp is rewritten unconditionally every run, so hashing its MTIME would
+  // bust the cache on every deploy and silently disable the build-skip. Content only.
+  test('does NOT change when the same config is re-stamped', () => {
+    const cwd = fixture();
+    try {
+      const cfg = { ...base, serverUrl: 'https://example.com/?native=1' };
+      stampShellConfig(join(cwd, 'native'), cfg);
+      const fp1 = buildFingerprint(cwd, {});
+      const t = new Date(Date.now() + 10_000);
+      stampShellConfig(join(cwd, 'native'), cfg);
+      utimesSync(join(cwd, 'native/app/shell/config.ts'), t, t);
+      expect(buildFingerprint(cwd, {})).toBe(fp1);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
