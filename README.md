@@ -141,9 +141,19 @@ doesn't use a capability doesn't bundle its handler or request its permission (l
 **absent** → every capability is active (back-compat). Each capability's permissions/background-modes/
 native-deps are declared in its own manifest entry (`runtime/app/shell/capabilities.manifest.ts`) and
 the CLI collects+dedups them across the active set.
-`permissions` stamps iOS usage strings (keys: `location`, `photos`, `camera`, `microphone`, `faceid`,
-`calendar`, `contacts`, `motion`). Without `modules` it's the source of which perms are added; with
-`modules` it only **overrides** a module's default usage copy. Only declared/active ones reach Info.plist.
+`permissions` stamps iOS usage strings + Android `<uses-permission>` (keys: `location`, `photos`,
+`camera`, `microphone`, `faceid`, `calendar`, `contacts`, `motion`). A declared domain is **always**
+stamped, with or without `modules`; when an active module already owns the same key, the string here
+overrides its default copy.
+
+**`camera` is stamped by default in every iOS build.** WKWebView's own `<input type="file">` picker
+offers "Take Photo", and iOS *hard-kills* the app for a camera access with no `NSCameraUsageDescription`
+— an app that never touches a camera API can still be terminated by a plain file upload (this cost a
+2.1(a) store rejection). It's the one webview-reachable privacy class with no JS seam to guard, so the
+key is stamped with default copy instead. Pass your own string to replace the copy, or
+`permissions: { camera: false }` to opt out (only for an app with no file inputs at all). This affects
+the Info.plist only: the shell still refuses `getUserMedia({ video })` to any app that didn't actually
+declare the camera.
 `storekitConfig` (optional) points at a `.storekit` file (relative to the project) and wires it into
 the iOS scheme so `kit.billing` resolves products locally — no App Store Connect needed. Applies only
 when launched from Xcode (sim or device-from-Xcode), not a standalone `devicectl` sideload.
