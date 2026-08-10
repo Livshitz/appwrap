@@ -60,7 +60,7 @@ TS preferred (typed via `defineConfig` from `@livx.cc/appwrap/config`); JSON sti
 Required: `id`, `name`, `version`, `pwaDist`. Common optional: `entry`, `backgroundColor`, `statusBarStyle`, `urlScheme`, `icon`, `loader` (`app` bundled | `server` remote-load), `serverUrl`, `teamId`, `modules[]`, `permissions{}`, `buildNumber`, `storekitConfig`, `overrides`.
 
 - **`modules[]`** — opt-in capability allow-list (see `runtime/app/shell/capabilities.manifest.ts`). Present → only the listed capabilities (+ always-on core) are advertised/permissioned/compiled-in (lighter build). Absent → all active. Each module declares its own perms / background-modes / native-deps / entitlements; the CLI collects + dedups.
-- **`permissions{}`** — iOS usage strings (`location`, `photos`, `camera`, `microphone`, `faceid`, `calendar`, `contacts`, `motion`, `health`). With `modules`, only overrides a module's default copy.
+- **`permissions{}`** — iOS usage strings + Android uses-permission (`location`, `photos`, `camera`, `microphone`, `faceid`, `calendar`, `contacts`, `motion`, `health`). A declared domain is ALWAYS stamped (with or without `modules`); when a module owns the same key it overrides that module's default copy. `camera` is stamped by DEFAULT in every iOS build — WKWebView's `<input type="file">` picker offers "Take Photo" and TCC hard-kills an app with no `NSCameraUsageDescription`; `camera: false` opts out.
 - **`loader: "server"` + `serverUrl`** — remote-load: the shell loads a live URL instead of bundled `www`. Good for retrofitting a same-origin web app; no offline bundle.
 
 ## Capabilities

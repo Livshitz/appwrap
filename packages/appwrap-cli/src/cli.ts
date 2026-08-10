@@ -86,6 +86,12 @@ const IOS_PERMISSION_KEYS: Record<string, string[]> = {
   calendar: ['NSCalendarsFullAccessUsageDescription', 'NSCalendarsUsageDescription'],
 };
 
+/** Default copy for the always-stamped NSCameraUsageDescription (see "the webview baseline" in
+ * nativeReqs). Written for an App Review reader: it describes the ONLY way a plain appwrap app reaches
+ * the camera — choosing "Take Photo" from a file upload. An app that calls the camera directly (the
+ * `camera`/`scanner` modules, or its own `permissions.camera`) replaces this with its own copy. */
+const WEBVIEW_BASELINE_CAMERA_USAGE = 'Take a photo when you choose “Take Photo” while attaching a file.';
+
 /** Runtime permissions stamped into AndroidManifest.xml per declared domain.
  * photos/faceid need none: system picker / USE_BIOMETRIC is baseline. */
 const ANDROID_PERMISSION_KEYS: Record<string, string[]> = {
@@ -232,6 +238,11 @@ interface NativeReqs {
   activeOptIn: string[];           // opt-in capability names that are active (for the handshake map)
   activeOptionalGroups: string[];  // strippable handler groups (own file) that are active
   iosPlist: Array<{ key: string; usage: string }>;
+  /** What the app DECLARED it wants the web layer to be able to use — modules + `permissions{}`, and
+   * deliberately NOT the webview baseline. Drives the shell's document-start capability guard.
+   * Kept separate from `iosPlist` because the two answer different questions: the plist must cover
+   * everything the OS can kill us for REACHING, the guard must expose only what the app ASKED for. */
+  webCaps: { camera: boolean; microphone: boolean; geolocation: boolean };
   iosEntitlements: Record<string, boolean | string | string[]>;
   androidPerms: string[];
   androidGradleDeps: string[];
@@ -277,7 +288,11 @@ function nativeReqs(cfg: AppwrapConfig): NativeReqs {
       for (const p of m.ios?.permissions ?? []) {
         if (seenKeys.has(p.key)) continue;
         seenKeys.add(p.key);
-        iosPlist.push({ key: p.key, usage: cfg.permissions?.[p.domain as keyof typeof cfg.permissions] ?? p.defaultUsage });
+        // `permissions{}` overrides the module's default COPY. A `false` there is an opt-out of the
+        // webview baseline (below), never of a module's own key — the module ships native code that
+        // touches the class, so the string is mandatory; fall back to the default copy.
+        const override = cfg.permissions?.[p.domain as keyof typeof cfg.permissions];
+        iosPlist.push({ key: p.key, usage: typeof override === 'string' && override ? override : p.defaultUsage });
       }
       for (const ap of m.android?.permissions ?? []) androidPerms.add(ap);
       for (const g of m.android?.gradleDeps ?? []) gradle.add(g);
@@ -289,14 +304,52 @@ function nativeReqs(cfg: AppwrapConfig): NativeReqs {
       // resolves under the pack's own dir, so it must not be conflated with the built-in dir names.
       if (m.nativeSrc && !packInfo(m.name)) nativeSrc.push(m.nativeSrc);
     }
-  } else {
-    // legacy: only what `permissions{}` declares (via the key maps) — no behavior change
-    for (const [domain, text] of Object.entries(cfg.permissions ?? {})) {
-      for (const key of IOS_PERMISSION_KEYS[domain] ?? []) {
-        if (text && !seenKeys.has(key)) { seenKeys.add(key); iosPlist.push({ key, usage: text }); }
-      }
-      for (const p of ANDROID_PERMISSION_KEYS[domain] ?? []) androidPerms.add(p);
+  }
+
+  // A DECLARED permission is always stamped — in BOTH modes. Before, `permissions{}` was read only in
+  // legacy mode; with `modules` present it merely overrode a module's usage copy, so declaring a domain
+  // no module owned stamped NOTHING. That silent inertness shipped a store rejection (Copy Bin,
+  // Guideline 2.1(a): TCC killed the app for a missing NSCameraUsageDescription). Module-derived keys are
+  // collected FIRST and win the dedupe, so an app whose declared domains its modules already own stamps
+  // byte-identically. `false` = an explicit opt-out (see the webview baseline below), never a usage string.
+  for (const [domain, text] of Object.entries(cfg.permissions ?? {})) {
+    if (text === false) continue;
+    for (const key of IOS_PERMISSION_KEYS[domain] ?? []) {
+      if (text && !seenKeys.has(key)) { seenKeys.add(key); iosPlist.push({ key, usage: text }); }
     }
+    for (const p of ANDROID_PERMISSION_KEYS[domain] ?? []) androidPerms.add(p);
+  }
+
+  // Snapshot the DECLARED capabilities before the baseline widens the plist — see NativeReqs.webCaps.
+  const webCaps = {
+    camera: seenKeys.has('NSCameraUsageDescription'),
+    microphone: seenKeys.has('NSMicrophoneUsageDescription'),
+    geolocation: seenKeys.has('NSLocationWhenInUseUsageDescription'),
+  };
+
+  // ── The webview baseline ───────────────────────────────────────────────────────────────────────
+  // The shell's invariant is that every TCC-gated capability a WEB PAGE can reach is either DECLARED
+  // (usage string present) or BLOCKED before WebKit enters its native path — see mediaCaptureGuardJs /
+  // geolocationGuardJs, which reject getUserMedia + geolocation in JS at document-start.
+  //
+  // `<input type="file">` is the one reachable path with no such seam: WKWebView's own picker is native
+  // and internal, it offers "Take Photo" for an image accept, and TCC hard-kills the HOST process for a
+  // camera access with no usage string. There is no JS hook to suppress that menu item and no config in
+  // which it is absent — EVERY appwrap iOS build can reach it. When the answer is unconditional the
+  // correct mechanism is a default, not a warning the developer has no way to act on: an app author
+  // reads `modules` as "features we call", and nothing about a file input reads as "camera".
+  //
+  // So the key is stamped by default, with honest copy, overridable via `permissions.camera` and
+  // opt-out-able with `permissions: { camera: false }`. An unused iOS usage string is inert (it is only
+  // ever surfaced when the class is actually requested) — it is not an App Review flag, unlike an
+  // entitlement or a background mode.
+  //
+  // iOS only: the Android chooser's capture path already handles an UNDECLARED CAMERA permission (it
+  // checks `declares()` and falls back to the plain picker — file-chooser.android.ts), so Android needs
+  // nothing and stays opt-in; adding a runtime permission there would change the Play listing.
+  if (cfg.permissions?.camera !== false && !seenKeys.has('NSCameraUsageDescription')) {
+    seenKeys.add('NSCameraUsageDescription');
+    iosPlist.push({ key: 'NSCameraUsageDescription', usage: WEBVIEW_BASELINE_CAMERA_USAGE });
   }
 
   // Active PACK modules (from the config's modulePacks) — their native source + register handler
@@ -316,6 +369,7 @@ function nativeReqs(cfg: AppwrapConfig): NativeReqs {
     activeOptIn: optIn.filter((m) => active.has(m.name)).map((m) => m.name),
     activeOptionalGroups: OPTIONAL_GROUPS.filter((g) => activeMods.some((m) => m.group === g)),
     iosPlist,
+    webCaps,
     iosEntitlements,
     androidPerms: [...androidPerms],
     androidGradleDeps: [...gradle],
@@ -859,6 +913,12 @@ export async function loadConfig(cwd: string, flags: Record<string, string>): Pr
 export function stampShellConfig(outDir: string, cfg: AppwrapConfig): void {
   // Resolve the env-switcher block. Absent block OR `enabled:false` → the whole feature is inert
   // (the shell reads `envSwitcher.enabled`). `allowPattern`/`envs` default to empty (default-deny).
+  // Which TCC-gated web APIs this build DECLARED (modules + `permissions{}`). The shell's guard used to
+  // sniff Info.plist for the usage strings, but the plist now also carries the webview baseline
+  // (an always-present NSCameraUsageDescription so the file-input picker can't kill the process) —
+  // sniffing it would silently hand getUserMedia({video}) to every app, including a loader:'server'
+  // shell showing pages the author doesn't control. Intent and plist are now stamped separately.
+  const webCaps = nativeReqs(cfg).webCaps;
   const es = cfg.envSwitcher;
   const envSwitcher = {
     enabled: !!es && es.enabled !== false,
@@ -893,6 +953,7 @@ export const SHELL_CONFIG = {
   pushRegistrationUrl: ${JSON.stringify(cfg.push?.registrationUrl ?? '')},
   iosKeyboardExtraLift: ${JSON.stringify(cfg.iosKeyboardExtraLift ?? 82)},
   envSwitcher: ${JSON.stringify(envSwitcher)} as { enabled: boolean; envs: { label: string; url: string }[]; allowPattern: string },
+  webCaps: ${JSON.stringify(webCaps)} as { camera: boolean; microphone: boolean; geolocation: boolean },
 };
 `;
   writeFileSync(join(outDir, 'app/shell/config.ts'), content);
