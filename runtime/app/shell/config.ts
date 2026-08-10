@@ -74,4 +74,11 @@ export const SHELL_CONFIG = {
    * inert. `envs` = declared presets; `allowPattern` = anchored regex gating "Other" (default-deny
    * when ''). Stamped by `appwrap init`/`sync` — see `stampShellConfig`. */
   envSwitcher: { enabled: false, envs: [] as { label: string; url: string }[], allowPattern: '' },
+  /** TCC-gated web APIs this build DECLARED (active modules + the config's `permissions{}`) — what the
+   * document-start capability guard exposes to the page. NOT the same question as "is the Info.plist
+   * usage string present": the plist also carries the webview baseline (NSCameraUsageDescription is
+   * stamped in every build so WKWebView's `<input type="file">` "Take Photo" can't TCC-kill the
+   * process), and an app that never asked for the camera must still not be handing `getUserMedia` to
+   * whatever page it renders. Stamped by `appwrap init`/`sync` — see `stampShellConfig`. */
+  webCaps: { camera: false, microphone: false, geolocation: false },
 };
