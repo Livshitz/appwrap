@@ -245,11 +245,17 @@ export interface AppwrapConfig {
    * testing — products resolve without App Store Connect. Only applies when launched from
    * Xcode (simulator or device-from-Xcode), not a standalone devicectl sideload. */
   storekitConfig?: string;
-  /** Permission usage strings, keyed by domain. Only listed ones are stamped
-   * (iOS: Info.plist usage string; Android: <uses-permission>). 'contacts' has no
-   * iOS key (CNContactPicker needs none) — it only stamps Android READ_CONTACTS. */
+  /** Permission usage strings, keyed by domain. A listed domain is ALWAYS stamped (iOS: Info.plist
+   * usage string; Android: <uses-permission>) — with or without `modules`; when a module already owns
+   * the same key, the string here overrides its default copy. 'contacts' has no iOS key
+   * (CNContactPicker needs none) — it only stamps Android READ_CONTACTS.
+   *
+   * `camera` is stamped by DEFAULT in every iOS build: WKWebView's `<input type="file">` picker offers
+   * "Take Photo", and iOS hard-kills the app for a camera access with no usage string. Pass
+   * `camera: false` to opt out (only for an app with no file inputs at all), or your own string to
+   * replace the default copy. */
   permissions?: Partial<
-    Record<'location' | 'photos' | 'camera' | 'microphone' | 'faceid' | 'calendar' | 'contacts' | 'motion' | 'tracking', string>
+    Record<'location' | 'photos' | 'camera' | 'microphone' | 'faceid' | 'calendar' | 'contacts' | 'motion' | 'tracking', string | false>
   >;
   /** App Tracking Transparency tracking domains (iOS, `tracking` module). When the module is active
    * the CLI sets the privacy manifest's `NSPrivacyTracking` → true and fills `NSPrivacyTrackingDomains`

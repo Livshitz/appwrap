@@ -332,11 +332,15 @@ export class CustomWebView extends WebView {
     // (reject camera/mic/geolocation in JS before WebKit's native path — see capabilityGuardJs) +
     // native-feel suppression, all injected before the page's own scripts run. Globals first so the page
     // can read __APPWRAP__ / __APPWRAP_BACKEND_ORIGIN__.
-    const hasPlistKey = (k: string) => !!NSBundle.mainBundle.objectForInfoDictionaryKey(k);
+    // Driven by the STAMPED declaration, not by sniffing Info.plist: NSCameraUsageDescription is now
+    // present in every build (the webview baseline — so WKWebView's file-input "Take Photo" can't
+    // TCC-kill us), and reading presence would therefore open getUserMedia({video}) to every page an
+    // app renders, including ones a loader:'server' shell doesn't control. SHELL_CONFIG.webCaps is
+    // what the app actually declared (modules + `permissions{}`).
     const capabilityGuard = capabilityGuardJs({
-      camera: hasPlistKey('NSCameraUsageDescription'),
-      microphone: hasPlistKey('NSMicrophoneUsageDescription'),
-      geolocation: hasPlistKey('NSLocationWhenInUseUsageDescription'),
+      camera: SHELL_CONFIG.webCaps.camera,
+      microphone: SHELL_CONFIG.webCaps.microphone,
+      geolocation: SHELL_CONFIG.webCaps.geolocation,
     });
     const swGuard = serviceWorkerGuardJs(SHELL_CONFIG.neutralizeServiceWorker);
     const extNavGuard = externalNavGuardJs(SHELL_CONFIG.openNewWindowsInBrowser);
