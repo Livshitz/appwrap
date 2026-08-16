@@ -227,7 +227,7 @@ export function registerExtendedHandlers(): void {
     });
   });
 
-  bridge.register('notifications.schedule', ({ id, title, body, delaySec, deepLink, sender, icon, badge }: { id?: number; title?: string; body?: string; delaySec?: number; deepLink?: string; sender?: string; icon?: string; badge?: number }) => {
+  bridge.register('notifications.schedule', ({ id, title, body, delaySec, deepLink, sender, icon, badge, silent }: { id?: number; title?: string; body?: string; delaySec?: number; deepLink?: string; sender?: string; icon?: string; badge?: number; silent?: boolean }) => {
     if (!isIOS) throw Object.assign(new Error('iOS only for now'), { code: 'UNSUPPORTED' });
     const nid = id ?? Math.floor(Math.random() * 100000);
     const ident = notifIdentity({ title, body, sender, icon });
@@ -238,6 +238,13 @@ export function registerExtendedHandlers(): void {
       if (ident.body) content.body = ident.body;
       // App-icon badge on delivery (set before the communication-style wrap so it's carried through).
       if (typeof badge === 'number') content.badge = badge;
+      // ALERT SOUND. iOS leaves `content.sound` nil by default, which delivers the notification
+      // SILENTLY — so a scheduled timer/alarm fired while the app was backgrounded made no noise at
+      // all, with nothing in the API to hint why. Android's side has always played one (its channel
+      // is IMPORTANCE_DEFAULT), so the platforms disagreed on the same call. Default to the system
+      // alert sound and let a caller opt out with `silent: true`; set BEFORE the communication-style
+      // wrap so contentByUpdatingWithProvider carries it through.
+      if (!silent) content.sound = UNNotificationSound.defaultSound;
       // Group per-sender so the mini-app's notifications thread together (iOS 15+ also
       // uses this alongside the communication-style avatar below).
       if (ident.useIdentity && ident.senderName) content.threadIdentifier = ident.senderName;

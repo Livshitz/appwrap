@@ -30,6 +30,12 @@ export interface ScheduleOptions {
    * badge unchanged. Set 0 to clear on delivery.
    */
   badge?: number;
+  /**
+   * Deliver WITHOUT the alert sound. Default (omitted/false) plays the system alert sound on
+   * both platforms — a scheduled notification is an alert, and a silent one is almost never
+   * what the caller meant. Android honours this on API 29+ only.
+   */
+  silent?: boolean;
 }
 
 export class NotificationsModule {

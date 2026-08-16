@@ -66,7 +66,7 @@ export function registerAndroidHandlers(): void {
     return ok ? 'granted' : 'denied';
   });
 
-  bridge.register('notifications.schedule', ({ id, title, body, delaySec, deepLink, sender, icon }: any) => {
+  bridge.register('notifications.schedule', ({ id, title, body, delaySec, deepLink, sender, icon, silent }: any) => {
     const ident = notifIdentity({ title, body, sender, icon });
     // Per-sender channel gives the mini-app its own identity + settings row; else the shared one.
     const channelId = ident.useIdentity && ident.senderName ? senderChannelId(ident.senderName) : CHANNEL_ID;
@@ -82,6 +82,10 @@ export function registerAndroidHandlers(): void {
         .setSmallIcon(ctx.getApplicationInfo().icon)
         .setContentTitle(ident.title)
         .setAutoCancel(true);
+      // The channel already carries the alert sound (IMPORTANCE_DEFAULT); `silent: true` is the
+      // per-notification opt-out that matches iOS's nil-sound path. API 29+ only — below that the
+      // channel's sound wins and there is nothing to suppress.
+      if (silent && android.os.Build.VERSION.SDK_INT >= 29) builder.setSilent(true);
       if (ident.subtitle) builder.setSubText(ident.subtitle);
       if (ident.body) builder.setContentText(ident.body);
       // Tap → re-open the (singleTask) activity with a VIEW intent; onNewIntent
