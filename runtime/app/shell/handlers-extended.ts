@@ -5,6 +5,7 @@ import { geoAuthAction } from './geo-auth';
 import { onRemoteMessage } from './handlers-push';
 import { uiImageToDataUrl } from './ios-image';
 import { notifIdentity, type NotifIdentity } from './notif-identity';
+import { resolveSoundName } from './notif-sound';
 import { maskForLock, setIosOrientationMask } from './orientation';
 
 interface GeoResult { lat: number; lng: number; accuracy: number; }
@@ -227,10 +228,14 @@ export function registerExtendedHandlers(): void {
     });
   });
 
-  bridge.register('notifications.schedule', ({ id, title, body, delaySec, deepLink, sender, icon, badge, silent }: { id?: number; title?: string; body?: string; delaySec?: number; deepLink?: string; sender?: string; icon?: string; badge?: number; silent?: boolean }) => {
+  bridge.register('notifications.schedule', async ({ id, title, body, delaySec, deepLink, sender, icon, badge, silent, sound }: { id?: number; title?: string; body?: string; delaySec?: number; deepLink?: string; sender?: string; icon?: string; badge?: number; silent?: boolean; sound?: string }) => {
     if (!isIOS) throw Object.assign(new Error('iOS only for now'), { code: 'UNSUPPORTED' });
     const nid = id ?? Math.floor(Math.random() * 100000);
     const ident = notifIdentity({ title, body, sender, icon });
+    // A custom sound is a FILE the OS reads, never a URL it fetches — resolve (download + transcode +
+    // cache) before building the content. Null means "unusable", and the default alert takes over
+    // below: the app rings with the wrong sound rather than not at all.
+    const soundName = !silent && sound ? await resolveSoundName(String(sound)) : null;
     return new Promise((resolve, reject) => {
       const content = UNMutableNotificationContent.new();
       content.title = ident.title;
@@ -244,7 +249,11 @@ export function registerExtendedHandlers(): void {
       // is IMPORTANCE_DEFAULT), so the platforms disagreed on the same call. Default to the system
       // alert sound and let a caller opt out with `silent: true`; set BEFORE the communication-style
       // wrap so contentByUpdatingWithProvider carries it through.
-      if (!silent) content.sound = UNNotificationSound.defaultSound;
+      if (!silent) {
+        content.sound = soundName
+          ? UNNotificationSound.soundNamed(soundName)
+          : UNNotificationSound.defaultSound;
+      }
       // Group per-sender so the mini-app's notifications thread together (iOS 15+ also
       // uses this alongside the communication-style avatar below).
       if (ident.useIdentity && ident.senderName) content.threadIdentifier = ident.senderName;

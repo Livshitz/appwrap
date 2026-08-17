@@ -36,6 +36,14 @@ export interface ScheduleOptions {
    * what the caller meant. Android honours this on API 29+ only.
    */
   silent?: boolean;
+  /**
+   * Custom alert sound — either a file name the app already bundles, or an http(s) URL to audio in
+   * any format (mp3 included). iOS never fetches a sound itself and only plays LinearPCM in a
+   * caf/aiff/wav container under 30s, so the shell downloads a URL once, transcodes it, caches it in
+   * `Library/Sounds`, and hands the OS the resulting file name. Anything that fails along the way
+   * falls back to the DEFAULT alert — never to silence. iOS only; Android uses its channel sound.
+   */
+  sound?: string;
 }
 
 export class NotificationsModule {
