@@ -47,6 +47,7 @@ jobs:
         run: |
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
           unset NPM_CONFIG_USERCONFIG  # bun doesn't expand env vars in setup-node's .npmrc; use ours
+          echo "npmrc bytes: $(wc -c < .npmrc), token length: ${#NPM_TOKEN}, pwd: $(pwd)"
           bun pm whoami || echo "whoami failed (diagnostic only, continuing)"
           NAME=$(node -p "require('./package.json').name")
           VERSION=$(node -p "require('./package.json').version")
@@ -94,6 +95,7 @@ jobs:
         run: |
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
           unset NPM_CONFIG_USERCONFIG  # bun doesn't expand env vars in setup-node's .npmrc; use ours
+          echo "npmrc bytes: $(wc -c < .npmrc), token length: ${#NPM_TOKEN}, pwd: $(pwd)"
           bun pm whoami || echo "whoami failed (diagnostic only, continuing)"
           NAME=$(node -p "require('./package.json').name")
           VERSION=$(node -p "require('./package.json').version")
