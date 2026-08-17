@@ -54,6 +54,10 @@ export const SHELL_CONFIG = {
    * WebView — regular-native-app behavior. Same-origin SPA navigation is untouched. Off by default.
    * See `externalNavGuardJs`. */
   openNewWindowsInBrowser: false,
+  /** Android only. Lock the WebView's text zoom to 100% so the device's system font-size setting
+   * doesn't scale text inside the app. Default true (native-app behavior). False = respect the
+   * user's OS font-size preference. No effect on iOS (WKWebView ignores Dynamic Type). */
+  androidLockTextZoom: true,
   /** Remote push configured, per platform (iOS aps-environment entitlement / Android FCM). Drives the
    * `push` capability flag at runtime by platform — off unless `appwrap.json.push` enables it, so an
    * un-provisioned build honestly reports 'none' (and a personal-team iOS build keeps `pushIos:false`). */
