@@ -47,6 +47,7 @@ jobs:
         run: |
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
           unset NPM_CONFIG_USERCONFIG  # bun doesn't expand env vars in setup-node's .npmrc; use ours
+          bun pm whoami || echo "whoami failed (diagnostic only, continuing)"
           NAME=$(node -p "require('./package.json').name")
           VERSION=$(node -p "require('./package.json').version")
           if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
@@ -59,10 +60,10 @@ jobs:
             git commit -m "chore(native-kit): auto-bump $NAME to $NEW_VERSION [skip ci]"
             git push origin HEAD:main
             echo "Publishing $NAME@$NEW_VERSION…"
-            bun publish --access public
+            bun publish --access public --verbose
           else
             echo "Publishing $NAME@$VERSION…"
-            bun publish --access public
+            bun publish --access public --verbose
           fi
 
   publish-cli:
@@ -93,6 +94,7 @@ jobs:
         run: |
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
           unset NPM_CONFIG_USERCONFIG  # bun doesn't expand env vars in setup-node's .npmrc; use ours
+          bun pm whoami || echo "whoami failed (diagnostic only, continuing)"
           NAME=$(node -p "require('./package.json').name")
           VERSION=$(node -p "require('./package.json').version")
           if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
@@ -105,8 +107,8 @@ jobs:
             git commit -m "chore(cli): auto-bump $NAME to $NEW_VERSION [skip ci]"
             git push origin HEAD:main
             echo "Publishing $NAME@$NEW_VERSION… (prepack bundles runtime/ + templates/)"
-            bun publish --access public
+            bun publish --access public --verbose
           else
             echo "Publishing $NAME@$VERSION… (prepack bundles runtime/ + templates/)"
-            bun publish --access public
+            bun publish --access public --verbose
           fi
