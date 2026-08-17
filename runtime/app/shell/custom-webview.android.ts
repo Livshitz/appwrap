@@ -170,7 +170,7 @@ export class CustomWebView extends WebView {
     settings.setDisplayZoomControls(false);
     // Lock text zoom to 100% so Android system font scaling doesn't inflate WebView text.
     // Controlled by appwrap config `androidLockTextZoom` (default true — native-app behavior).
-    if (SHELL_CONFIG.androidLockTextZoom) settings.setTextZoom(100);
+    if (SHELL_CONFIG.androidLockTextZoom !== false) settings.setTextZoom(100);
     // No rubber-band overscroll glow.
     wv.setOverScrollMode(android.view.View.OVER_SCROLL_NEVER);
 

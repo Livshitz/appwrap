@@ -1,8 +1,9 @@
 name: Publish to npm
 
 # Publishes @livx.cc/native-kit and @livx.cc/appwrap to the public npm registry on push to main.
-# Idempotent: only publishes when package.json's version isn't already on npm,
-# so bumping the version in a commit is what triggers a release.
+# Auto-bump: if package.json's version is already on npm, the patch version is bumped,
+# committed back to main with [skip ci], and that new version is published.
+# A manual version bump in your commit is respected as-is (no double-bump).
 # Auth via NPM_TOKEN (an npm *automation* token — bypasses 2FA/OTP).
 # The CLI's prepack (node scripts/stage-assets.mjs) bundles runtime/ + templates/ into its tarball.
 
@@ -24,47 +25,70 @@ jobs:
         working-directory: packages/native-kit
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org/'
 
-      - name: Publish if version is new
+      - name: Bump if needed, then publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           NAME=$(node -p "require('./package.json').name")
           VERSION=$(node -p "require('./package.json').version")
           if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
-            echo "$NAME@$VERSION already published — nothing to do."
+            echo "$NAME@$VERSION already published — auto-bumping patch…"
+            npm version patch --no-git-tag-version
+            NEW_VERSION=$(node -p "require('./package.json').version")
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add package.json
+            git commit -m "chore(native-kit): auto-bump $NAME to $NEW_VERSION [skip ci]"
+            git push origin HEAD:main
+            echo "Publishing $NAME@$NEW_VERSION…"
+            npm publish --access public
           else
             echo "Publishing $NAME@$VERSION…"
             npm publish --access public
           fi
 
   publish-cli:
-    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    needs: publish-native-kit
+    if: ${{ always() && !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: packages/appwrap-cli
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org/'
 
-      - name: Publish if version is new
+      - name: Bump if needed, then publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           NAME=$(node -p "require('./package.json').name")
           VERSION=$(node -p "require('./package.json').version")
           if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
-            echo "$NAME@$VERSION already published — nothing to do."
+            echo "$NAME@$VERSION already published — auto-bumping patch…"
+            npm version patch --no-git-tag-version
+            NEW_VERSION=$(node -p "require('./package.json').version")
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add package.json
+            git commit -m "chore(cli): auto-bump $NAME to $NEW_VERSION [skip ci]"
+            git push origin HEAD:main
+            echo "Publishing $NAME@$NEW_VERSION… (prepack bundles runtime/ + templates/)"
+            npm publish --access public
           else
             echo "Publishing $NAME@$VERSION… (prepack bundles runtime/ + templates/)"
             npm publish --access public
