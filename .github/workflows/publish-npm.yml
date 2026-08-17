@@ -33,6 +33,10 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org/'
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Bump if needed, then publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -41,7 +45,7 @@ jobs:
           VERSION=$(node -p "require('./package.json').version")
           if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
             echo "$NAME@$VERSION already published — auto-bumping patch…"
-            npm version patch --no-git-tag-version
+            bun pm version patch --no-git-tag-version
             NEW_VERSION=$(node -p "require('./package.json').version")
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -49,10 +53,10 @@ jobs:
             git commit -m "chore(native-kit): auto-bump $NAME to $NEW_VERSION [skip ci]"
             git push origin HEAD:main
             echo "Publishing $NAME@$NEW_VERSION…"
-            npm publish --access public
+            bun publish --access public
           else
             echo "Publishing $NAME@$VERSION…"
-            npm publish --access public
+            bun publish --access public
           fi
 
   publish-cli:
@@ -72,6 +76,10 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org/'
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Bump if needed, then publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -80,7 +88,7 @@ jobs:
           VERSION=$(node -p "require('./package.json').version")
           if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
             echo "$NAME@$VERSION already published — auto-bumping patch…"
-            npm version patch --no-git-tag-version
+            bun pm version patch --no-git-tag-version
             NEW_VERSION=$(node -p "require('./package.json').version")
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -88,8 +96,8 @@ jobs:
             git commit -m "chore(cli): auto-bump $NAME to $NEW_VERSION [skip ci]"
             git push origin HEAD:main
             echo "Publishing $NAME@$NEW_VERSION… (prepack bundles runtime/ + templates/)"
-            npm publish --access public
+            bun publish --access public
           else
             echo "Publishing $NAME@$VERSION… (prepack bundles runtime/ + templates/)"
-            npm publish --access public
+            bun publish --access public
           fi
