@@ -239,6 +239,11 @@ export interface AppwrapConfig {
    * same-origin SPA navigation, subframes/iframes and `tel:`/`mailto:` are left untouched. Default
    * `false` (unchanged in-WebView navigation). See `externalNavGuardJs`. */
   openNewWindowsInBrowser?: boolean;
+  /** Android only. Lock the WebView's text zoom to 100% so the device's system font-size setting
+   * doesn't scale text inside the app. Default `true` — the app controls its own sizing (native-app
+   * behavior). Set `false` to let the WebView respect the user's OS-level font-size preference
+   * (accessibility). Has no effect on iOS — WKWebView does not apply Dynamic Type to web content. */
+  androidLockTextZoom?: boolean;
   /** Apple Development Team ID for device builds (Xcode → Settings → Accounts). */
   teamId?: string;
   /** Path (relative to the PWA project) to a StoreKit configuration file for LOCAL IAP
@@ -383,7 +388,7 @@ export function defineConfig(config: AppwrapConfig): AppwrapConfig {
 export const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
   'androidAppLinks', 'appBoundDomains', 'backendOrigin', 'backgroundAudio', 'backgroundColor', 'backgroundTasks', 'buildNumber', 'ci', 'debug',
   'debugLog', 'desktop', 'devMenu', 'edgeToEdge', 'entry', 'icon', 'id', 'iosKeyboardExtraLift', 'loader', 'modules', 'modulePacks', 'name',
-  'envSwitcher', 'iosEntitlements', 'neutralizeServiceWorker', 'oauthRedirectSchemes', 'openNewWindowsInBrowser', 'orientation', 'overrides', 'permissions',
+  'androidLockTextZoom', 'envSwitcher', 'iosEntitlements', 'neutralizeServiceWorker', 'oauthRedirectSchemes', 'openNewWindowsInBrowser', 'orientation', 'overrides', 'permissions',
   'plugins', 'push', 'pwaDist', 'queryPackages', 'queryUrlSchemes', 'serverUrl', 'shareTarget', 'signing', 'signingProfiles', 'statusBarStyle', 'store',
   'splashIcon', 'storekitConfig', 'targetedDevices', 'teamId', 'themeColor', 'trackingDomains', 'urlScheme',
   'usesNonExemptEncryption', 'vendorPaths', 'version',
