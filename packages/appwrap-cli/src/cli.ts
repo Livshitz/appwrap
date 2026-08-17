@@ -948,6 +948,7 @@ export const SHELL_CONFIG = {
   neutralizeServiceWorker: ${JSON.stringify(cfg.neutralizeServiceWorker ?? true)},
   appBoundDomains: ${JSON.stringify(cfg.appBoundDomains ?? [])} as string[],
   openNewWindowsInBrowser: ${JSON.stringify(cfg.openNewWindowsInBrowser ?? false)},
+  androidLockTextZoom: ${JSON.stringify(cfg.androidLockTextZoom ?? true)},
   pushIos: ${JSON.stringify(!!cfg.push?.enabled && cfg.push?.ios !== false)},
   pushAndroid: ${JSON.stringify(!!cfg.push?.enabled && cfg.push?.android !== false)},
   pushRegistrationUrl: ${JSON.stringify(cfg.push?.registrationUrl ?? '')},
