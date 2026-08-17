@@ -45,10 +45,14 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          # setup-node's .npmrc (pointed to by NPM_CONFIG_USERCONFIG) has an unexpanded
+          # ${NODE_AUTH_TOKEN} placeholder that bun doesn't substitute — overwrite that
+          # exact file (and the project-local one) with the real token so bun's config
+          # resolution finds valid auth no matter which path it reads.
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
-          unset NPM_CONFIG_USERCONFIG  # bun doesn't expand env vars in setup-node's .npmrc; use ours
-          echo "npmrc bytes: $(wc -c < .npmrc), token length: ${#NPM_TOKEN}, pwd: $(pwd)"
-          bun pm whoami || echo "whoami failed (diagnostic only, continuing)"
+          if [ -n "$NPM_CONFIG_USERCONFIG" ]; then
+            echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > "$NPM_CONFIG_USERCONFIG"
+          fi
           NAME=$(node -p "require('./package.json').name")
           VERSION=$(node -p "require('./package.json').version")
           if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
@@ -93,10 +97,14 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          # setup-node's .npmrc (pointed to by NPM_CONFIG_USERCONFIG) has an unexpanded
+          # ${NODE_AUTH_TOKEN} placeholder that bun doesn't substitute — overwrite that
+          # exact file (and the project-local one) with the real token so bun's config
+          # resolution finds valid auth no matter which path it reads.
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
-          unset NPM_CONFIG_USERCONFIG  # bun doesn't expand env vars in setup-node's .npmrc; use ours
-          echo "npmrc bytes: $(wc -c < .npmrc), token length: ${#NPM_TOKEN}, pwd: $(pwd)"
-          bun pm whoami || echo "whoami failed (diagnostic only, continuing)"
+          if [ -n "$NPM_CONFIG_USERCONFIG" ]; then
+            echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > "$NPM_CONFIG_USERCONFIG"
+          fi
           NAME=$(node -p "require('./package.json').name")
           VERSION=$(node -p "require('./package.json').version")
           if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
