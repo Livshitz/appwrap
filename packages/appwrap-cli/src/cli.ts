@@ -423,13 +423,45 @@ export function replaceImportSpecifier(src: string, oldSpec: string, newSpec: st
   return src.replace(new RegExp(`(['"])${esc}\\1`, 'g'), `$1${newSpec}$1`);
 }
 
+/**
+ * Pick the staged filename for one pack source file, GUARANTEEING no two files share it.
+ *
+ * Staged names used to be `pack-<label>-<basename>.ts` with no collision check, while the handler
+ * entry is named after the MODULE. So a pack module named `widget` that imported a helper whose
+ * basename was also `widget` (e.g. `./kit/widget`) produced two files with one name: the helper was
+ * written, the handler overwrote it, and the handler's rewritten import then pointed at itself. The
+ * build failed with `TS2303: Circular definition of import alias` inside a generated file that exists
+ * in no repo — no error named the pack, the helper, or the collision. Blank's widget pack hit exactly
+ * this and shipped nothing to TestFlight while every local check stayed green.
+ *
+ * On a clash the pack-RELATIVE path is used instead (`kit/widget` → `kit_widget`), which is stable
+ * across staging order rather than dependent on it; a further clash falls back to a counter. Pure and
+ * exported for tests.
+ */
+export function claimStagedName(label: string, name: string, absFile: string, packDir: string, claimed: Map<string, string>): string {
+  const mk = (n: string) => `pack-${label}-${n}.ts`;
+  const free = (n: string) => {
+    const owner = claimed.get(n);
+    return owner === undefined || owner === absFile;
+  };
+  let dest = mk(name);
+  if (!free(dest)) {
+    const rel = absFile.startsWith(packDir + '/') ? absFile.slice(packDir.length + 1) : basename(absFile);
+    dest = mk(rel.replace(/\.(tsx?|jsx?)$/, '').replace(/[^a-zA-Z0-9_-]/g, '_'));
+    for (let i = 2; !free(dest); i++) dest = mk(`${name}-${i}`);
+    console.warn(`  ⚠ pack "${label}": staged name collision on "${mk(name)}" — using "${dest}" for ${absFile}`);
+  }
+  claimed.set(dest, absFile);
+  return dest;
+}
+
 /** Stage a pack source file into the shell, namespaced `pack-<label>-<name>.ts` (never colliding with a
  * built-in file — keeps built-in staged filenames stable, preserving the byte-compare gate). Rewrites
  * (a) shell-API imports → relative `./<x>`, and (b) pack-LOCAL relative imports → their namespaced
  * staged sibling, staging each RECURSIVELY — so a handler's own helper modules (e.g. billing's
  * billing-offer.ts) are staged too. `staged` memoizes by abs path (dedup + cycle guard). `entryName`
  * overrides the staged basename for the handler entry (so the barrel imports it by module identity). */
-function stagePackFile(shell: string, label: string, packDir: string, absFile: string, staged: Map<string, string>, entryName?: string): string {
+function stagePackFile(shell: string, label: string, packDir: string, absFile: string, staged: Map<string, string>, claimed: Map<string, string>, entryName?: string): string {
   const cached = staged.get(absFile);
   if (cached) return cached;
   if (!existsSync(absFile)) {
@@ -437,7 +469,7 @@ function stagePackFile(shell: string, label: string, packDir: string, absFile: s
     process.exit(1);
   }
   const name = entryName ?? basename(absFile).replace(/\.(tsx?|jsx?)$/, '');
-  const destName = `pack-${label}-${name}.ts`;
+  const destName = claimStagedName(label, name, absFile, packDir, claimed);
   const spec = `./${destName.replace(/\.ts$/, '')}`;
   staged.set(absFile, spec); // set BEFORE recursing so an import cycle terminates
 
@@ -447,7 +479,7 @@ function stagePackFile(shell: string, label: string, packDir: string, absFile: s
     if (!imp.path.startsWith('.')) continue; // only pack-LOCAL relative imports need staging
     const depAbs = resolvePackImport(fromDir, imp.path);
     if (!depAbs || !depAbs.startsWith(packDir + '/')) continue; // must stay inside the pack dir
-    const depSpec = stagePackFile(shell, label, packDir, depAbs, staged);
+    const depSpec = stagePackFile(shell, label, packDir, depAbs, staged, claimed);
     src = replaceImportSpecifier(src, imp.path, depSpec);
   }
   writeFileSync(join(shell, destName), src);
@@ -463,7 +495,9 @@ function stagePackHandler(shell: string, h: NativeReqs['packHandlers'][number]):
     process.exit(1);
   }
   const label = h.source.replace(/[^a-zA-Z0-9_-]/g, '_');
-  const spec = stagePackFile(shell, label, h.packDir, srcFile, new Map(), h.name);
+  // The handler is staged FIRST, so it CLAIMS `pack-<label>-<moduleName>.ts` before any
+  // dependency can be assigned the same filename (see claimStagedName).
+  const spec = stagePackFile(shell, label, h.packDir, srcFile, new Map(), new Map(), h.name);
   console.log(`  pack ← ${h.source}  (${h.name} handler)`);
   return spec;
 }
