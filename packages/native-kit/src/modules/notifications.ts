@@ -44,6 +44,31 @@ export interface ScheduleOptions {
    * falls back to the DEFAULT alert — never to silence. iOS only; Android uses its channel sound.
    */
   sound?: string;
+  /**
+   * HERO ARTWORK — an image URL or data-URI that turns the banner into a rich card: an expandable
+   * attachment on iOS (UNNotificationAttachment) and a BigPictureStyle image on Android. A failed
+   * download degrades to a plain banner rather than dropping the notification.
+   */
+  image?: string;
+  /**
+   * Up to 3 tappable BUTTONS. Each carries its own `deepLink` (falling back to the notification's
+   * when omitted), delivered through the same `deeplink.open` event as a banner tap — so
+   * `kit.lifecycle.onDeepLink` routes a button tap with no extra wiring. iOS draws 2 on a collapsed
+   * banner (4 expanded), Android 3; extra entries, and entries missing an id or title, are dropped.
+   * On the web they need a service worker (buttons are a ServiceWorkerRegistration feature) —
+   * without one the banner still shows, just without buttons.
+   */
+  actions?: NotificationAction[];
+}
+
+/** One tappable button on a rich notification. */
+export interface NotificationAction {
+  /** Stable id — what identifies the tapped button. */
+  id: string;
+  /** Button label. */
+  title: string;
+  /** Where the tap lands. Defaults to the notification's own `deepLink`. */
+  deepLink?: string;
 }
 
 export class NotificationsModule {
