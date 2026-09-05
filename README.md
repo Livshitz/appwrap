@@ -207,6 +207,19 @@ await kit.calendar.createEvent({ title: 'Demo' }); // EventKit (needs `calendar`
 await kit.photos.capture();                       // camera (UNSUPPORTED on simulator)
 await kit.photos.pick({ dataUrl: true });          // also returns a downscaled JPEG data URL
 await kit.notifications.schedule({ title: 'Tap', deepLink: 'myapp://item/7' }); // tap → onDeepLink
+// Rich card: sender identity (name + avatar), hero artwork, and up to 3 deep-linking buttons.
+// iOS → INSendMessageIntent + UNNotificationAttachment + UNNotificationCategory; Android →
+// per-sender channel + large icon + BigPictureStyle + actions; web → Notification (buttons need a
+// service worker). Every part degrades to a plain banner rather than failing the call.
+await kit.notifications.schedule({
+  title: 'Your streak is waiting', body: 'Two minutes today keeps it alive.',
+  sender: '500 Words', icon: 'https://…/icon.png', image: 'https://…/hero.jpg',
+  actions: [{ id: 'later', title: 'Maybe later' }, { id: 'chat', title: "Let's chat!", deepLink: 'myapp://chat' }],
+});
+// iOS NOTE: the communication-notification path (the app's own name + circular avatar in place of
+// the host app's) needs the `com.apple.developer.usernotifications.communication` entitlement —
+// set it in `iosEntitlements` and the CLI stamps the required NSUserActivityTypes alongside it.
+// Without it the icon still reaches the banner, as the attachment thumbnail.
 
 // Live media — mic / camera / speaker bridged into the PWA. getUserMedia is a Web API; the
 // shell unlocks it (grants the WebView capture permission) and tunes the native audio session.

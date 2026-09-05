@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { notifIdentity } from '../app/shell/notif-identity';
+import { notifIdentity, notifActions, MAX_NOTIF_ACTIONS } from '../app/shell/notif-identity';
 
 describe('notifIdentity', () => {
   test('no sender/icon → plain, identity not used', () => {
@@ -39,5 +39,31 @@ describe('notifIdentity', () => {
     expect(r.title).toBe('');
     expect(r.body).toBe('');
     expect(r.useIdentity).toBe(false);
+  });
+});
+
+describe('notifActions', () => {
+  test('drops entries with no id or title, and dedupes ids', () => {
+    const r = notifActions([
+      { id: 'later', title: 'Maybe later' },
+      { id: '', title: 'nameless' },
+      { id: 'chat', title: '' },
+      { id: 'later', title: 'duplicate' },
+      { id: 'chat', title: "Let's chat!", deepLink: 'blank://a/x?screen=chat' },
+    ]);
+    expect(r.map((a) => a.id)).toEqual(['later', 'chat']);
+    expect(r[1].deepLink).toBe('blank://a/x?screen=chat');
+    expect(r[0].deepLink).toBeUndefined();
+  });
+
+  test('caps at 3 — the widest set every platform actually draws', () => {
+    const many = [1, 2, 3, 4, 5].map((n) => ({ id: `a${n}`, title: `A${n}` }));
+    expect(notifActions(many)).toHaveLength(MAX_NOTIF_ACTIONS);
+    expect(MAX_NOTIF_ACTIONS).toBe(3);
+  });
+
+  test('a missing / non-array actions option is simply no buttons', () => {
+    expect(notifActions(undefined)).toEqual([]);
+    expect(notifActions('nope' as unknown)).toEqual([]);
   });
 });

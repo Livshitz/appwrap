@@ -268,7 +268,36 @@ export class WebAdapter implements NativeKitAdapter {
       case 'notifications.schedule': {
         if (Notification.permission !== 'granted') throw new KitError('DENIED', 'Permission not granted');
         const delay = (p.delaySec ?? 1) * 1000;
-        setTimeout(() => new Notification(p.title, { body: p.body }), delay);
+        // Rich options degrade one step at a time rather than all-or-nothing: `icon`/`image` are
+        // honoured by the plain Notification constructor, but ACTION BUTTONS exist only on
+        // ServiceWorkerRegistration.showNotification — so use the SW when there is one and fall back
+        // to a button-less banner when there isn't, instead of refusing the call.
+        const opts: NotificationOptions & { image?: string; actions?: Array<{ action: string; title: string }> } = {
+          body: p.body,
+          icon: p.icon,
+          tag: p.sender || undefined,
+          silent: !!p.silent,
+          data: { url: p.deepLink, actions: p.actions },
+        };
+        if (p.image) opts.image = p.image;
+        const buttons: Array<{ id: string; title: string }> = Array.isArray(p.actions) ? p.actions.slice(0, 3) : [];
+        setTimeout(async () => {
+          const reg = buttons.length ? await navigator.serviceWorker?.ready.catch(() => null) : null;
+          if (reg && buttons.length) {
+            opts.actions = buttons.map((b) => ({ action: b.id, title: b.title }));
+            await reg.showNotification(p.title, opts).catch((e: Error) => console.warn('[kit] showNotification failed', e));
+            return;
+          }
+          const n = new Notification(p.title, opts);
+          // A tap on the banner focuses this tab and follows the deep link when it is a web URL —
+          // a custom scheme is a native-only target and navigating to it here would just error.
+          n.onclick = () => {
+            window.focus();
+            const url = String(p.deepLink ?? '');
+            if (/^https?:\/\//i.test(url)) location.href = url;
+            n.close();
+          };
+        }, delay);
         return { id: p.id ?? Date.now() % 100000 } as T;
       }
       case 'notifications.pending':

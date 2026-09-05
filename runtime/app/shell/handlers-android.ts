@@ -1,7 +1,7 @@
 import { Application, Utils } from '@nativescript/core';
 import { bridge } from './bridge';
 import { requestPermissions, startActivityForResult, uriToDataUrl, bitmapToDataUrl } from './android-helpers';
-import { notifIdentity } from './notif-identity';
+import { notifIdentity, notifActions } from './notif-identity';
 
 // no NS types: android-32 typings omit ContactsContract/MediaStore column + ACTION_PICK_IMAGES constants this file reads
 declare const android: any, androidx: any;
@@ -66,8 +66,9 @@ export function registerAndroidHandlers(): void {
     return ok ? 'granted' : 'denied';
   });
 
-  bridge.register('notifications.schedule', ({ id, title, body, delaySec, deepLink, sender, icon, silent }: any) => {
+  bridge.register('notifications.schedule', ({ id, title, body, delaySec, deepLink, sender, icon, silent, image, actions }: any) => {
     const ident = notifIdentity({ title, body, sender, icon });
+    const buttons = notifActions(actions);
     // Per-sender channel gives the mini-app its own identity + settings row; else the shared one.
     const channelId = ident.useIdentity && ident.senderName ? senderChannelId(ident.senderName) : CHANNEL_ID;
     ensureChannel(channelId, ident.useIdentity && ident.senderName ? ident.senderName : 'Notifications');
@@ -89,10 +90,13 @@ export function registerAndroidHandlers(): void {
       if (ident.subtitle) builder.setSubText(ident.subtitle);
       if (ident.body) builder.setContentText(ident.body);
       // Tap → re-open the (singleTask) activity with a VIEW intent; onNewIntent
-      // routes it through the same deep-link path as an external open.
-      if (deepLink) {
+      // routes it through the same deep-link path as an external open. Each action button gets its
+      // OWN PendingIntent — same shape, different target, and a distinct request code (a shared one
+      // would make FLAG_UPDATE_CURRENT overwrite every earlier button's target with the last).
+      let reqCode = nid * 8;
+      const openIntent = (link: string) => {
         const viewIntent = new android.content.Intent(
-          android.content.Intent.ACTION_VIEW, android.net.Uri.parse(String(deepLink))
+          android.content.Intent.ACTION_VIEW, android.net.Uri.parse(String(link))
         );
         viewIntent.setPackage(ctx.getPackageName());
         viewIntent.addFlags(
@@ -101,15 +105,35 @@ export function registerAndroidHandlers(): void {
         const piFlags = android.os.Build.VERSION.SDK_INT >= 23
           ? android.app.PendingIntent.FLAG_IMMUTABLE | android.app.PendingIntent.FLAG_UPDATE_CURRENT
           : android.app.PendingIntent.FLAG_UPDATE_CURRENT;
-        builder.setContentIntent(android.app.PendingIntent.getActivity(ctx, nid, viewIntent, piFlags));
+        return android.app.PendingIntent.getActivity(ctx, reqCode++, viewIntent, piFlags);
+      };
+      if (deepLink) builder.setContentIntent(openIntent(String(deepLink)));
+      for (const b of buttons) {
+        if (!b.deepLink) continue;
+        // Icon 0 — modern Android draws action buttons as text only, and a bogus resource id crashes
+        // the builder. `Notification.Action.Builder` needs an Icon object on API 23+; the deprecated
+        // three-arg overload is the one that accepts 0 and is still honoured.
+        builder.addAction(0, b.title, openIntent(b.deepLink));
       }
-      // With an icon: fetch the bitmap off the main thread (URL fetch would crash on it),
-      // set it as the large icon, then post. Without: post inline.
-      if (ident.iconUrl) {
+      // Artwork and the sender icon are both network reads — do them on a background thread (a URL
+      // fetch on the main thread throws NetworkOnMainThread) and post once both have resolved.
+      if (ident.iconUrl || image) {
         new java.lang.Thread(new java.lang.Runnable({
           run: () => {
-            const bmp = loadBitmap(ident.iconUrl);
-            if (bmp) builder.setLargeIcon(bmp);
+            if (ident.iconUrl) {
+              const bmp = loadBitmap(ident.iconUrl);
+              if (bmp) builder.setLargeIcon(bmp);
+            }
+            if (image) {
+              const hero = loadBitmap(String(image));
+              // BigPictureStyle IS the rich card: collapsed it shows the large icon, expanded the
+              // hero. Keep the large icon on expand so the mini-app's identity survives the expand.
+              if (hero) {
+                const style = new android.app.Notification.BigPictureStyle().bigPicture(hero);
+                if (ident.body) style.setSummaryText(ident.body);
+                builder.setStyle(style);
+              }
+            }
             notificationManager().notify(nid, builder.build());
           },
         })).start();

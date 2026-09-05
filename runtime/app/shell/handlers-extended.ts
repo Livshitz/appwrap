@@ -4,8 +4,10 @@ import { onDeepLink } from './events';
 import { geoAuthAction } from './geo-auth';
 import { onRemoteMessage } from './handlers-push';
 import { uiImageToDataUrl } from './ios-image';
-import { notifIdentity, type NotifIdentity } from './notif-identity';
+import { notifIdentity, notifActions, type NotifIdentity, type NotifAction } from './notif-identity';
 import { resolveSoundName } from './notif-sound';
+import { resolveAttachment } from './notif-attachment';
+import { sha256Hex } from './sha256';
 import { maskForLock, setIosOrientationMask } from './orientation';
 
 interface GeoResult { lat: number; lng: number; accuracy: number; }
@@ -130,12 +132,21 @@ function ensureIosDelegates(): void {
       // userInfo may come back as an NSDictionary or an auto-marshalled JS object.
       // any: dual-path payload (NSDictionary vs marshalled JS object) probed dynamically.
       const info: any = response.notification.request.content.userInfo;
-      const url = info ? (typeof info.objectForKey === 'function' ? info.objectForKey('url') : info.url) : null;
+      const at = (k: string) => (info ? (typeof info.objectForKey === 'function' ? info.objectForKey(k) : info[k]) : null);
+      // A BUTTON tap carries the action's own identifier; the banner body carries the default one.
+      // Each button's target was stamped as `a:<id>` at schedule time — fall back to the body's
+      // `url` so a button with no target of its own still opens the app rather than doing nothing.
+      const action = String(response.actionIdentifier ?? '');
+      const isButton = !!action && action !== UNNotificationDefaultActionIdentifier;
+      // A swipe-away must NOT open the app — without this guard the `url` fallback below would turn
+      // "dismiss" into "launch", which is the opposite of what the user asked for.
+      const dismissed = action === UNNotificationDismissActionIdentifier;
+      const url = dismissed ? null : (isButton && at(`a:${action}`)) || at('url');
       // Diagnostic breadcrumb (persists across the cold relaunch) — surfaced in the handshake's debug field.
       try {
         ApplicationSettings.setString(
           'kit:__notifTap',
-          JSON.stringify({ at: Date.now(), url: url ? String(url) : null, hadInfo: !!info })
+          JSON.stringify({ at: Date.now(), url: url ? String(url) : null, action: action || null, hadInfo: !!info })
         );
       } catch {
         /* diagnostic only */
@@ -228,14 +239,21 @@ export function registerExtendedHandlers(): void {
     });
   });
 
-  bridge.register('notifications.schedule', async ({ id, title, body, delaySec, deepLink, sender, icon, badge, silent, sound }: { id?: number; title?: string; body?: string; delaySec?: number; deepLink?: string; sender?: string; icon?: string; badge?: number; silent?: boolean; sound?: string }) => {
+  bridge.register('notifications.schedule', async ({ id, title, body, delaySec, deepLink, sender, icon, badge, silent, sound, image, actions }: { id?: number; title?: string; body?: string; delaySec?: number; deepLink?: string; sender?: string; icon?: string; badge?: number; silent?: boolean; sound?: string; image?: string; actions?: NotifAction[] }) => {
     if (!isIOS) throw Object.assign(new Error('iOS only for now'), { code: 'UNSUPPORTED' });
     const nid = id ?? Math.floor(Math.random() * 100000);
     const ident = notifIdentity({ title, body, sender, icon });
+    const buttons = notifActions(actions);
     // A custom sound is a FILE the OS reads, never a URL it fetches — resolve (download + transcode +
     // cache) before building the content. Null means "unusable", and the default alert takes over
     // below: the app rings with the wrong sound rather than not at all.
     const soundName = !silent && sound ? await resolveSoundName(String(sound)) : null;
+    // Same rule as the sound: artwork is a FILE the OS reads, never a URL it fetches. Resolve it up
+    // front so the content is built once. `image` wins; otherwise the sender icon rides along as the
+    // banner thumbnail when communication styling is unavailable (no entitlement / pre-iOS-15) —
+    // without it, a mini-app notification would carry NO app artwork at all on those builds.
+    const artwork = image ? String(image) : (ident.iconUrl && !communicationStylingAvailable() ? ident.iconUrl : '');
+    const attachment = artwork ? await resolveAttachment(artwork, `art-${nid}`) : null;
     return new Promise((resolve, reject) => {
       const content = UNMutableNotificationContent.new();
       content.title = ident.title;
@@ -261,7 +279,21 @@ export function registerExtendedHandlers(): void {
       // Plain JS object → NativeScript marshals it to NSDictionary (more reliable
       // than dictionaryWithObjectForKey across NS versions).
       // cast: NS marshals a plain JS object → NSDictionary at the interop boundary (typed NSDictionary).
-      if (deepLink) content.userInfo = { url: String(deepLink) } as any;
+      // Carry the tap target AND each button's target: the delegate reads `actionIdentifier` and
+      // picks `a:<id>`, falling back to `url` for a tap on the banner body itself.
+      const info: Record<string, string> = {};
+      if (deepLink) info.url = String(deepLink);
+      for (const b of buttons) if (b.deepLink) info[`a:${b.id}`] = b.deepLink;
+      if (Object.keys(info).length) content.userInfo = info as any;
+
+      // Buttons live on a CATEGORY, not on the content — iOS looks the category up by id at
+      // delivery time, so it must be registered before the request is added.
+      if (buttons.length) content.categoryIdentifier = registerActionCategory(buttons);
+
+      // ARTWORK. A caller-supplied `image` is the hero. With no image, the sender's ICON becomes
+      // the attachment whenever the communication path declined — that thumbnail is then the only
+      // place the mini-app's own artwork appears, so it is what "identity" degrades to.
+      if (attachment) content.attachments = [attachment] as any;
 
       // iOS 15+ COMMUNICATION notification: present the mini-app as the sender (name +
       // circular avatar) via an INSendMessageIntent. Degrades to the plain `content`
@@ -510,16 +542,72 @@ function iconNSData(icon: string): NSData | null {
 }
 
 /**
+ * Can this build present a COMMUNICATION notification (mini-app name + circular avatar)?
+ *
+ * Two independent things must be true, and BOTH are build-time facts, so this is cheap and exact:
+ *  1. iOS 15+ — where INSendMessageIntent conforms to UNNotificationContentProviding.
+ *  2. The app declares `NSUserActivityTypes` containing `INSendMessageIntent`. The appwrap CLI
+ *     stamps that key ONLY when `com.apple.developer.usernotifications.communication` is configured,
+ *     and SpringBoard denies the API without the pair — so its absence means the styling WILL
+ *     decline at runtime, which is exactly when the icon has to reach the banner some other way.
+ */
+function communicationStylingAvailable(): boolean {
+  if (!isIOS) return false;
+  if (!NSProcessInfo.processInfo.isOperatingSystemAtLeastVersion({ majorVersion: 15, minorVersion: 0, patchVersion: 0 })) {
+    return false;
+  }
+  try {
+    const types = NSBundle.mainBundle.objectForInfoDictionaryKey('NSUserActivityTypes') as NSArray<string> | null;
+    return !!types && types.containsObject('INSendMessageIntent');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Register (idempotently) a UNNotificationCategory carrying `buttons`, and return its identifier.
+ *
+ * iOS resolves a notification's buttons by looking its `categoryIdentifier` up in the center's
+ * category SET at delivery time, and `setNotificationCategories` REPLACES that set — so categories
+ * are accumulated here and re-set as a union. The identifier is a hash of the buttons, so the same
+ * button set reuses one category instead of growing the set on every schedule call.
+ */
+const notifCategories = new Map<string, UNNotificationCategory>();
+function registerActionCategory(buttons: NotifAction[]): string {
+  const key = 'awcat-' + sha256Hex(buttons.map((b) => `${b.id}\u0000${b.title}`).join('\u0001')).slice(0, 24);
+  if (!notifCategories.has(key)) {
+    const actions = NSMutableArray.alloc().init() as NSMutableArray<UNNotificationAction>;
+    for (const b of buttons) {
+      // .Foreground: every button here deep-links back into the app, so the tap must bring it up.
+      actions.addObject(
+        UNNotificationAction.actionWithIdentifierTitleOptions(b.id, b.title, UNNotificationActionOptions.Foreground)
+      );
+    }
+    notifCategories.set(
+      key,
+      UNNotificationCategory.categoryWithIdentifierActionsIntentIdentifiersOptions(
+        // 0 = no category options: the buttons are the whole point, and CustomDismissAction would
+        // wake the delegate on a swipe-away for nothing.
+        key, actions as never, NSArray.array() as never, 0 as UNNotificationCategoryOptions
+      )
+    );
+  }
+  const set = NSMutableSet.alloc().init() as NSMutableSet<UNNotificationCategory>;
+  for (const c of notifCategories.values()) set.addObject(c);
+  UNUserNotificationCenter.currentNotificationCenter().setNotificationCategories(set as never);
+  return key;
+}
+
+/**
  * Build an iOS-15+ communication notification: an INSendMessageIntent whose sender IS
  * the mini-app (name + INImage avatar), donated, then `content.updating(from:)` so the
  * banner renders with the sender's identity. Mirrors feedox's NotificationService.swift.
  * Returns null pre-iOS-15 or if any step declines (caller falls back to plain content).
  */
 function communicationContent(content: UNMutableNotificationContent, id: string, ident: NotifIdentity): UNNotificationContent | null {
-  // iOS 15.0+ only — INSendMessageIntent conforms to UNNotificationContentProviding there.
-  if (!NSProcessInfo.processInfo.isOperatingSystemAtLeastVersion({ majorVersion: 15, minorVersion: 0, patchVersion: 0 })) {
-    return null;
-  }
+  // iOS 15+ AND the NSUserActivityTypes/entitlement pair — without both, SpringBoard denies the
+  // API and this would burn an INInteraction donation to learn what the bundle already states.
+  if (!communicationStylingAvailable()) return null;
   try {
     const displayName = ident.senderName || ident.title;
     const handleValue = ident.senderName || id;

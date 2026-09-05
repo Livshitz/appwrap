@@ -27,7 +27,7 @@ export type { Orientation, OrientationLock } from './modules/screen';
 export type { KeyboardInfo } from './modules/keyboard';
 export type { FsDirectory, FsEncoding, FsEntry, PickedFile } from './modules/fs';
 export type { DeviceInfo } from './modules/device';
-export type { ScheduleOptions } from './modules/notifications';
+export type { ScheduleOptions, NotificationAction } from './modules/notifications';
 export type { PushMessage, PushPlatform, PushToken } from './modules/push';
 export type { GeoPosition } from './modules/geo';
 export type { HeadingSample } from './modules/heading';

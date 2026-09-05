@@ -107,8 +107,16 @@ const ANDROID_PERMISSION_KEYS: Record<string, string[]> = {
  * REAL path — a dev checkout may stage the package-root dir as a symlink to the repo-root source (what
  * prepack does with a copy), and Bun's cpSync refuses a symlink as a copy-source root. */
 function resolveAssetRoot(rel: string): string {
+  // In a MONOREPO checkout the repo-root source wins, always. `prepack` stages a COPY of runtime/
+  // and templates/ at the package root and `postpack` deletes it — but a postpack that never ran
+  // (an interrupted publish) leaves that copy behind, and every later local build silently compiled
+  // the STALE snapshot instead of the source, with no warning and a perfectly successful build. The
+  // monorepo is identified structurally (this file lives at <root>/packages/appwrap-cli/src), never
+  // by "is there a runtime/ dir three levels up" — a consumer project may well have one of its own.
+  const inMonorepo = basename(resolve(import.meta.dir, '../..')) === 'packages';
   const local = resolve(import.meta.dir, '..', rel);
-  const dir = existsSync(local) ? local : resolve(import.meta.dir, '../../..', rel);
+  const root = resolve(import.meta.dir, '../../..', rel);
+  const dir = inMonorepo && existsSync(root) ? root : existsSync(local) ? local : root;
   try { return realpathSync(dir); } catch { return dir; }
 }
 const TEMPLATE_DIR = resolveAssetRoot('runtime');
