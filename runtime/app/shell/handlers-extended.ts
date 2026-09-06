@@ -138,10 +138,10 @@ function ensureIosDelegates(): void {
       // `url` so a button with no target of its own still opens the app rather than doing nothing.
       const action = String(response.actionIdentifier ?? '');
       const isButton = !!action && action !== UNNotificationDefaultActionIdentifier;
-      // A swipe-away must NOT open the app — without this guard the `url` fallback below would turn
-      // "dismiss" into "launch", which is the opposite of what the user asked for.
-      const dismissed = action === UNNotificationDismissActionIdentifier;
-      const url = dismissed ? null : (isButton && at(`a:${action}`)) || at('url');
+      // A swipe-away cannot reach here at all: the categories we register pass no
+      // `.customDismissAction`, so iOS never wakes the delegate for a dismissal — which is
+      // exactly the wanted behaviour (a dismiss must not fall through to `url` and launch).
+      const url = (isButton && at(`a:${action}`)) || at('url');
       // Diagnostic breadcrumb (persists across the cold relaunch) — surfaced in the handshake's debug field.
       try {
         ApplicationSettings.setString(
