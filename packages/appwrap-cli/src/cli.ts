@@ -1084,6 +1084,21 @@ function stampIOSDisplayName(outDir: string, cfg: AppwrapConfig, req: NativeReqs
     // styling). Declaring INStartCallIntent in an app with no calling feature is an App Review flag.
     extras.push(`  <key>NSUserActivityTypes</key>\n  <array>\n    <string>INSendMessageIntent</string>\n  </array>`);
   }
+  // Config-declared plist keys (`iosInfoPlist`). Inside the idempotent block, so removing the config
+  // key removes the plist key — the same both-ways contract as every other stamp here. A key the
+  // TEMPLATE already declares outside the block would produce a duplicate <key> in one dict, which is
+  // an invalid plist that Xcode accepts and the App Store rejects, so that case throws instead.
+  for (const [key, value] of Object.entries(cfg.iosInfoPlist ?? {})) {
+    if (new RegExp(`<key>${key}</key>`).test(src)) {
+      throw new Error(`iosInfoPlist: "${key}" is already declared in the app's Info.plist — remove it from the config (a duplicate <key> is an invalid plist).`);
+    }
+    const body = typeof value === 'boolean' ? `  <${value}/>`
+      : typeof value === 'number' ? `  <integer>${value}</integer>`
+      : Array.isArray(value) ? `  <array>\n${value.map((v) => `    <string>${v}</string>`).join('\n')}\n  </array>`
+      : `  <string>${value}</string>`;
+    extras.push(`  <key>${key}</key>\n${body}`);
+  }
+
   if (extras.length) {
     src = src.replace(
       /<\/dict>\s*<\/plist>\s*$/,

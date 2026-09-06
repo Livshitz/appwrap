@@ -286,6 +286,14 @@ export interface AppwrapConfig {
    * string / string[]. NOTE: the entitlement must also be enabled on the App ID / provisioning profile
    * (some need Apple approval) or a distribution build won't sign. Absent → no change. */
   iosEntitlements?: Record<string, boolean | string | string[]>;
+  /** Extra keys merged into the app's generated `Info.plist`, for plist facts the module system
+   * doesn't model — e.g. `{ NSSupportsLiveActivities: true }`, which is what ActivityKit requires and
+   * which carries NO entitlement and NO portal step. Stamped inside the idempotent
+   * `<!-- appwrap:begin -->` block, so it is added and removed with the config rather than accumulating.
+   * Value shapes: boolean → `<true/>`/`<false/>`, number → `<integer>`, string → `<string>`,
+   * string[] → `<array>` of strings. A key the template already declares OUTSIDE the block (e.g.
+   * `CFBundleName`) is refused loudly — two `<key>`s in one dict is an invalid plist. */
+  iosInfoPlist?: Record<string, boolean | number | string | string[]>;
   /** iOS code-signing style for device / `deploy` builds. Default `'auto'` (Xcode automatic signing —
    * requires the team's Apple ID signed into Xcode's GUI to mint profiles). Set `'manual'` to sign
    * device builds with provisioning profiles ALREADY installed on this machine (matched by
@@ -388,7 +396,7 @@ export function defineConfig(config: AppwrapConfig): AppwrapConfig {
 export const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
   'androidAppLinks', 'appBoundDomains', 'backendOrigin', 'backgroundAudio', 'backgroundColor', 'backgroundTasks', 'buildNumber', 'ci', 'debug',
   'debugLog', 'desktop', 'devMenu', 'edgeToEdge', 'entry', 'icon', 'id', 'iosKeyboardExtraLift', 'loader', 'modules', 'modulePacks', 'name',
-  'androidLockTextZoom', 'envSwitcher', 'iosEntitlements', 'neutralizeServiceWorker', 'oauthRedirectSchemes', 'openNewWindowsInBrowser', 'orientation', 'overrides', 'permissions',
+  'androidLockTextZoom', 'envSwitcher', 'iosEntitlements', 'iosInfoPlist', 'neutralizeServiceWorker', 'oauthRedirectSchemes', 'openNewWindowsInBrowser', 'orientation', 'overrides', 'permissions',
   'plugins', 'push', 'pwaDist', 'queryPackages', 'queryUrlSchemes', 'serverUrl', 'shareTarget', 'signing', 'signingProfiles', 'statusBarStyle', 'store',
   'splashIcon', 'storekitConfig', 'targetedDevices', 'teamId', 'themeColor', 'trackingDomains', 'urlScheme',
   'usesNonExemptEncryption', 'vendorPaths', 'version',
