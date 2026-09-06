@@ -388,10 +388,13 @@ export function defineConfig(config: AppwrapConfig): AppwrapConfig {
 
 /**
  * Top-level keys appwrap recognizes — KEEP IN SYNC with `AppwrapConfig` above (top-level only; nested
- * keys like `push.ios` are not listed). Drives `unknownConfigKeys`, which warns (never fails) on stray
+ * keys like `push.ios` are not listed). Drives `unknownConfigKeys`, which FAILS the build on stray
  * keys at load time. The motivating bug: a config written for a NEWER appwrap silently no-ops its
  * unknown keys on an OLDER installed version (e.g. `targetedDevices` before 0.39 → a universal build
- * with no error, then an App Store rejection). A loud warning turns that silent no-op into a signal.
+ * with no error, then an App Store rejection; `iosInfoPlist` before 0.61.5 → a Live Activity refused
+ * on the device while every gate stayed green). This was a warning until 0.61.5 and a warning is not
+ * a gate — it scrolls past in CI. Adding a key here is therefore MANDATORY when adding it to
+ * `AppwrapConfig`, or every config that uses it stops building.
  */
 export const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
   'androidAppLinks', 'appBoundDomains', 'backendOrigin', 'backgroundAudio', 'backgroundColor', 'backgroundTasks', 'buildNumber', 'ci', 'debug',
