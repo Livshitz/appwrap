@@ -51,15 +51,28 @@ function writeData(data: NSData | null, dest: string): boolean {
   return data.writeToFileAtomically(dest, true);
 }
 
+/**
+ * ONE session for the process, not one per call. A session created as a local was free to be
+ * collected while its task was still in flight, which lands as an intermittent, SILENT "download
+ * failed" — the notification then posts with no artwork and nothing says why. Held at module scope
+ * it stays alive for the task's lifetime.
+ */
+let sharedSession: NSURLSession | null = null;
+function session(): NSURLSession {
+  if (!sharedSession) {
+    const cfg = NSURLSessionConfiguration.defaultSessionConfiguration;
+    cfg.timeoutIntervalForRequest = FETCH_TIMEOUT_MS / 1000;
+    sharedSession = NSURLSession.sessionWithConfiguration(cfg);
+  }
+  return sharedSession;
+}
+
 /** Download to `dest`. Resolves false on any transport failure (offline, 404, timeout). */
 function downloadTo(url: string, dest: string): Promise<boolean> {
   return new Promise((resolve) => {
     const nsUrl = NSURL.URLWithString(url);
     if (!nsUrl) return resolve(false);
-    const cfg = NSURLSessionConfiguration.defaultSessionConfiguration;
-    cfg.timeoutIntervalForRequest = FETCH_TIMEOUT_MS / 1000;
-    const session = NSURLSession.sessionWithConfiguration(cfg);
-    const task = session.dataTaskWithURLCompletionHandler(nsUrl, (data, response, error) => {
+    const task = session().dataTaskWithURLCompletionHandler(nsUrl, (data, response, error) => {
       const status = (response as NSHTTPURLResponse)?.statusCode ?? 0;
       if (error || !data || (status && (status < 200 || status >= 300))) {
         console.warn(`[appwrap] notification image download failed (${status || error?.localizedDescription})`);
@@ -106,9 +119,18 @@ export async function resolveAttachment(image: string, id: string): Promise<UNNo
     // entry vanishes and every later notification re-downloads (or, worse, finds a half-moved file).
     const copy = `${dir}/use-${id}-${Date.now()}.${dest.split('.').pop()}`;
     if (!fm.copyItemAtPathToPathError(dest, copy, null)) return null;
-    return UNNotificationAttachment.attachmentWithIdentifierURLOptionsError(
-      id, NSURL.fileURLWithPath(copy), null, null
-    );
+    try {
+      // iOS moves the file ONLY on success; a rejected/throwing attachment leaves the copy
+      // behind, so every failed schedule would grow the cache. Reclaim it here.
+      const att = UNNotificationAttachment.attachmentWithIdentifierURLOptionsError(
+        id, NSURL.fileURLWithPath(copy), null, null
+      );
+      if (!att) fm.removeItemAtPathError(copy, null);
+      return att;
+    } catch (e) {
+      fm.removeItemAtPathError(copy, null);
+      throw e;
+    }
   } catch (e) {
     console.warn('[appwrap] notification attachment rejected', String(e));
     return null;
