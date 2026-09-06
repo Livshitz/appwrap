@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { encodeShareDirectSync, unknownConfigKeys, KNOWN_CONFIG_KEYS } from '../src/config';
 
 describe('unknownConfigKeys — guards against silently-ignored config keys', () => {
@@ -16,6 +18,19 @@ describe('unknownConfigKeys — guards against silently-ignored config keys', ()
     for (const k of ['targetedDevices', 'loader', 'serverUrl', 'push', 'permissions', 'modules', 'version', 'buildNumber']) {
       expect(KNOWN_CONFIG_KEYS.has(k)).toBe(true);
     }
+  });
+
+  // THE RATCHET. Since 0.61.5 an unregistered key FAILS the build, so forgetting to add a new
+  // `AppwrapConfig` field here breaks every config that uses it. Before that it was worse and
+  // quieter: `iosInfoPlist` shipped registered but UNIMPLEMENTED in the published CLI, and Blank's
+  // Live Activities were refused on the phone while the build, signing and upload all went green.
+  // Read the interface off the source so the two cannot drift.
+  test('every AppwrapConfig field is registered in KNOWN_CONFIG_KEYS', () => {
+    const src = readFileSync(resolve(import.meta.dir, '../src/config.ts'), 'utf8');
+    const body = src.slice(src.indexOf('export interface AppwrapConfig'));
+    const fields = [...body.slice(0, body.indexOf('\n}')).matchAll(/^ {2}([a-zA-Z_][\w]*)\??:/gm)].map((m) => m[1]);
+    expect(fields.length).toBeGreaterThan(40); // the parse itself must not silently match nothing
+    expect(fields.filter((f) => !KNOWN_CONFIG_KEYS.has(f))).toEqual([]);
   });
 
   test('nested push sub-keys are NOT top-level keys (must be inside push)', () => {

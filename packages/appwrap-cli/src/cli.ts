@@ -912,13 +912,20 @@ export async function loadConfig(cwd: string, flags: Record<string, string>): Pr
   }
   const cfg = await readConfigFile(configPath);
 
-  // Warn (never fail) on keys this appwrap doesn't recognize. A config authored for a NEWER appwrap
-  // silently no-ops its unknown keys on an older install (e.g. `targetedDevices` before 0.39 → wrong
-  // device family, no error). Turn that silent no-op into a signal.
+  // FAIL on keys this appwrap doesn't recognize. A config authored for a NEWER appwrap silently
+  // no-ops its unknown keys on an older install, and a WARNING is not enough: it scrolls past in a
+  // CI log and the lane goes green. That shipped a real dead capability — Blank declared
+  // `iosInfoPlist: { NSSupportsLiveActivities: true }` against a CLI that predated the key, so the
+  // plist key was absent, the build/signing/upload all succeeded, and every Live Activity call was
+  // refused on the phone with nothing anywhere saying why. A config key that does nothing is a lie
+  // about what the binary contains, so it stops the build.
   const stray = unknownConfigKeys(cfg as unknown as Record<string, unknown>);
   if (stray.length) {
     const ver = pkgVersion(resolve(import.meta.dir, '../package.json'));
-    for (const k of stray) console.warn(`⚠ appwrap: unrecognized config key '${k}' — ignored. If you expect it to apply, your installed @livx.cc/appwrap (${ver}) may predate it — upgrade.`);
+    console.error(`✖ appwrap: unrecognized config key(s): ${stray.map((k) => `'${k}'`).join(', ')}\n`
+      + `  Installed @livx.cc/appwrap is ${ver}. Either it predates these keys (upgrade), or they are typos (remove them).\n`
+      + `  Refusing to build: an ignored key means the shell does NOT carry what the config claims.`);
+    process.exit(1);
   }
 
   // Manifest as source: the appwrap config wins, the PWA manifest fills the gaps, template default last.
