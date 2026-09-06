@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { notifIdentity, notifActions, MAX_NOTIF_ACTIONS } from '../app/shell/notif-identity';
+import { notifIdentity, notifActions, bestEffort, bestEffortAsync, MAX_NOTIF_ACTIONS } from '../app/shell/notif-identity';
 
 describe('notifIdentity', () => {
   test('no sender/icon → plain, identity not used', () => {
@@ -65,5 +65,22 @@ describe('notifActions', () => {
   test('a missing / non-array actions option is simply no buttons', () => {
     expect(notifActions(undefined)).toEqual([]);
     expect(notifActions('nope' as unknown)).toEqual([]);
+  });
+});
+
+describe('bestEffort — decoration never costs the notification', () => {
+  test('a throwing decorative step degrades to the fallback instead of propagating', () => {
+    expect(bestEffort('buttons', () => { throw new Error('category refused'); }, '')).toBe('');
+    expect(bestEffort('sender identity', () => { throw new Error('SpringBoard denied'); }, null)).toBeNull();
+  });
+
+  test('the value passes through untouched when the step succeeds', () => {
+    expect(bestEffort('buttons', () => 'awcat-abc', '')).toBe('awcat-abc');
+  });
+
+  test('async: a rejected artwork/sound resolve degrades to null, it does not reject', async () => {
+    await expect(bestEffortAsync('artwork', async () => { throw new Error('download blew up'); }, null))
+      .resolves.toBeNull();
+    await expect(bestEffortAsync('sound', async () => 'ding.caf', null)).resolves.toBe('ding.caf');
   });
 });

@@ -78,3 +78,32 @@ export function notifIdentity(o: NotifIdentityInput): NotifIdentity {
   const subtitle = senderName && title && title !== senderName ? title : '';
   return { title: displayTitle, subtitle, body, senderName, iconUrl, useIdentity };
 }
+
+/**
+ * DECORATION MUST NEVER COST THE NOTIFICATION.
+ *
+ * Everything a rich banner adds — a custom sound, hero artwork, the button CATEGORY, the
+ * communication-style sender identity — is a nicety layered onto one alert. Each of those steps
+ * calls into ObjC and each can throw (a rejected attachment, a category the center refuses, an
+ * intent SpringBoard denies). Left unguarded, any one of those throws escapes `notifications.schedule`
+ * and the user gets NOTHING — a cosmetic failure silently promoted to a dropped notification.
+ * Run every decorative step through here: it degrades to `fallback` and says why.
+ */
+export function bestEffort<T>(what: string, fn: () => T, fallback: T): T {
+  try {
+    return fn();
+  } catch (e) {
+    console.warn(`[appwrap] notification ${what} skipped — posting without it: ${String(e)}`);
+    return fallback;
+  }
+}
+
+/** Async twin of `bestEffort` for the steps that download (sound, artwork). */
+export async function bestEffortAsync<T>(what: string, fn: () => Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    console.warn(`[appwrap] notification ${what} skipped — posting without it: ${String(e)}`);
+    return fallback;
+  }
+}

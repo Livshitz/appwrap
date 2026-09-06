@@ -4,7 +4,7 @@ import { onDeepLink } from './events';
 import { geoAuthAction } from './geo-auth';
 import { onRemoteMessage } from './handlers-push';
 import { uiImageToDataUrl } from './ios-image';
-import { notifIdentity, notifActions, type NotifIdentity, type NotifAction } from './notif-identity';
+import { notifIdentity, notifActions, bestEffort, bestEffortAsync, type NotifIdentity, type NotifAction } from './notif-identity';
 import { resolveSoundName } from './notif-sound';
 import { resolveAttachment } from './notif-attachment';
 import { sha256Hex } from './sha256';
@@ -242,18 +242,30 @@ export function registerExtendedHandlers(): void {
   bridge.register('notifications.schedule', async ({ id, title, body, delaySec, deepLink, sender, icon, badge, silent, sound, image, actions }: { id?: number; title?: string; body?: string; delaySec?: number; deepLink?: string; sender?: string; icon?: string; badge?: number; silent?: boolean; sound?: string; image?: string; actions?: NotifAction[] }) => {
     if (!isIOS) throw Object.assign(new Error('iOS only for now'), { code: 'UNSUPPORTED' });
     const nid = id ?? Math.floor(Math.random() * 100000);
+    // The OS accepts a request it will never present when authorization is missing (a reinstall
+    // resets it). Say so instead of resolving a success the user will never see.
+    if (!(await notificationsAuthorized())) {
+      throw Object.assign(
+        new Error('Notifications are not authorized for this app'),
+        { code: 'NOT_AUTHORIZED' }
+      );
+    }
     const ident = notifIdentity({ title, body, sender, icon });
     const buttons = notifActions(actions);
     // A custom sound is a FILE the OS reads, never a URL it fetches — resolve (download + transcode +
     // cache) before building the content. Null means "unusable", and the default alert takes over
     // below: the app rings with the wrong sound rather than not at all.
-    const soundName = !silent && sound ? await resolveSoundName(String(sound)) : null;
+    const soundName = !silent && sound
+      ? await bestEffortAsync('sound', () => resolveSoundName(String(sound)), null)
+      : null;
     // Same rule as the sound: artwork is a FILE the OS reads, never a URL it fetches. Resolve it up
     // front so the content is built once. `image` wins; otherwise the sender icon rides along as the
     // banner thumbnail when communication styling is unavailable (no entitlement / pre-iOS-15) —
     // without it, a mini-app notification would carry NO app artwork at all on those builds.
     const artwork = image ? String(image) : (ident.iconUrl && !communicationStylingAvailable() ? ident.iconUrl : '');
-    const attachment = artwork ? await resolveAttachment(artwork, `art-${nid}`) : null;
+    const attachment = artwork
+      ? await bestEffortAsync('artwork', () => resolveAttachment(artwork, `art-${nid}`), null)
+      : null;
     return new Promise((resolve, reject) => {
       const content = UNMutableNotificationContent.new();
       content.title = ident.title;
@@ -288,7 +300,10 @@ export function registerExtendedHandlers(): void {
 
       // Buttons live on a CATEGORY, not on the content — iOS looks the category up by id at
       // delivery time, so it must be registered before the request is added.
-      if (buttons.length) content.categoryIdentifier = registerActionCategory(buttons);
+      if (buttons.length) {
+        const category = bestEffort('buttons', () => registerActionCategory(buttons), '');
+        if (category) content.categoryIdentifier = category;
+      }
 
       // ARTWORK. A caller-supplied `image` is the hero. With no image, the sender's ICON becomes
       // the attachment whenever the communication path declined — that thumbnail is then the only
@@ -299,7 +314,9 @@ export function registerExtendedHandlers(): void {
       // circular avatar) via an INSendMessageIntent. Degrades to the plain `content`
       // above pre-iOS-15 or when styling declines (e.g. missing communication entitlement).
       const finalContent: UNNotificationContent =
-        (ident.useIdentity && communicationContent(content, String(nid), ident)) || content;
+        (ident.useIdentity &&
+          bestEffort('sender identity', () => communicationContent(content, String(nid), ident), null)) ||
+        content;
 
       const trigger = UNTimeIntervalNotificationTrigger.triggerWithTimeIntervalRepeats(
         Math.max(1, delaySec ?? 1),
@@ -539,6 +556,29 @@ function iconNSData(icon: string): NSData | null {
     console.warn('[appwrap] notification icon load failed', String(e));
     return null;
   }
+}
+
+/**
+ * Has the user actually granted notifications to THIS install?
+ *
+ * `addNotificationRequest` succeeds with no error when authorization is missing — the request is
+ * accepted and then never presented. A reinstall (or a capability change that forces one) resets
+ * authorization, so a schedule call reporting `{id}` is not evidence anything will arrive. Read the
+ * center's own answer and fail loudly instead of lying to the caller.
+ */
+function notificationsAuthorized(): Promise<boolean> {
+  return new Promise((resolve) => {
+    UNUserNotificationCenter.currentNotificationCenter().getNotificationSettingsWithCompletionHandler(
+      (settings) => {
+        const s = settings?.authorizationStatus;
+        resolve(
+          s === UNAuthorizationStatus.Authorized ||
+          s === UNAuthorizationStatus.Provisional ||
+          s === UNAuthorizationStatus.Ephemeral
+        );
+      }
+    );
+  });
 }
 
 /**
