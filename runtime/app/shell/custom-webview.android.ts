@@ -38,7 +38,7 @@ function buildBootstrapJs(): string {
  * class it synthesizes for `extend({...})` keyed by the methods-object shape, so calling
  * extend() again per-webview REUSES the first invocation's class — including its captured
  * closure. A per-instance `owner` WeakRef baked into the closure therefore cross-wires every
- * later webview's prompt() transport to the FIRST instance (device-proven in the feedox
+ * later webview's prompt() transport to the FIRST instance (device-proven in a multi-webview
  * mini-app spike: webview-2's bridge request was answered as webview-1). Route by the native
  * view the callback is given instead, resolved against a per-view registry.
  */

@@ -143,7 +143,7 @@ export interface DeclaredCaps {
  * WKWebView, injected at document-start. Takes the build's declared-capability snapshot and, for every
  * capability the build did NOT declare, prevents the app-killing (camera/mic) or hanging (geolocation)
  * failure while letting DECLARED capabilities pass straight through to their native prompt. Composes the
- * individual guards so every consumer's foreign webview (shell + feedox mini-app views) is covered from
+ * individual guards so every consumer's foreign webview (shell + embedded mini-app views) is covered from
  * one call site. Other TCC-gated surfaces (getDisplayMedia, SpeechRecognition, WebMIDI/BT/NFC/USB) are
  * simply UNIMPLEMENTED by WKWebView — they resolve to `undefined`, so feature-detection degrades cleanly
  * and there is nothing to guard.
