@@ -80,7 +80,14 @@ export const MANIFEST_SCHEMA_VERSION = 1;
 export const MODULES: ModuleManifest[] = [
   // ── core (always on, no permissions) ───────────────────────────────────
   { name: 'haptics', core: true, group: 'core', capabilities: { haptics: 'native' } },
-  { name: 'share', core: true, group: 'core', capabilities: { share: 'native', shareFiles: 'native' } },
+  // `shareFiles` hands a file to the OS sheet, and one of the activities the sheet offers for a
+  // photo or video is "Save Image"/"Save Video" — which WRITES to the camera roll. iOS omits that
+  // activity SILENTLY when the app carries no add-only photo-library usage string, so the sheet
+  // appears correct and simply lacks the one row the person was reaching for.
+  {
+    name: 'share', core: true, group: 'core', capabilities: { share: 'native', shareFiles: 'native' },
+    ios: { permissions: [{ key: 'NSPhotoLibraryAddUsageDescription', domain: 'photosAdd', defaultUsage: 'Save a photo or video you chose to your library.' }] },
+  },
   { name: 'storage', core: true, group: 'core', capabilities: { storage: 'native', secureStorage: 'native' } },
   // fs: app-sandbox file I/O (documents/data/cache) + system document picker. Core — every root is
   // inside the app sandbox and the picker returns user-chosen security-scoped URIs → zero perms.

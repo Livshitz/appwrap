@@ -75,6 +75,35 @@ describe('a declared permission is never inert', () => {
   });
 });
 
+describe('sharing a file can reach the camera roll', () => {
+  // A share module that can hand over FILES but stamps no photo-add key produces a sheet that is
+  // correct in every visible way — iOS even labels the item "Video" — and silently omits "Save
+  // Video". The activity is not offered without NSPhotoLibraryAddUsageDescription; nothing errors,
+  // so the only symptom is a destination the OS has and the app appears not to.
+  test('declaring `share` stamps NSPhotoLibraryAddUsageDescription', () => {
+    const g = generate({ modules: ['share'] });
+    try {
+      expect(usageFor(g.plist, 'NSPhotoLibraryAddUsageDescription')).toBeTruthy();
+    } finally { cleanup(g.dir); }
+  });
+
+  test('…and NOT the read key — adding one file is a smaller promise than reading a library', () => {
+    const g = generate({ modules: ['share'] });
+    try {
+      // NSPhotoLibraryUsageDescription is the READ permission, with a much larger data-safety
+      // footprint. `share` must not drag it in; only the `photos` module owns it.
+      expect(usageFor(g.plist, 'NSPhotoLibraryUsageDescription')).toBeFalsy();
+    } finally { cleanup(g.dir); }
+  });
+
+  test('the app can override the copy through its own `photosAdd` domain', () => {
+    const g = generate({ modules: ['share'], permissions: { photosAdd: 'Save the clip you made to your photos.' } });
+    try {
+      expect(usageFor(g.plist, 'NSPhotoLibraryAddUsageDescription')).toBe('Save the clip you made to your photos.');
+    } finally { cleanup(g.dir); }
+  });
+});
+
 describe('the webview baseline (the Copy Bin crash)', () => {
   // Copy Bin's exact config. WKWebView's <input type="file"> picker offers "Take Photo" in EVERY build,
   // and TCC hard-kills the host process for a camera access with no usage string.
