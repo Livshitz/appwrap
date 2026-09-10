@@ -641,7 +641,8 @@ function registerActionCategory(buttons: NotifAction[]): string {
 /**
  * Build an iOS-15+ communication notification: an INSendMessageIntent whose sender IS
  * the mini-app (name + INImage avatar), donated, then `content.updating(from:)` so the
- * banner renders with the sender's identity. Mirrors feedox's NotificationService.swift.
+ * banner renders with the sender's identity. Mirrors the NotificationService.swift pattern a
+ * downstream consumer ships.
  * Returns null pre-iOS-15 or if any step declines (caller falls back to plain content).
  */
 function communicationContent(content: UNMutableNotificationContent, id: string, ident: NotifIdentity): UNNotificationContent | null {
