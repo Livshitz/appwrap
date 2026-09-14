@@ -9,7 +9,7 @@ import { createKeyboardShowCycle, resolveKeyboardHeight } from '../app/shell/key
  * iframe, then TTS + STT) left a half-screen empty band that persisted onto the home grid.
  */
 const H = 844; // iPhone 13 Pro window height (pt)
-const KB = { y: H - 336, height: 336 }; // on-screen keyboard end frame
+const KB = { y: H - 336 }; // on-screen keyboard end frame
 
 describe('resolveKeyboardHeight', () => {
   test('cold show applies the on-screen overlap', () => {
@@ -22,7 +22,7 @@ describe('resolveKeyboardHeight', () => {
   });
 
   test('willChangeFrame inside a show cycle (keyboard resize) applies', () => {
-    const end = { y: H - 380, height: 380 };
+    const end = { y: H - 380 };
     expect(resolveKeyboardHeight({ tag: 'willChangeFrame', inShowCycle: true, end, containerHeight: H })).toEqual({ height: 380 });
   });
 
@@ -31,15 +31,15 @@ describe('resolveKeyboardHeight', () => {
   });
 
   test('keyboard-sized off-screen dismissal frame is zero overlap', () => {
-    expect(resolveKeyboardHeight({ tag: 'willChangeFrame', inShowCycle: true, end: { y: H, height: 336 }, containerHeight: H }).skip).toBe('off-screen');
+    expect(resolveKeyboardHeight({ tag: 'willChangeFrame', inShowCycle: true, end: { y: H }, containerHeight: H }).skip).toBe('off-screen');
   });
 
   test('no container height never falls back to the raw frame height', () => {
-    expect(resolveKeyboardHeight({ tag: 'didShow', inShowCycle: true, end: { y: H, height: 336 }, containerHeight: 0 })).toEqual({ height: 0, skip: 'no-frame' });
+    expect(resolveKeyboardHeight({ tag: 'didShow', inShowCycle: true, end: { y: H }, containerHeight: 0 })).toEqual({ height: 0, skip: 'no-frame' });
   });
 
   test('bogus full-screen frame is skipped', () => {
-    expect(resolveKeyboardHeight({ tag: 'willShow', inShowCycle: true, end: { y: 0, height: H }, containerHeight: H }).skip).toBe('bogus');
+    expect(resolveKeyboardHeight({ tag: 'willShow', inShowCycle: true, end: { y: 0 }, containerHeight: H }).skip).toBe('bogus');
   });
 });
 
@@ -53,6 +53,20 @@ describe('createKeyboardShowCycle', () => {
   test('willShow opens the cycle so a following willChangeFrame resize applies', () => {
     const cycle = createKeyboardShowCycle();
     expect(cycle.resolve(frame('willShow'))).toEqual({ height: 336 });
+    expect(cycle.resolve(frame('willChangeFrame'))).toEqual({ height: 336 });
+  });
+
+  test('a skipped (off-screen / no-frame) didShow does not open the cycle for a stray willChangeFrame', () => {
+    const cycle = createKeyboardShowCycle();
+    expect(cycle.resolve({ tag: 'didShow', end: { y: H }, containerHeight: H }).skip).toBe('off-screen');
+    expect(cycle.resolve(frame('willChangeFrame')).skip).toBe('out-of-cycle');
+    expect(cycle.resolve({ tag: 'didShow', containerHeight: H }).skip).toBe('no-frame');
+    expect(cycle.resolve(frame('willChangeFrame')).skip).toBe('out-of-cycle');
+  });
+
+  test('a bogus (autofill full-screen) willShow still opens the cycle so the real frame lands', () => {
+    const cycle = createKeyboardShowCycle();
+    expect(cycle.resolve({ tag: 'willShow', end: { y: 0 }, containerHeight: H }).skip).toBe('bogus');
     expect(cycle.resolve(frame('willChangeFrame'))).toEqual({ height: 336 });
   });
 

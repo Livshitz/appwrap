@@ -169,7 +169,7 @@ function armIosKeyboardObservers(): void {
     const containerHeight = win ? win.bounds.size.height : UIScreen.mainScreen.bounds.size.height;
     const { height, skip } = showCycle.resolve({
       tag,
-      end: rect ? { y: rect.origin.y, height: rect.size.height } : undefined,
+      end: rect ? { y: rect.origin.y } : undefined,
       containerHeight,
     });
     if (SHELL_CONFIG.debug) appwrapNativeLog(`[native:keyboard] ${tag} height=${height}${skip ? ` skip=${skip}` : ''} (container=${Math.round(containerHeight)})`);
