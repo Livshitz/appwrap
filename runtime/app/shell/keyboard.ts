@@ -1,6 +1,7 @@
 import { Application, Utils, isAndroid, isIOS } from '@nativescript/core';
 import { bridge } from './bridge';
 import { SHELL_CONFIG } from './config';
+import { createKeyboardShowCycle, type KeyboardEventTag } from './keyboard-frame';
 import { appwrapNativeLog } from './native-log';
 
 declare const android: any;
@@ -19,6 +20,7 @@ declare const NSObject: any;
 declare const UIScrollViewDelegate: any;
 declare function CGPointMake(x: number, y: number): any;
 declare const UIColor: any;
+declare const UIScreen: any;
 
 let observersArmed = false;
 
@@ -76,6 +78,9 @@ function armIosKeyboardObservers(): void {
   // height → apply the configured extra lift to close the gap. Reset when the keyboard fully hides.
   let sawWillShow = false;
   let activeExtraLift = 0;
+  // willShow/didShow seen since the last willHide/didHide. Only a live show cycle may shrink via
+  // willChangeFrame — out-of-cycle frames re-shrank a keyboard-less screen (see keyboard-frame.ts).
+  const showCycle = createKeyboardShowCycle();
 
   const getWk = (): WKWebView | undefined => bridge.getWebView()?.ios as WKWebView | undefined;
 
@@ -110,7 +115,10 @@ function armIosKeyboardObservers(): void {
     const wv = bridge.getWebView();
     const wk = getWk();
     const win = wk?.window;
-    if (!wv || !wk || !win) {
+    // The RESTORE (margin 0) needs no window — only a shrink needs the safe-area inset. Waiting for a
+    // window on restore let a webview detached through a screen transition exhaust the retries and
+    // stay shrunk on the next screen.
+    if (!wv || !wk || (paddingBottom > 0 && !win)) {
       if (attempt < 20) pendingUpdate = setTimeout(() => Utils.dispatchToMainThread(() => updateFrame(attempt + 1)), 100);
       else if (SHELL_CONFIG.debug) appwrapNativeLog(`[native:keyboard] frame update gave up (webview detached), pad=${paddingBottom}`);
       return;
@@ -120,7 +128,7 @@ function armIosKeyboardObservers(): void {
     // which is what produced gaps, content under the status bar, and residual scroll state.
     // Subtract the bottom safe-area inset: NS layout already excludes it, and the keyboard COVERS
     // it — margining the full keyboard height double-counts those 34pt as a gap above the keyboard.
-    const safeBottom = win.safeAreaInsets?.bottom ?? 0;
+    const safeBottom = win?.safeAreaInsets?.bottom ?? 0;
     // On a WARM re-focus iOS 26 reports a keyboard TALLER than it draws (it reserves the ▲▼✓ accessory
     // row but doesn't draw it), leaving bare black native space between the shrunk webview and the
     // real keys. `activeExtraLift` (see onShow) is the configured extra lift on those warm shows and 0
@@ -147,33 +155,26 @@ function armIosKeyboardObservers(): void {
   // Re-focus does NOT re-fire willShow — capture-verified: a second tap arrives ONLY as
   // didShow/willChangeFrame. All three feed the same idempotent handler; whichever iOS sends, the
   // shrink lands. Height-0 frame events do nothing (hide is owned by the willHide/didHide pair).
-  const onShow = (tag: string, settleMs: number | null) => (note: any): void => {
+  const onShow = (tag: KeyboardEventTag, settleMs: number | null) => (note: any): void => {
     detachWebKitKeyboardHandling();
     if (tag === 'willShow') sawWillShow = true; // cold acquire → the accessory bar will be drawn
     // Warm re-focus (didShow/willChangeFrame with no willShow this cycle) → bar dropped → lift extra.
     activeExtraLift = sawWillShow ? 0 : (SHELL_CONFIG.iosKeyboardExtraLift ?? 82);
     const value = note?.userInfo?.objectForKey?.(UIKeyboardFrameEndUserInfoKey);
-    // Overlap with the window, NOT frame.size.height: iOS delivers keyboard-sized but off-screen
-    // end-frames during dismissal — size.height would shrink a keyboard-less screen.
-    let height = 0;
-    let winH = 0;
-    if (value) {
-      const end = value.CGRectValue;
-      const win = getWk()?.window;
-      winH = win ? win.bounds.size.height : 0;
-      height = winH ? Math.max(0, Math.round(winH - end.origin.y)) : Math.round(end.size.height);
-    }
-    if (SHELL_CONFIG.debug) appwrapNativeLog(`[native:keyboard] ${tag} height=${height}`);
+    const rect = value?.CGRectValue;
+    // Keyboard frames are in screen coordinates: a webview momentarily out of its window (screen
+    // transition) measures against the screen — never the raw frame height, which is keyboard-sized
+    // even for the off-screen end frames iOS posts during dismissal.
+    const win = getWk()?.window;
+    const containerHeight = win ? win.bounds.size.height : UIScreen.mainScreen.bounds.size.height;
+    const { height, skip } = showCycle.resolve({
+      tag,
+      end: rect ? { y: rect.origin.y } : undefined,
+      containerHeight,
+    });
+    if (SHELL_CONFIG.debug) appwrapNativeLog(`[native:keyboard] ${tag} height=${height}${skip ? ` skip=${skip}` : ''} (container=${Math.round(containerHeight)})`);
     resetScrollView();
-    if (height <= 0) return;
-    // Guard against bogus full-screen keyboard frames. iOS occasionally delivers a transitional frame
-    // with origin.y≈0 (seen during SMS-OTP autofill) → height ≈ the whole window → the resize would
-    // shrink the webview to a sliver (huge black gap). A real software keyboard is never >85% of the
-    // screen; ignore the event and wait for the real frame (which follows and self-heals).
-    if (winH && height > winH * 0.85) {
-      if (SHELL_CONFIG.debug) appwrapNativeLog(`[native:keyboard] ignore bogus height=${height} (win=${Math.round(winH)})`);
-      return;
-    }
+    if (skip) return;
     // Paint the webview/window backdrop the page color so the resize shows no white flash. (The
     // iOS-26 phantom keyboard-height gap is closed geometrically by the extra lift in updateFrame.)
     syncBackdropColor();
@@ -187,11 +188,13 @@ function armIosKeyboardObservers(): void {
   center.addObserverForNameObjectQueueUsingBlock(UIKeyboardDidShowNotification, null, null, onShow('didShow', 50));
   center.addObserverForNameObjectQueueUsingBlock(UIKeyboardWillHideNotification, null, null, () => {
     if (SHELL_CONFIG.debug) appwrapNativeLog('[native:keyboard] willHide → restore');
+    showCycle.close(); // dismissal's willChangeFrame must not re-shrink
     setKeyboardHeight(0, 10);
     resetScrollView();
     bridge.emit('keyboard.hide');
   });
   center.addObserverForNameObjectQueueUsingBlock(UIKeyboardDidHideNotification, null, null, () => {
+    showCycle.close();
     setKeyboardHeight(0, 10); // enforcement pass — a hidden keyboard must always end at full height
     resetScrollView();
     sawWillShow = false; // keyboard fully gone → next show re-decides cold (bar) vs warm (no bar)
