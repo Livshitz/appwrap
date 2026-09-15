@@ -22,6 +22,15 @@ export interface ShareResult {
   activity?: string;
 }
 
+/** What {@link ShareModule.saveToPhotos} resolves with. Never throws for a refusal: `saved:false` +
+ * `reason` — 'denied' (the person said no / Settings forbids it), 'unsupported' (not an image or video,
+ * or this shell/platform cannot write to the library: browsers, older native builds), 'failed'. */
+export interface SaveToPhotosResult {
+  saved: boolean;
+  reason?: 'denied' | 'unsupported' | 'failed';
+  message?: string;
+}
+
 export class ShareModule {
   constructor(private kit: NativeKit) {}
 
@@ -33,6 +42,22 @@ export class ShareModule {
   /** File share — distinct flag (a platform can share text but not files). */
   get filesCapability() {
     return this.kit.capability('shareFiles');
+  }
+
+  /** Direct save into the photo library — 'native' only in a shell that has the handler. Absent on web
+   * (a browser cannot write to Photos) and on native builds that predate it: branch on this and fall
+   * back to {@link files} (whose sheet offers "Save Image/Video"). */
+  get saveToPhotosCapability() {
+    return this.kit.capability('saveToPhotos');
+  }
+
+  /** Save ONE image or video straight into Photos (iOS add-only access, Android MediaStore) — no share
+   * sheet. Resolves `{ saved:false, reason:'unsupported' }` without calling the shell when unavailable. */
+  async saveToPhotos(file: ShareFile): Promise<SaveToPhotosResult> {
+    await this.kit.ready().catch(() => {});
+    if (this.saveToPhotosCapability !== 'native') return { saved: false, reason: 'unsupported', message: 'saving to Photos is not available here' };
+    // No watchdog: the first call waits on the OS permission prompt.
+    return this.kit.invoke('share.saveToPhotos', file, { timeoutMs: 'none' });
   }
 
   // Both resolve when the sheet is DISMISSED (not when it opens), so no watchdog: a person may take

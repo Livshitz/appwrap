@@ -83,9 +83,11 @@ export const MODULES: ModuleManifest[] = [
   // `shareFiles` hands a file to the OS sheet, and one of the activities the sheet offers for a
   // photo or video is "Save Image"/"Save Video" — which WRITES to the camera roll. iOS omits that
   // activity SILENTLY when the app carries no add-only photo-library usage string, so the sheet
-  // appears correct and simply lacks the one row the person was reaching for.
+  // appears correct and simply lacks the one row the person was reaching for. `saveToPhotos` writes
+  // straight to the library under that SAME add-only string — why it lives here and not in `photos`
+  // (which is opt-in and asks for READ access).
   {
-    name: 'share', core: true, group: 'core', capabilities: { share: 'native', shareFiles: 'native' },
+    name: 'share', core: true, group: 'core', capabilities: { share: 'native', shareFiles: 'native', saveToPhotos: 'native' },
     ios: { permissions: [{ key: 'NSPhotoLibraryAddUsageDescription', domain: 'photosAdd', defaultUsage: 'Save a photo or video you chose to your library.' }] },
   },
   { name: 'storage', core: true, group: 'core', capabilities: { storage: 'native', secureStorage: 'native' } },

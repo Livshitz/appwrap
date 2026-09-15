@@ -72,6 +72,7 @@ export class WebAdapter implements NativeKitAdapter {
       haptics: 'vibrate' in navigator ? 'web' : 'none',
       share: 'share' in navigator ? 'web' : 'none',
       shareFiles: typeof n.canShare === 'function' ? 'web' : 'none', // navigator.canShare({files}) gates at call time
+      saveToPhotos: 'none', // a browser cannot write to the photo library — explicit, so a shell never inherits 'web'
       orientation: screen?.orientation ? 'web' : 'none', // Screen Orientation API (lock needs fullscreen)
       storage: 'web',
       secureStorage: 'none',

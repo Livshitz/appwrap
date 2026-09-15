@@ -994,6 +994,24 @@ describe('share.files + screen.orientation', () => {
     expect(opts).toEqual([{ timeoutMs: 'none' }, { timeoutMs: 'none' }]);
   });
 
+  test('saveToPhotos invokes the shell only where it is native; elsewhere an honest unsupported', async () => {
+    const calls: unknown[] = [];
+    const make = (caps: Record<string, string>) => new NativeKit({
+      adapters: [fakeAdapter({
+        handshake: async () => ({ ...HS, capabilities: caps }) as never,
+        invoke: async <T,>(m: string, p?: unknown, o?: unknown) => { calls.push([m, p, o]); return { saved: true } as T; },
+      })],
+    });
+    const file = { name: 'a.mp4', mimeType: 'video/mp4', base64: 'aGk=' };
+    expect(await make({ saveToPhotos: 'native' }).share.saveToPhotos(file)).toEqual({ saved: true });
+    expect(calls).toEqual([['share.saveToPhotos', file, { timeoutMs: 'none' }]]);
+    // an older shell has no key → unsupported, and nothing reaches the shell
+    const old = await make({ shareFiles: 'native' }).share.saveToPhotos(file);
+    expect(old.saved).toBe(false);
+    expect(old.reason).toBe('unsupported');
+    expect(calls.length).toBe(1);
+  });
+
   test('orientation.onChange forwards the bare orientation payload', async () => {
     let listener: ((p: unknown) => void) | null = null;
     const kit = new NativeKit({
