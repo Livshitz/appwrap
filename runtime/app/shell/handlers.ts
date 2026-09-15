@@ -38,7 +38,7 @@ function presentShareSheet(items: NSMutableArray<any>): Promise<ShareOutcome> {
       done = true;
       resolve(o);
     };
-    const presented = () => !!controller.presentingViewController && !controller.isBeingDismissed;
+    const presented = () => !!controller.presentingViewController && !controller.beingDismissed;
     controller.completionWithItemsHandler = (activityType: string, completed: boolean) => {
       // Recover the WebView on dismiss — a presented sheet can orphan a touch-stealing window / leave
       // the renderer throttled (see CustomWebView.recoverAfterNativeSurface).
