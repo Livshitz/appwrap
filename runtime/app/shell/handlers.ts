@@ -8,10 +8,14 @@ import { setStatusBarStyle } from './status-bar';
 import { buildCapabilityMap } from './capabilities.manifest';
 import { ACTIVE_MODULE_NAMES, PACK_MODULES } from './active-modules.generated';
 import { consumePendingBackgroundTaskId } from './background-context';
-import { settleShare, type ShareOutcome } from './share-outcome';
+import { settleShare, photoAssetKind, type ShareOutcome, type SaveToPhotosOutcome } from './share-outcome';
+import { appwrapNativeLog } from './native-log';
+
+/** Debug-only native diagnostic line → Documents/appwrap-web.log (`appwrap logs ios`). */
+const dlog = (line: string) => { if (SHELL_CONFIG.debug) appwrapNativeLog(line); };
 
 /** Build identifier for the native shell bundle — bump per deploy to spot stale bundles. */
-export const SHELL_BUILD = 'share-target-1';
+export const SHELL_BUILD = 'save-to-photos-1';
 
 /** Version status the web side (native-kit `kit.updates`) reports via `app.reportWebVersion`. */
 export interface WebVersionInfo { current?: string; latest?: string; build?: string | number; updateAvailable?: boolean; }
@@ -36,10 +40,12 @@ function presentShareSheet(items: NSMutableArray<any>): Promise<ShareOutcome> {
     const finish = (o: ShareOutcome | null) => {
       if (done || !o) return;
       done = true;
+      dlog(`[native:share] resolve ${JSON.stringify(o)}`);
       resolve(o);
     };
     const presented = () => !!controller.presentingViewController && !controller.beingDismissed;
     controller.completionWithItemsHandler = (activityType: string, completed: boolean) => {
+      dlog(`[native:share] completion activity=${activityType} completed=${!!completed} presented=${presented()}`);
       // Recover the WebView on dismiss — a presented sheet can orphan a touch-stealing window / leave
       // the renderer throttled (see CustomWebView.recoverAfterNativeSurface).
       bridge.getWebView()?.recoverAfterNativeSurface();
@@ -152,6 +158,44 @@ export function registerHandlers(): void {
     }
   );
 
+  // SAVE TO PHOTOS — write straight into the library, no sheet. The "Save" a camera app offers is
+  // this, not a share sheet with a Save row among twenty others. Add-only access (the same
+  // NSPhotoLibraryAddUsageDescription the share module already stamps), so the person is never asked
+  // to expose their library just to receive one clip. Resolves { saved } — a refusal is a value, not
+  // a throw, so the caller can say something honest. Android overrides this in handlers-android.
+  bridge.register(
+    'share.saveToPhotos',
+    ({ name, mimeType, base64 }: { name?: string; mimeType?: string; base64: string }): Promise<SaveToPhotosOutcome> | SaveToPhotosOutcome => {
+      const kind = photoAssetKind(mimeType, name);
+      if (!isIOS || !kind) return { saved: false, reason: 'unsupported', message: kind ? 'no photo library here' : 'only photos and videos can be saved to Photos' };
+      return new Promise((resolve) => {
+        PHPhotoLibrary.requestAuthorizationForAccessLevelHandler(PHAccessLevel.AddOnly, (status) => {
+          dlog(`[native:photos] add-only authorization status=${status}`);
+          // Authorized = 3, Limited = 4. Limited still permits adding.
+          if (status !== 3 && status !== 4) return resolve({ saved: false, reason: 'denied', message: 'Photos access is off for this app' });
+          const data = NSData.alloc().initWithBase64EncodedStringOptions(base64 ?? '', 0 as unknown as NSDataBase64DecodingOptions);
+          if (!data) return resolve({ saved: false, reason: 'failed', message: 'could not read that file' });
+          // A real extension matters: Photos sniffs the container from the file URL.
+          const ext = (String(name ?? '').match(/\.[A-Za-z0-9]+$/)?.[0]) ?? (kind === 'video' ? '.mp4' : '.jpg');
+          const filePath = NSTemporaryDirectory() + 'save-' + Date.now() + ext;
+          if (!data.writeToFileAtomically(filePath, true)) return resolve({ saved: false, reason: 'failed', message: 'could not stage that file' });
+          const url = NSURL.fileURLWithPath(filePath);
+          PHPhotoLibrary.sharedPhotoLibrary().performChangesCompletionHandler(
+            () => {
+              PHAssetCreationRequest.creationRequestForAsset().addResourceWithTypeFileURLOptions(
+                kind === 'video' ? PHAssetResourceType.Video : PHAssetResourceType.Photo, url, null);
+            },
+            (ok, error) => {
+              NSFileManager.defaultManager.removeItemAtPathError(filePath);
+              dlog(`[native:photos] save ${kind} ok=${ok}${error ? ' err=' + error.localizedDescription : ''}`);
+              resolve(ok ? { saved: true } : { saved: false, reason: 'failed', message: error?.localizedDescription || 'Photos refused that file' });
+            }
+          );
+        });
+      });
+    }
+  );
+
   bridge.register('storage.get', ({ key }: { key: string }) =>
     JSON.parse(ApplicationSettings.getString(`kit:${key}`, 'null'))
   );
@@ -162,9 +206,10 @@ export function registerHandlers(): void {
     ApplicationSettings.remove(`kit:${key}`)
   );
 
-  bridge.register('toast.show', ({ message, duration }: { message: string; duration?: 'short' | 'long' }) =>
-    showToast(String(message ?? ''), duration ?? 'short')
-  );
+  bridge.register('toast.show', ({ message, duration }: { message: string; duration?: 'short' | 'long' }) => {
+    dlog(`[native:toast] show "${message}" presentedOver=${isIOS ? !!Utils.ios.getRootViewController()?.presentedViewController : "n/a"}`);
+    return showToast(String(message ?? ''), duration ?? 'short');
+  });
 
   // Persistent, tappable banner (e.g. the remote-update "tap to reload" prompt). Tap emits
   // `toast.action` { id } back to the web side.

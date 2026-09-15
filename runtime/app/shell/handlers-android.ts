@@ -2,6 +2,7 @@ import { Application, Utils } from '@nativescript/core';
 import { bridge } from './bridge';
 import { requestPermissions, startActivityForResult, uriToDataUrl, bitmapToDataUrl } from './android-helpers';
 import { notifIdentity, notifActions } from './notif-identity';
+import { photoAssetKind } from './share-outcome';
 
 // no NS types: android-32 typings omit ContactsContract/MediaStore column + ACTION_PICK_IMAGES constants this file reads
 declare const android: any, androidx: any;
@@ -583,6 +584,40 @@ export function registerAndroidHandlers(): void {
     const chooser = I.createChooser(intent, title ?? 'Share');
     chooser.addFlags(I.FLAG_ACTIVITY_NEW_TASK);
     ctx.startActivity(chooser);
+  });
+
+  // ── save to Photos (MediaStore insert into Pictures/ or Movies/) ─────
+  // API 29+ scoped storage needs NO permission to add media the app creates. Older devices would need
+  // WRITE_EXTERNAL_STORAGE, which the template does not request — reported as unsupported, not faked.
+  bridge.register('share.saveToPhotos', ({ name, mimeType, base64 }: { name?: string; mimeType?: string; base64: string }) => {
+    const kind = photoAssetKind(mimeType, name);
+    if (!kind) return { saved: false, reason: 'unsupported', message: 'only photos and videos can be saved to Photos' };
+    if (android.os.Build.VERSION.SDK_INT < 29) return { saved: false, reason: 'unsupported', message: 'needs Android 10 or later' };
+    const MS = android.provider.MediaStore;
+    const resolver = context().getContentResolver();
+    const collection = kind === 'video'
+      ? MS.Video.Media.getContentUri(MS.VOLUME_EXTERNAL_PRIMARY)
+      : MS.Images.Media.getContentUri(MS.VOLUME_EXTERNAL_PRIMARY);
+    const values = new android.content.ContentValues();
+    values.put('_display_name', String(name || (kind === 'video' ? 'video.mp4' : 'photo.jpg')));
+    if (mimeType) values.put('mime_type', String(mimeType));
+    values.put('relative_path', kind === 'video' ? 'Movies' : 'Pictures');
+    values.put('is_pending', new java.lang.Integer(1));
+    let uri: any = null;
+    try {
+      uri = resolver.insert(collection, values);
+      if (!uri) return { saved: false, reason: 'failed', message: 'MediaStore refused the file' };
+      const out = resolver.openOutputStream(uri);
+      out.write(android.util.Base64.decode(base64 ?? '', android.util.Base64.DEFAULT));
+      out.close();
+      const done = new android.content.ContentValues();
+      done.put('is_pending', new java.lang.Integer(0));
+      resolver.update(uri, done, null, null);
+      return { saved: true };
+    } catch (e) {
+      if (uri) try { resolver.delete(uri, null, null); } catch { /* best-effort cleanup */ }
+      return { saved: false, reason: 'failed', message: String((e as Error)?.message ?? e) };
+    }
   });
 
   // ── screen orientation (Activity.setRequestedOrientation) ──────────

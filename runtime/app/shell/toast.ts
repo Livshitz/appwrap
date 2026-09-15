@@ -41,7 +41,10 @@ function showIOSToast(message: string, durationMs: number): void {
   const screenBounds = UIScreen.mainScreen.bounds;
   containerView.center = CGPointMake(screenBounds.size.width / 2, screenBounds.size.height - 120);
 
-  rootVC.view.addSubview(containerView);
+  // Onto the WINDOW, not the root view: a toast that reports how a sheet ended is shown while that
+  // sheet may still be presented (or animating out), and the root view sits BELOW every presented
+  // controller — the toast would render, underneath, and be gone before the sheet was.
+  (rootVC.view.window ?? rootVC.view).addSubview(containerView);
   containerView.alpha = 0;
   containerView.transform = CGAffineTransformMakeScale(0.8, 0.8);
 
