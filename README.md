@@ -172,6 +172,7 @@ kit.haptics.capability          // 'native' | 'web' | 'none'
 await kit.haptics.impact('light');
 await kit.share.share({ url: 'https://…' });
 await kit.share.files([{ name: 'card.png', mimeType: 'image/png', base64 }]); // share files, not just links
+// both resolve when the sheet CLOSES: { completed, activity? } (iOS activity e.g. 'com.apple.UIKit.activity.SaveToCameraRoll'; Android chooser → undefined, web → no activity)
 await kit.storage.set('k', { any: 'json' });
 await kit.storage.secure.set('token', 's3cret');   // Keychain / Keystore
 await kit.toast.show('hi');

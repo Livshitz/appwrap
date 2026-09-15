@@ -13,6 +13,15 @@ export interface ShareFile {
   base64: string;
 }
 
+/** How a share sheet ended. `completed` is false when the person dismissed it. `activity` is the OS
+ * activity they picked when the platform reports one (iOS UIActivityType, e.g.
+ * `com.apple.UIKit.activity.SaveToCameraRoll`); web `navigator.share` and the Android chooser never
+ * name it. `undefined` from the call = a shell that predates this result (resolved on present). */
+export interface ShareResult {
+  completed: boolean;
+  activity?: string;
+}
+
 export class ShareModule {
   constructor(private kit: NativeKit) {}
 
@@ -26,12 +35,14 @@ export class ShareModule {
     return this.kit.capability('shareFiles');
   }
 
-  share(payload: SharePayload): Promise<void> {
-    return this.kit.invoke('share.share', payload);
+  // Both resolve when the sheet is DISMISSED (not when it opens), so no watchdog: a person may take
+  // their time picking a target, and a deadline could only false-timeout mid-interaction.
+  share(payload: SharePayload): Promise<ShareResult | undefined> {
+    return this.kit.invoke('share.share', payload, { timeoutMs: 'none' });
   }
 
   /** Share one or more files (iOS UIActivity / web `navigator.share({files})`). */
-  files(files: ShareFile[], opts?: { title?: string; text?: string }): Promise<void> {
-    return this.kit.invoke('share.files', { files, ...opts });
+  files(files: ShareFile[], opts?: { title?: string; text?: string }): Promise<ShareResult | undefined> {
+    return this.kit.invoke('share.files', { files, ...opts }, { timeoutMs: 'none' });
   }
 }
