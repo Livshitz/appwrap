@@ -975,6 +975,25 @@ describe('share.files + screen.orientation', () => {
     ]);
   });
 
+  test('share + share.files wait for dismissal (no watchdog) and pass the sheet outcome through', async () => {
+    const opts: unknown[] = [];
+    const kit = new NativeKit({
+      adapters: [fakeAdapter({
+        handshake: async () => ({ ...HS, capabilities: { share: 'native', shareFiles: 'native' } }),
+        invoke: async <T,>(m: string, _p?: unknown, o?: unknown) => {
+          opts.push(o);
+          return (m === 'share.files' ? { completed: true, activity: 'com.apple.UIKit.activity.SaveToCameraRoll' } : undefined) as T;
+        },
+      })],
+    });
+    await kit.ready();
+    expect(await kit.share.files([{ name: 'a.mp4', mimeType: 'video/mp4', base64: 'aGk=' }]))
+      .toEqual({ completed: true, activity: 'com.apple.UIKit.activity.SaveToCameraRoll' });
+    // an older shell resolves nothing — still a clean resolve, not an error
+    expect(await kit.share.share({ text: 'hi' })).toBeUndefined();
+    expect(opts).toEqual([{ timeoutMs: 'none' }, { timeoutMs: 'none' }]);
+  });
+
   test('orientation.onChange forwards the bare orientation payload', async () => {
     let listener: ((p: unknown) => void) | null = null;
     const kit = new NativeKit({

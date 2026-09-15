@@ -8,6 +8,7 @@ import { setStatusBarStyle } from './status-bar';
 import { buildCapabilityMap } from './capabilities.manifest';
 import { ACTIVE_MODULE_NAMES, PACK_MODULES } from './active-modules.generated';
 import { consumePendingBackgroundTaskId } from './background-context';
+import { settleShare, type ShareOutcome } from './share-outcome';
 
 /** Build identifier for the native shell bundle — bump per deploy to spot stale bundles. */
 export const SHELL_BUILD = 'share-target-1';
@@ -17,6 +18,40 @@ export interface WebVersionInfo { current?: string; latest?: string; build?: str
 let lastWebVersion: WebVersionInfo = {};
 /** Latest version status the web reported — read by the dev-menu App Info screen. */
 export function getReportedWebVersion(): WebVersionInfo { return lastWebVersion; }
+
+/**
+ * Present the iOS share sheet and resolve when it ENDS — not when it opens — with how it ended
+ * (`{ completed, activity? }`, e.g. activity `com.apple.UIKit.activity.SaveToCameraRoll` for "Save
+ * Video"). That is what lets a caller say "Saved to Photos"; the sheet itself gives no feedback.
+ */
+function presentShareSheet(items: NSMutableArray<any>): Promise<ShareOutcome> {
+  return new Promise((resolve) => {
+    const controller = UIActivityViewController.alloc().initWithActivityItemsApplicationActivities(items, null);
+    const rootVC = Utils.ios.getRootViewController();
+    // iPad requires a popover anchor
+    if (controller.popoverPresentationController) {
+      controller.popoverPresentationController.sourceView = rootVC.view;
+    }
+    let done = false;
+    const finish = (o: ShareOutcome | null) => {
+      if (done || !o) return;
+      done = true;
+      resolve(o);
+    };
+    const presented = () => !!controller.presentingViewController && !controller.isBeingDismissed;
+    controller.completionWithItemsHandler = (activityType: string, completed: boolean) => {
+      // Recover the WebView on dismiss — a presented sheet can orphan a touch-stealing window / leave
+      // the renderer throttled (see CustomWebView.recoverAfterNativeSurface).
+      bridge.getWebView()?.recoverAfterNativeSurface();
+      const now = settleShare(activityType, !!completed, presented());
+      if (now) return finish(now);
+      // Still presented: a cancelled sub-activity (sheet stays) OR a dismissal still animating out.
+      // Re-check once it would have finished; a later handler call wins if it comes first.
+      setTimeout(() => finish(settleShare(null, false, presented())), 700);
+    };
+    rootVC.presentViewControllerAnimatedCompletion(controller, true, null);
+  });
+}
 
 /** Register all protocol-v1 handlers. */
 export function registerHandlers(): void {
@@ -84,20 +119,10 @@ export function registerHandlers(): void {
     if (isIOS) {
       const items = NSMutableArray.new();
       if (content) items.addObject(content);
-      const controller = UIActivityViewController.alloc().initWithActivityItemsApplicationActivities(
-        items,
-        null
-      );
-      const rootVC = Utils.ios.getRootViewController();
-      // iPad requires a popover anchor
-      if (controller.popoverPresentationController) {
-        controller.popoverPresentationController.sourceView = rootVC.view;
-      }
-      // Recover the WebView on dismiss — a presented sheet can orphan a touch-stealing window / leave
-      // the renderer throttled (see CustomWebView.recoverAfterNativeSurface).
-      controller.completionWithItemsHandler = () => { bridge.getWebView()?.recoverAfterNativeSurface(); };
-      rootVC.presentViewControllerAnimatedCompletion(controller, true, null);
+      return presentShareSheet(items);
     } else if (isAndroid) {
+      // The chooser cannot report what (or whether) anything was picked, so there is no outcome to
+      // return: resolves undefined, which callers treat as "unknown" (no success feedback).
       const intent = new android.content.Intent(android.content.Intent.ACTION_SEND);
       intent.setType('text/plain');
       if (title) intent.putExtra(android.content.Intent.EXTRA_SUBJECT, title);
@@ -123,15 +148,7 @@ export function registerHandlers(): void {
         data.writeToFileAtomically(filePath, true);
         items.addObject(NSURL.fileURLWithPath(filePath));
       });
-      const controller = UIActivityViewController.alloc().initWithActivityItemsApplicationActivities(
-        items,
-        null
-      );
-      const rootVC = Utils.ios.getRootViewController();
-      if (controller.popoverPresentationController) {
-        controller.popoverPresentationController.sourceView = rootVC.view; // iPad anchor
-      }
-      rootVC.presentViewControllerAnimatedCompletion(controller, true, null);
+      return presentShareSheet(items);
     }
   );
 

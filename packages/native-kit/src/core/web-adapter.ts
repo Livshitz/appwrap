@@ -144,11 +144,13 @@ export class WebAdapter implements NativeKitAdapter {
 
       case 'share.share':
         if (!navigator.share) throw new KitError('UNSUPPORTED', 'Web Share API unavailable');
-        await navigator.share({ title: p.title, text: p.text, url: p.url }).catch((e: Error) => {
-          if (e.name === 'AbortError') return; // user dismissed — not an error
-          throw new KitError('NATIVE_ERROR', e.message);
-        });
-        return undefined as T;
+        return (await navigator.share({ title: p.title, text: p.text, url: p.url }).then(
+          () => ({ completed: true }),
+          (e: Error) => {
+            if (e.name === 'AbortError') return { completed: false }; // user dismissed — not an error
+            throw new KitError('NATIVE_ERROR', e.message);
+          }
+        )) as T;
 
       case 'share.files': {
         const files = ((p.files ?? []) as Array<{ name: string; mimeType: string; base64: string }>).map(
@@ -156,11 +158,13 @@ export class WebAdapter implements NativeKitAdapter {
         );
         const data: ShareData = { files, title: p.title, text: p.text };
         if (!navigator.canShare?.(data)) throw new KitError('UNSUPPORTED', 'Sharing files is unavailable here');
-        await navigator.share(data).catch((e: Error) => {
-          if (e.name === 'AbortError') return; // user dismissed
-          throw new KitError('NATIVE_ERROR', e.message);
-        });
-        return undefined as T;
+        return (await navigator.share(data).then(
+          () => ({ completed: true }),
+          (e: Error) => {
+            if (e.name === 'AbortError') return { completed: false }; // user dismissed
+            throw new KitError('NATIVE_ERROR', e.message);
+          }
+        )) as T;
       }
 
       case 'storage.get':

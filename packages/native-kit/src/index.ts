@@ -22,7 +22,7 @@ export type {
   Unsubscribe,
 } from './core/types';
 export type { ImpactStyle, NotifyType } from './modules/haptics';
-export type { SharePayload, ShareFile } from './modules/share';
+export type { SharePayload, ShareFile, ShareResult } from './modules/share';
 export type { Orientation, OrientationLock } from './modules/screen';
 export type { KeyboardInfo } from './modules/keyboard';
 export type { FsDirectory, FsEncoding, FsEntry, PickedFile } from './modules/fs';
