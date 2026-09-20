@@ -15,6 +15,7 @@ const store: Record<string, string> = {};
 // Superset shape (bun shares the runtime-module cache across files in a dir run, so every
 // @nativescript/core mock must expose the same named exports the runtime modules import).
 mock.module('@nativescript/core', () => ({
+  Http: { request: async () => ({ content: null }) },
   ApplicationSettings: {
     getString: (k: string, d = '') => (k in store ? store[k] : d),
     setString: (k: string, v: string) => { store[k] = v; },

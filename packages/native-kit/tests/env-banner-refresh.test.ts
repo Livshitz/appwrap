@@ -15,6 +15,7 @@ let actionResult = '';
 const refreshCalls: string[] = []; // records the currentOverride() seen at each refresh
 
 mock.module('@nativescript/core', () => ({
+  Http: { request: async () => ({ content: null }) },
   ApplicationSettings: {
     getString: (k: string, d = '') => (k in store ? store[k] : d),
     setString: (k: string, v: string) => { store[k] = v; },

@@ -18,6 +18,7 @@ import { join } from 'node:path';
 const store: Record<string, string> = {};
 // Superset shape — see the note in env-switcher-security.test.ts (shared runtime-module cache).
 mock.module('@nativescript/core', () => ({
+  Http: { request: async () => ({ content: null }) },
   ApplicationSettings: {
     getString: (k: string, d = '') => (k in store ? store[k] : d),
     setString: (k: string, v: string) => { store[k] = v; },

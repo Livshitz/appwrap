@@ -20,6 +20,7 @@ const UIApplicationStub = { sharedApplication: { idleTimerDisabled: false } };
 (globalThis as any).UIApplication = UIApplicationStub;
 
 mock.module('@nativescript/core', () => ({
+  Http: { request: async () => ({ content: null }) },
   ApplicationSettings: {
     getString: (k: string, d = '') => (k in store ? store[k] : d),
     setString: (k: string, v: string) => { store[k] = v; },
