@@ -23,6 +23,7 @@ mock.module('@nativescript/core', () => ({
   ApplicationSettings: { getString: (_k: string, d = '') => d, setString: () => {}, remove: () => {} },
   Dialogs: { confirm: async () => true, action: async () => '', alert: async () => undefined, prompt: async () => ({ result: false, text: '' }) },
   Utils: { dispatchToMainThread: (fn: () => void) => fn() },
+  Http: { request: async () => ({ content: null }) },
   isIOS: false,
   WebView: class {},
 }));
@@ -35,6 +36,11 @@ mock.module('../../../runtime/app/shell/handlers-extended', () => ({
 
 // Imported AFTER the mocks are registered so events.ts resolves the stubs.
 const events = await import('../../../runtime/app/shell/events');
+// The iOS notification-tap entry point shares this same cold-start gate.
+const { onRemoteMessage } = await import('../../../runtime/app/shell/handlers-push');
+
+/** An APNs userInfo as the server sends it: the tap's route lives in the custom (non-aps) keys. */
+const TAP_USER_INFO = { aps: { alert: { title: 'Para', body: 'Social proposal' } }, route: '/chat/conv_x', convId: 'conv_x' };
 
 beforeEach(() => {
   emitted.length = 0;
@@ -43,6 +49,22 @@ beforeEach(() => {
 });
 
 describe('cold-start deep-link delivery', () => {
+  // MUST also run before onPwaHandshake() — same module-level `pwaReady`.
+  test('cold start: an iOS notification tap is buffered like a deep link, not emitted', () => {
+    // The UNUserNotificationCenter delegate fires while the WebView is still loading the bundle.
+    // Emitting `push.tap` there reaches no listener and the route is lost, so the app opens on its
+    // home screen instead of the conversation. It must go through the gate (events.onPushTap).
+    onRemoteMessage(TAP_USER_INFO, true);
+    expect(emitted).toHaveLength(0);
+  });
+
+  // A non-tap remote message is NOT route-shaped and must keep its immediate delivery.
+  test('a non-tap remote message is emitted immediately, gate or no gate', () => {
+    onRemoteMessage(TAP_USER_INFO, false);
+    expect(emitted.map((e) => e.event)).toEqual(['push.message']);
+    emitted.length = 0;
+  });
+
   // MUST run before any test that calls onPwaHandshake() — pwaReady is module state and only cold
   // (pre-handshake) links are buffered.
   test('cold start: a transformer registered AFTER ingestion still applies at consume (iOS share ordering)', () => {
@@ -76,5 +98,15 @@ describe('cold-start deep-link delivery', () => {
     events.onDeepLink('hellowrap://profile');
     expect(emitted).toEqual([{ event: 'deeplink.open', payload: { url: 'hellowrap://profile' } }]);
     expect(events.consumePendingDeepLink()).toBeNull(); // nothing buffered
+  });
+
+  // Closes the loop on the FIRST test: that tap is still parked in the buffer. The handshake above
+  // scheduled its flush (~500ms, deliberately after listener install), so waiting past it here both
+  // proves the route survives the cold start AND drains the timer before the file tears its mocks
+  // down. Must stay last.
+  test('the buffered cold-start tap is flushed after the handshake, route intact', async () => {
+    await new Promise((r) => setTimeout(r, 600));
+    const tap = emitted.find((e) => e.event === 'push.tap');
+    expect((tap?.payload as { data: Record<string, unknown> }).data.route).toBe('/chat/conv_x');
   });
 });

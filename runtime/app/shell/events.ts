@@ -4,12 +4,15 @@ import { bridge } from './bridge';
 import { connectivityStatus } from './handlers-extended';
 import { isEnvDeepLink, handleEnvDeepLink } from './env-switcher';
 
+/** A notification-tap payload as the PWA receives it (`parseApnsPayload` / the FCM intent extras). */
+export type PushTapPayload = { data: Record<string, unknown>; title?: string; body?: string };
+
 let pendingDeepLink: string | null = null;
 // A cold-launch env-switch deep link (`<scheme>://env?url=…`). Buffered like `pendingDeepLink` until the
 // PWA handshake, so the confirm dialog + WebView reload run when the shell is actually ready (not during
 // iOS didFinishLaunching / the Android launch-intent read, when no WebView exists yet).
 let pendingEnvDeepLink: string | null = null;
-let pendingPushTap: { data: Record<string, string> } | null = null;
+let pendingPushTap: PushTapPayload | null = null;
 let pendingShortcut: string | null = null;
 // True only once the PWA's JS has handshaked — i.e. the WebView is actually
 // running our bundle and about to subscribe. Native page-load is too early:
@@ -81,10 +84,15 @@ export function onShortcut(id: string): void {
   else pendingShortcut = id;
 }
 
-/** Android: a tray notification (FCM) was tapped → re-launched the activity with the data payload as
- * intent extras. Buffered until handshake like deep links (cold-start-from-notification). iOS routes
- * taps via the AppDelegate (handlers-push onRemoteMessage). */
-export function onPushTap(payload: { data: Record<string, string> }): void {
+/** A tray notification was tapped → the app was re-launched (or foregrounded) with the payload.
+ * Buffered until the handshake like deep links, because a cold start from a notification fires this
+ * before the WebView is running our bundle — emit it raw and the route is lost, the PWA boots at `/`
+ * and an authed user lands on the app's home list instead of the conversation.
+ *
+ * BOTH platforms route through here: Android from the launch intent, iOS from the
+ * UNUserNotificationCenter delegate (handlers-push `onRemoteMessage`, tapped=true). iOS used to
+ * `bridge.emit` directly and so had no cold-start buffering at all. */
+export function onPushTap(payload: PushTapPayload): void {
   if (pwaReady) bridge.emit('push.tap', payload);
   else pendingPushTap = payload;
 }

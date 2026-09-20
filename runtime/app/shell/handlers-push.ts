@@ -1,6 +1,7 @@
 import { Application, Http, Utils, isAndroid, isIOS } from '@nativescript/core';
 import { bridge } from './bridge';
 import { SHELL_CONFIG } from './config';
+import { onPushTap } from './events';
 
 /**
  * Remote push (APNs/FCM) — DEVICE SIDE. Acquires the token + surfaces incoming
@@ -75,9 +76,16 @@ export function onApnsError(message: string): void {
   }
 }
 
-/** iOS AppDelegate / UN delegate → a remote notification arrived (tapped = user opened it). */
+/** iOS AppDelegate / UN delegate → a remote notification arrived (tapped = user opened it).
+ *
+ * A TAP goes through `onPushTap` rather than `bridge.emit` so it is buffered until the PWA
+ * handshake. A tap that LAUNCHES the app fires from the UN delegate while the WebView has not yet
+ * loaded our bundle, so a raw emit reaches no listener and the route is dropped — the app opens on
+ * its home screen instead of the notification's target. Android already went through that gate. */
 export function onRemoteMessage(userInfo: any, tapped: boolean): void { // any: APNs userInfo is NSDictionary or auto-marshalled JS object (dual-path)
-  bridge.emit(tapped ? 'push.tap' : 'push.message', parseApnsPayload(userInfo));
+  const payload = parseApnsPayload(userInfo);
+  if (tapped) onPushTap(payload);
+  else bridge.emit('push.message', payload);
 }
 
 /** Android FirebaseMessagingService (fcm-service.android.ts) → a message arrived while the app

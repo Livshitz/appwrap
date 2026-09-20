@@ -15,6 +15,7 @@ const store: Record<string, string> = {};
 // must expose the same named exports the imported runtime modules pull — incl. `WebView` for bridge's
 // CustomWebView base class, reached via env-switcher → bridge → custom-webview).
 mock.module('@nativescript/core', () => ({
+  Http: { request: async () => ({ content: null }) },
   ApplicationSettings: {
     getString: (k: string, d = '') => (k in store ? store[k] : d),
     setString: (k: string, v: string) => { store[k] = v; },

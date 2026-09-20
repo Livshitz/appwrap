@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, mock, test } from 'bun:test';
 // Superset shape — bun shares the runtime-module cache across files in a dir run, so every
 // @nativescript/core mock must expose the same named exports the runtime modules import.
 mock.module('@nativescript/core', () => ({
+  Http: { request: async () => ({ content: null }) },
   isIOS: false, isAndroid: false, WebView: class {},
   ApplicationSettings: { getString: (_k: string, d = '') => d, setString: () => {}, remove: () => {} },
   Dialogs: { confirm: async () => true, action: async () => '', alert: async () => undefined, prompt: async () => ({ result: false, text: '' }) },

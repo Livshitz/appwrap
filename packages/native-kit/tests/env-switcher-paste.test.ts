@@ -23,6 +23,7 @@ let respond: (field: string) => string = (field) => field;
 const pastes = (clipboard: string) => (field: string) => field + clipboard;
 
 mock.module('@nativescript/core', () => ({
+  Http: { request: async () => ({ content: null }) },
   ApplicationSettings: {
     getString: (k: string, d = '') => (k in store ? store[k] : d),
     setString: (k: string, v: string) => { store[k] = v; },

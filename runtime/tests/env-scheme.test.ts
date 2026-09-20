@@ -10,6 +10,7 @@ import { afterEach, describe, expect, mock, test } from 'bun:test';
 // which throws-and-falls-back off-device — safe to stub minimally).
 let androidFlag = false;
 mock.module('@nativescript/core', () => ({
+  Http: { request: async () => ({ content: null }) },
   Application: { android: {} },
   get isAndroid() { return androidFlag; },
   isIOS: false,
