@@ -73,6 +73,10 @@ export const SHELL_CONFIG = {
    * Lifting extra makes the page cover that strip (the keyboard hides the thin bottom row of content).
    * Default 82. Set 0 for NO extra lift (input sits flush at the reported height; the strip may show). */
   iosKeyboardExtraLift: 82,
+  /** `splashHold` config: hold the launch splash over the WebView until the page calls
+   * `ui.splash.hide` (or `timeoutMs` passes / the load fails). `logo` = a `splashIcon` was stamped
+   * (iOS `LaunchScreen.Center` imageset, Android `splash_logo` drawable). See wireSplashHold. */
+  splash: { hold: false, timeoutMs: 4000, logo: false } as { hold: boolean; timeoutMs: number; logo: boolean },
   /** Runtime env-switcher (loader:'server'). `enabled` is the resolved kill-switch (config block
    * present AND not `enabled:false`); when false the menu action, banner, and boot override are all
    * inert. `envs` = declared presets; `allowPattern` = anchored regex gating "Other" (default-deny

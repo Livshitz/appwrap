@@ -169,10 +169,18 @@ export interface AppwrapConfig {
   oauthRedirectSchemes?: string[];
   /** App icon source (≥512px square png). Defaults to the largest icon in the PWA manifest. */
   icon?: string;
-  /** Optional centered logo for the iOS launch splash — a TRANSPARENT-background png (a wordmark or
-   * glyph, NOT the app icon, whose opaque background would show as a box on the splash). When absent
-   * the splash is a clean solid `backgroundColor` fill with no logo. */
+  /** Optional centered logo for the launch splash (iOS LaunchScreen + Android splash, incl. the
+   * Android 12+ system splash) — a TRANSPARENT-background square png (a wordmark or glyph, NOT the
+   * app icon, whose opaque background would show as a box). Rendered on a 220pt (iOS) / 288dp
+   * (Android) canvas, so bake the glyph's padding into the png (~45% of the canvas keeps a square
+   * inside Android 12's 192dp circle mask). When absent the splash is a solid `backgroundColor`. */
   splashIcon?: string;
+  /** Hold the launch splash (backgroundColor + `splashIcon`) OVER the WebView until the page says it
+   * has painted — `kit.invoke('ui.splash.hide')` — instead of dropping it the moment the native page
+   * draws (which shows the WebView's blank canvas while a loader:'server' page downloads). Safety
+   * net: it hides anyway after `timeoutMs` (default 4000) or when the load-failure view shows.
+   * `true` = defaults. Off by default: a page that never calls hide would sit behind the splash. */
+  splashHold?: boolean | { timeoutMs?: number };
   /** Loader: 'app' (default — app:// scheme, ES modules OK), 'file' (debug fallback), or 'server'
    * (load `serverUrl` live — dev HMR over LAN or a deployed URL). `appwrap dev` sets this. */
   loader?: 'app' | 'file' | 'server';
@@ -401,7 +409,7 @@ export const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
   'debugLog', 'desktop', 'devMenu', 'edgeToEdge', 'entry', 'icon', 'id', 'iosKeyboardExtraLift', 'loader', 'modules', 'modulePacks', 'name',
   'androidLockTextZoom', 'envSwitcher', 'iosEntitlements', 'iosInfoPlist', 'neutralizeServiceWorker', 'oauthRedirectSchemes', 'openNewWindowsInBrowser', 'orientation', 'overrides', 'permissions',
   'plugins', 'push', 'pwaDist', 'queryPackages', 'queryUrlSchemes', 'serverUrl', 'shareTarget', 'signing', 'signingProfiles', 'statusBarStyle', 'store',
-  'splashIcon', 'storekitConfig', 'targetedDevices', 'teamId', 'themeColor', 'trackingDomains', 'urlScheme',
+  'splashHold', 'splashIcon', 'storekitConfig', 'targetedDevices', 'teamId', 'themeColor', 'trackingDomains', 'urlScheme',
   'usesNonExemptEncryption', 'vendorPaths', 'version',
 ]);
 
