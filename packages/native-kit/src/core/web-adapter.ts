@@ -189,6 +189,7 @@ export class WebAdapter implements NativeKitAdapter {
       case 'toast.show':
         this.showToast(String(p.message ?? ''), p.duration === 'long' ? 3500 : 2000);
         return undefined as T;
+      case 'ui.splash.hide': // no launch splash on the web — nothing to hold
       case 'ui.statusBar.setStyle':
         return undefined as T; // no-op on web; capability reported as 'none'
       case 'ui.safeArea':

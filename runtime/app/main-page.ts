@@ -1,4 +1,4 @@
-import { Application, AndroidApplication, Button, EventData, LoadEventData, Page, StackLayout, WebView, isAndroid, isIOS, knownFolders, path } from '@nativescript/core';
+import { Application, AndroidApplication, Button, EventData, GridLayout, Image, LoadEventData, Page, StackLayout, WebView, isAndroid, isIOS, knownFolders, path } from '@nativescript/core';
 import { bridge } from './shell/bridge';
 import { effectiveServerUrl } from './shell/server-url';
 import { registerHandlers } from './shell/handlers';
@@ -94,6 +94,7 @@ export function onPageLoaded(args: EventData): void {
 
   if (initialized) return;
   initialized = true;
+  const hideSplash = wireSplashHold(page); // first: the overlay must be up before the first frame
 
   registerHandlers();
   registerExtendedHandlers();
@@ -126,7 +127,7 @@ export function onPageLoaded(args: EventData): void {
   // if a future surface orphans a window with no dismiss callback — gate it on a "surface presented" flag.
   void armNativeSurfaceRecovery; // referenced to keep the helper (still callable if a scoped need arises)
   if (isAndroid) wireAndroidSafeArea(webView); // experimental edge-to-edge (no-op unless config on)
-  wireLoadFallback(page, webView); // loader:'server' failure → branded retry view (no white screen)
+  wireLoadFallback(page, webView, hideSplash); // loader:'server' failure → branded retry view (no white screen)
   startEventForwarding();
   loadBundle(webView);
   // Env indicator banner: shown in the bottom safe area on relaunch when a non-default env override is
@@ -179,7 +180,49 @@ export function onPageLoaded(args: EventData): void {
  * NOTE: web-process termination has no NS seam in a prod build (the didTerminate forwarder lives on
  * the debug-only DevCertNavDelegate) — out of scope here.
  */
-function wireLoadFallback(page: Page, webView: CustomWebView): void {
+/** iOS LaunchScreen.Center is stamped at 220pt; Android's splash canvas is 288dp (cli.ts
+ * ANDROID_SPLASH_DP). The overlay draws the SAME image at the SAME size so the hand-off from the OS
+ * launch screen is invisible. */
+const SPLASH_LOGO_SIZE = isIOS ? 220 : 288;
+
+/**
+ * `splashHold`: keep the launch splash up until the PAGE has painted. Without it the OS splash drops
+ * the moment this native page draws, and a loader:'server' WebView shows its blank canvas for the
+ * whole index.html + bundle download. The page ends the hold with `kit.invoke('ui.splash.hide')`;
+ * a safety timeout and the load-failure view end it too, so a page that never calls it (or an old
+ * web build behind a new shell) costs at most `timeoutMs`. Returns the idempotent hide.
+ */
+function wireSplashHold(page: Page): (why: string) => void {
+  const noop = () => {};
+  const overlay = SHELL_CONFIG.splash?.hold ? page.getViewById<GridLayout>('splashOverlay') : null;
+  if (!overlay) {
+    bridge.register('ui.splash.hide', noop); // a page may always call it; nothing is held here
+    return noop;
+  }
+  const logo = page.getViewById<Image>('splashLogo');
+  if (SHELL_CONFIG.splash.logo && logo) {
+    logo.src = isIOS ? 'res://LaunchScreen.Center' : 'res://splash_logo';
+    logo.width = SPLASH_LOGO_SIZE;
+    logo.height = SPLASH_LOGO_SIZE;
+  }
+  overlay.visibility = 'visible';
+  const shownAt = Date.now();
+  let done = false;
+  const hide = (why: string): void => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    appwrapNativeLog(`[native:splash] hide (${why}) after ${Date.now() - shownAt}ms`);
+    overlay.animate({ opacity: 0, duration: 180 })
+      .catch(() => { /* view torn down mid-fade — collapsing below is all that matters */ })
+      .then(() => { overlay.visibility = 'collapse'; });
+  };
+  const timer = setTimeout(() => hide('timeout'), SHELL_CONFIG.splash.timeoutMs);
+  bridge.register('ui.splash.hide', () => { hide('page'); });
+  return hide;
+}
+
+function wireLoadFallback(page: Page, webView: CustomWebView, hideSplash: (why: string) => void = () => {}): void {
   if (SHELL_CONFIG.loader !== 'server') return; // bundled loaders can't fail on network
   const fallback = page.getViewById<StackLayout>('loadFallback');
   const retryBtn = page.getViewById<Button>('loadRetryBtn');
@@ -212,6 +255,7 @@ function wireLoadFallback(page: Page, webView: CustomWebView): void {
     }
     if (/cancel/i.test(err)) return; // NSURLErrorCancelled: navigation superseded, not a failure
     appwrapNativeLog(`[native:fallback] load failed: ${err}`);
+    hideSplash('load-failed');
     fallback.visibility = 'visible';
     if (!retryTimer) {
       retryTimer = setTimeout(() => { backoffMs = Math.min(backoffMs * 2, 30_000); retry(); }, backoffMs);

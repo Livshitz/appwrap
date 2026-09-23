@@ -81,6 +81,13 @@ export class UiModule {
     return this.kit.invoke('ui.keepAwake', { on });
   }
 
+  /** End the shell's `splashHold`: call once the page has painted its first meaningful frame. The
+   * launch splash stays over the WebView until then (or its timeout). Safe everywhere — a no-op on
+   * the web and on a shell that holds nothing. */
+  hideSplash(): Promise<void> {
+    return this.kit.invoke('ui.splash.hide');
+  }
+
   // ── dialogs ──────────────────────────────────────────────────────────
 
   alert(opts: AlertOptions): Promise<void> {

@@ -974,6 +974,12 @@ export function stampShellConfig(outDir: string, cfg: AppwrapConfig): void {
     envs: (es?.envs ?? []).map((e) => ({ label: String(e.label), url: String(e.url) })),
     allowPattern: es?.allowPattern ?? '',
   };
+  const hold = cfg.splashHold;
+  const splash = {
+    hold: !!hold,
+    timeoutMs: (typeof hold === 'object' && hold.timeoutMs) || 4000,
+    logo: !!cfg.splashIcon,
+  };
   const content = `/**
  * Shell config — stamped by \`appwrap init\`/\`sync\` from the appwrap config. Do not edit.
  */
@@ -1002,6 +1008,7 @@ export const SHELL_CONFIG = {
   pushAndroid: ${JSON.stringify(!!cfg.push?.enabled && cfg.push?.android !== false)},
   pushRegistrationUrl: ${JSON.stringify(cfg.push?.registrationUrl ?? '')},
   iosKeyboardExtraLift: ${JSON.stringify(cfg.iosKeyboardExtraLift ?? 82)},
+  splash: ${JSON.stringify(splash)} as { hold: boolean; timeoutMs: number; logo: boolean },
   envSwitcher: ${JSON.stringify(envSwitcher)} as { enabled: boolean; envs: { label: string; url: string }[]; allowPattern: string },
   webCaps: ${JSON.stringify(webCaps)} as { camera: boolean; microphone: boolean; geolocation: boolean },
 };
@@ -1895,6 +1902,14 @@ function generateIcons(cwd: string, outDir: string, cfg: AppwrapConfig): void {
         ras.resize(splashSrc, Math.round(220 * parseFloat(img.scale)), join(centerSet, img.filename));
       }
     }
+    // Android: the same logo on the 288dp splash canvas (xxxhdpi-sharp; nodpi so the layer-list's
+    // explicit dp size does the scaling), then re-stamp the splash XML + Android 12+ theme to use it.
+    const droidRes = join(outDir, 'App_Resources/Android/src/main/res');
+    const hex = (cfg.backgroundColor ?? '#ffffff').replace('#', '');
+    if (existsSync(splashSrc) && existsSync(droidRes) && /^[0-9a-fA-F]{6}$/.test(hex)) {
+      ras.resize(splashSrc, ANDROID_SPLASH_DP * 4, join(droidRes, 'drawable-nodpi/splash_logo.png'));
+      writeAndroidSplash(outDir, hex, true);
+    }
   }
 
   const ANDROID_DENSITIES: Record<string, number> = { mdpi: 48, hdpi: 72, xhdpi: 96, xxhdpi: 144, xxxhdpi: 192 };
@@ -1967,19 +1982,47 @@ function stampLaunchScreen(outDir: string, cfg: AppwrapConfig): void {
 
   // Android: replace the default NativeScript splash (background bitmap + NS logo) with a solid fill
   // of the app's backgroundColor — parity with the iOS solid launch screen, and no NS branding flash.
-  const splash = join(outDir, 'App_Resources/Android/src/main/res/drawable-nodpi/splash_screen.xml');
-  if (existsSync(splash)) {
-    writeFileSync(splash,
-      `<?xml version="1.0" encoding="utf-8"?>\n` +
-      `<layer-list xmlns:android="http://schemas.android.com/apk/res/android" android:gravity="fill">\n` +
-      `    <item>\n` +
-      `        <shape android:shape="rectangle">\n` +
-      `            <solid android:color="#${hex.toUpperCase()}" />\n` +
-      `        </shape>\n` +
-      `    </item>\n` +
-      `</layer-list>\n`
-    );
-  }
+  writeAndroidSplash(outDir, hex, false);
+}
+
+/** Android launch splash, both phases, on one `ANDROID_SPLASH_DP` canvas so the logo never jumps:
+ * the activity window background (`splash_screen.xml`, every API level) and — with a logo — the
+ * Android 12+ system SplashScreen (`values-v31` LaunchScreenTheme), whose icon is drawn at 288dp when
+ * it has no icon background. The shell's splash-hold overlay (main-page.ts) uses the same size. */
+const ANDROID_SPLASH_DP = 288;
+function writeAndroidSplash(outDir: string, hex: string, logo: boolean): void {
+  const res = join(outDir, 'App_Resources/Android/src/main/res');
+  const splash = join(res, 'drawable-nodpi/splash_screen.xml');
+  if (!existsSync(splash)) return;
+  const color = `#${hex.toUpperCase()}`;
+  writeFileSync(splash,
+    `<?xml version="1.0" encoding="utf-8"?>\n` +
+    `<layer-list xmlns:android="http://schemas.android.com/apk/res/android" android:gravity="fill">\n` +
+    `    <item>\n` +
+    `        <shape android:shape="rectangle">\n` +
+    `            <solid android:color="${color}" />\n` +
+    `        </shape>\n` +
+    `    </item>\n` +
+    (logo
+      ? `    <item android:width="${ANDROID_SPLASH_DP}dp" android:height="${ANDROID_SPLASH_DP}dp" android:gravity="center">\n` +
+        `        <bitmap android:src="@drawable/splash_logo" android:gravity="fill" />\n` +
+        `    </item>\n`
+      : '') +
+    `</layer-list>\n`
+  );
+  const v31 = join(res, 'values-v31/styles.xml');
+  if (!logo) { if (existsSync(v31) && readFileSync(v31, 'utf8').includes('appwrap:splash')) rmSync(v31); return; }
+  mkdirSync(dirname(v31), { recursive: true });
+  writeFileSync(v31,
+    `<?xml version="1.0" encoding="utf-8"?>\n` +
+    `<!-- appwrap:splash — generated from splashIcon/backgroundColor; regenerated every sync. -->\n` +
+    `<resources xmlns:android="http://schemas.android.com/apk/res/android">\n` +
+    `    <style name="LaunchScreenTheme" parent="LaunchScreenThemeBase">\n` +
+    `        <item name="android:windowSplashScreenBackground">${color}</item>\n` +
+    `        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo</item>\n` +
+    `    </style>\n` +
+    `</resources>\n`
+  );
 }
 
 const VERSION_FILE = '.appwrap-version';
