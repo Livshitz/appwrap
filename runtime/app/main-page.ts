@@ -1,4 +1,4 @@
-import { Application, AndroidApplication, Button, EventData, GridLayout, Image, LoadEventData, Page, StackLayout, WebView, isAndroid, isIOS, knownFolders, path } from '@nativescript/core';
+import { Application, AndroidApplication, Button, EventData, LoadEventData, Page, StackLayout, WebView, isAndroid, isIOS, knownFolders, path } from '@nativescript/core';
 import { bridge } from './shell/bridge';
 import { effectiveServerUrl } from './shell/server-url';
 import { registerHandlers } from './shell/handlers';
@@ -180,32 +180,25 @@ export function onPageLoaded(args: EventData): void {
  * NOTE: web-process termination has no NS seam in a prod build (the didTerminate forwarder lives on
  * the debug-only DevCertNavDelegate) — out of scope here.
  */
-/** iOS LaunchScreen.Center is stamped at 220pt; Android's splash canvas is 288dp (cli.ts
- * ANDROID_SPLASH_DP). The overlay draws the SAME image at the SAME size so the hand-off from the OS
- * launch screen is invisible. */
-const SPLASH_LOGO_SIZE = isIOS ? 220 : 288;
-
 /**
  * `splashHold`: keep the launch splash up until the PAGE has painted. Without it the OS splash drops
  * the moment this native page draws, and a loader:'server' WebView shows its blank canvas for the
  * whole index.html + bundle download. The page ends the hold with `kit.invoke('ui.splash.hide')`;
  * a safety timeout and the load-failure view end it too, so a page that never calls it (or an old
  * web build behind a new shell) costs at most `timeoutMs`. Returns the idempotent hide.
+ *
+ * PIXEL-IDENTICAL BY CONSTRUCTION: the overlay IS the OS launch splash, re-instantiated natively and
+ * pinned full-bleed over the whole window — iOS instantiates LaunchScreen.storyboard itself, Android
+ * paints the window-background drawable (splash_screen.xml). An NS-layout copy sat inside the safe
+ * area, so its logo landed lower than the storyboard's and visibly jumped at the hand-off.
  */
 function wireSplashHold(page: Page): (why: string) => void {
   const noop = () => {};
-  const overlay = SHELL_CONFIG.splash?.hold ? page.getViewById<GridLayout>('splashOverlay') : null;
-  if (!overlay) {
+  const remove = SHELL_CONFIG.splash?.hold ? mountNativeSplash(page) : null;
+  if (!remove) {
     bridge.register('ui.splash.hide', noop); // a page may always call it; nothing is held here
     return noop;
   }
-  const logo = page.getViewById<Image>('splashLogo');
-  if (SHELL_CONFIG.splash.logo && logo) {
-    logo.src = isIOS ? 'res://LaunchScreen.Center' : 'res://splash_logo';
-    logo.width = SPLASH_LOGO_SIZE;
-    logo.height = SPLASH_LOGO_SIZE;
-  }
-  overlay.visibility = 'visible';
   const shownAt = Date.now();
   let done = false;
   const hide = (why: string): void => {
@@ -213,13 +206,41 @@ function wireSplashHold(page: Page): (why: string) => void {
     done = true;
     clearTimeout(timer);
     appwrapNativeLog(`[native:splash] hide (${why}) after ${Date.now() - shownAt}ms`);
-    overlay.animate({ opacity: 0, duration: 180 })
-      .catch(() => { /* view torn down mid-fade — collapsing below is all that matters */ })
-      .then(() => { overlay.visibility = 'collapse'; });
+    remove();
   };
   const timer = setTimeout(() => hide('timeout'), SHELL_CONFIG.splash.timeoutMs);
   bridge.register('ui.splash.hide', () => { hide('page'); });
   return hide;
+}
+
+/** Put the OS launch splash back on screen as a native full-window view; returns its fade-out+remove. */
+function mountNativeSplash(page: Page): (() => void) | null {
+  const FADE_MS = 180;
+  try {
+    if (isIOS) {
+      const host = (page.viewController as UIViewController | undefined)?.view;
+      const vc = UIStoryboard.storyboardWithNameBundle('LaunchScreen', null).instantiateInitialViewController();
+      if (!host || !vc) return null;
+      const v = vc.view;
+      v.frame = UIScreen.mainScreen.bounds;
+      v.autoresizingMask = UIViewAutoresizing.FlexibleWidth | UIViewAutoresizing.FlexibleHeight;
+      host.addSubview(v);
+      return () => UIView.animateWithDurationAnimationsCompletion(FADE_MS / 1000, () => { v.alpha = 0; }, () => v.removeFromSuperview());
+    }
+    const act = (Application.android.foregroundActivity || Application.android.startActivity) as android.app.Activity | null;
+    const decor = act?.getWindow()?.getDecorView() as android.view.ViewGroup | undefined;
+    if (!act || !decor) return null;
+    const v = new android.view.View(act);
+    const resId = act.getResources().getIdentifier('splash_screen', 'drawable', act.getPackageName());
+    if (resId) v.setBackground(act.getResources().getDrawable(resId, act.getTheme()));
+    else v.setBackgroundColor(android.graphics.Color.parseColor(SHELL_CONFIG.backgroundColor));
+    v.setClickable(true); // swallow touches while the page boots, like the OS splash
+    decor.addView(v, new android.view.ViewGroup.LayoutParams(-1, -1));
+    return () => v.animate().alpha(0).setDuration(FADE_MS).withEndAction(new java.lang.Runnable({ run: () => decor.removeView(v) })).start();
+  } catch (e) {
+    appwrapNativeLog(`[native:splash] overlay unavailable: ${e}`);
+    return null;
+  }
 }
 
 function wireLoadFallback(page: Page, webView: CustomWebView, hideSplash: (why: string) => void = () => {}): void {
@@ -230,6 +251,7 @@ function wireLoadFallback(page: Page, webView: CustomWebView, hideSplash: (why: 
 
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let backoffMs = 3000;
+  let triedCache = false; // iOS: one cache-only replay per failure run (see below)
   const clearTimer = () => { if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; } };
   const retry = () => {
     clearTimer();
@@ -245,6 +267,7 @@ function wireLoadFallback(page: Page, webView: CustomWebView, hideSplash: (why: 
     const err = String(args.error ?? '');
     if (!err) {
       // successful load → hide + reset (idempotent; covers the auto-retry that finally lands)
+      triedCache = false;
       clearTimer();
       backoffMs = 3000;
       if (fallback.visibility !== 'collapse') {
@@ -254,6 +277,20 @@ function wireLoadFallback(page: Page, webView: CustomWebView, hideSplash: (why: 
       return;
     }
     if (/cancel/i.test(err)) return; // NSURLErrorCancelled: navigation superseded, not a failure
+    // iOS OFFLINE LAUNCH: WKWebView gets no service worker without app-bound domains, but its HTTP
+    // cache already holds the last index.html (no-cache = revalidate, still stored) and the immutable
+    // hashed assets. Before showing the error, replay the launch URL cache-only; online launches never
+    // take this path, so they still revalidate and get the newest deploy (OTA).
+    if (isIOS && !triedCache) {
+      triedCache = true;
+      const wk = webView.ios as WKWebView | null;
+      if (wk) {
+        appwrapNativeLog(`[native:fallback] load failed (${err}) — replaying from the HTTP cache`);
+        wk.loadRequest(NSURLRequest.requestWithURLCachePolicyTimeoutInterval(
+          NSURL.URLWithString(effectiveServerUrl()), NSURLRequestCachePolicy.ReturnCacheDataDontLoad, 10));
+        return;
+      }
+    }
     appwrapNativeLog(`[native:fallback] load failed: ${err}`);
     hideSplash('load-failed');
     fallback.visibility = 'visible';
