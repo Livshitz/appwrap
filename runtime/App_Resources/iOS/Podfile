@@ -1,13 +1,16 @@
 # Silence CocoaPods' "no platform specified" warning; matches the post_install target below.
-platform :ios, '13.0'
+platform :ios, '15.0'
 
 # Bump every pod's deployment target. Xcode 15+ removed `libarclite`, so pods that
 # declare an old IPHONEOS_DEPLOYMENT_TARGET (e.g. SAMKeychain via @nativescript/
 # secure-storage) fail device builds with "SDK does not contain 'libarclite'".
+# 15.0 is the FLOOR, not a preference: Xcode 27 rejects any IPHONEOS_DEPLOYMENT_TARGET under 15.0
+# as a hard error ("supported deployment target versions is 15.0 to 27.0.x"), so 13.0 failed every
+# device build there while older Xcodes still accepted it. An app's own target may sit higher.
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     target.build_configurations.each do |config|
-      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
     end
   end
 end
