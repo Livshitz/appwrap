@@ -106,6 +106,17 @@ export function registerHandlers(): void {
     }
   });
 
+  // iOS edge-swipe back (WKWebView allowsBackForwardNavigationGestures, on by default). A page turns it
+  // off where WebKit's gesture looks wrong: its snapshots are main-frame-only, so a back over an
+  // IFRAME's pushState entry shows a stale picture of the page being left. The page then owns that
+  // Back itself. Android has no equivalent gesture → applied:false.
+  bridge.register('ui.backGesture', ({ enabled = true }: { enabled?: boolean }) => {
+    const wk = isIOS ? (bridge.getWebView()?.ios as WKWebView | undefined) : undefined;
+    if (!wk) return { applied: false };
+    wk.allowsBackForwardNavigationGestures = !!enabled;
+    return { applied: true, enabled: wk.allowsBackForwardNavigationGestures };
+  });
+
   bridge.register('haptics.notify', ({ type = 'success' }: { type?: string }) => {
     if (isIOS) {
       const types: Record<string, UINotificationFeedbackType> = {
