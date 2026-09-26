@@ -36,6 +36,7 @@ import {
   stampAndroidOrientation,
   stampAndroidQueries,
   stampAppBoundDomains,
+  stampInsecureHosts,
   stampPlistBackgroundTasks,
   stampPlistOrientations,
   stampPrivacyTracking,
@@ -1008,6 +1009,7 @@ export const SHELL_CONFIG = {
   pushAndroid: ${JSON.stringify(!!cfg.push?.enabled && cfg.push?.android !== false)},
   pushRegistrationUrl: ${JSON.stringify(cfg.push?.registrationUrl ?? '')},
   iosKeyboardExtraLift: ${JSON.stringify(cfg.iosKeyboardExtraLift ?? 82)},
+  iosHideKeyboardAccessory: ${JSON.stringify(cfg.iosHideKeyboardAccessory ?? false)},
   splash: ${JSON.stringify(splash)} as { hold: boolean; timeoutMs: number; logo: boolean },
   envSwitcher: ${JSON.stringify(envSwitcher)} as { enabled: boolean; envs: { label: string; url: string }[]; allowPattern: string },
   webCaps: ${JSON.stringify(webCaps)} as { camera: boolean; microphone: boolean; geolocation: boolean },
@@ -1068,6 +1070,10 @@ function stampIOSDisplayName(outDir: string, cfg: AppwrapConfig, req: NativeReqs
   // strips the WKAppBoundDomains key, so it no-ops when the field is absent.
   src = stampAppBoundDomains(src, cfg.appBoundDomains);
 
+  // ATS per-domain exceptions for plain-http hosts (e.g. a Tailscale `ts.net` box). Merged into the
+  // template's NSAppTransportSecurity dict; idempotent both ways.
+  src = stampInsecureHosts(src, cfg.insecureHosts);
+
   // Permission usage strings + URL scheme + export-compliance — idempotent: strip stamped block, re-add
   src = src.replace(/\s*<!-- appwrap:begin -->[\s\S]*?<!-- appwrap:end -->/g, '');
   const extras: string[] = [];
@@ -1077,6 +1083,8 @@ function stampIOSDisplayName(outDir: string, cfg: AppwrapConfig, req: NativeReqs
   for (const { key, usage } of req.iosPlist) {
     extras.push(`  <key>${key}</key>\n  <string>${usage}</string>`);
   }
+  // Read by the native AppwrapKeyboardAccessory +load (runtime App_Resources/iOS/src) — no JS involved.
+  if (cfg.iosHideKeyboardAccessory) extras.push(`  <key>AppwrapHideKeyboardAccessory</key>\n  <true/>`);
   if (cfg.urlScheme) {
     extras.push(
       `  <key>CFBundleURLTypes</key>\n  <array>\n    <dict>\n      <key>CFBundleTypeRole</key>\n      <string>Editor</string>\n      <key>CFBundleURLName</key>\n      <string>${cfg.id}</string>\n      <key>CFBundleURLSchemes</key>\n      <array>\n        <string>${cfg.urlScheme}</string>\n      </array>\n    </dict>\n  </array>`

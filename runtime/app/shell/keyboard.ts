@@ -159,7 +159,7 @@ function armIosKeyboardObservers(): void {
     detachWebKitKeyboardHandling();
     if (tag === 'willShow') sawWillShow = true; // cold acquire → the accessory bar will be drawn
     // Warm re-focus (didShow/willChangeFrame with no willShow this cycle) → bar dropped → lift extra.
-    activeExtraLift = sawWillShow ? 0 : (SHELL_CONFIG.iosKeyboardExtraLift ?? 82);
+    activeExtraLift = sawWillShow || SHELL_CONFIG.iosHideKeyboardAccessory ? 0 : (SHELL_CONFIG.iosKeyboardExtraLift ?? 82);
     const value = note?.userInfo?.objectForKey?.(UIKeyboardFrameEndUserInfoKey);
     const rect = value?.CGRectValue;
     // Keyboard frames are in screen coordinates: a webview momentarily out of its window (screen
