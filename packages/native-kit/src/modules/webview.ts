@@ -13,12 +13,14 @@ export interface WebViewState {
 export interface WebViewOpenOptions {
   /** Offset from the top of the app's WebView (CSS px) — keep your own top bar visible above it. Default 0. */
   top?: number;
+  /** Inset from the bottom of the app's WebView (CSS px) — keep a bottom dock tappable below it. Default 0. */
+  bottom?: number;
 }
 
 export type WebViewNavOp = 'back' | 'forward' | 'reload' | 'go';
 
 /**
- * In-app WebView OVERLAY — a chrome-less native WebView layered over the app below `top` px, driven by
+ * In-app WebView OVERLAY — a chrome-less native WebView layered over the app between `top` and `bottom` px, driven by
  * the page (vs {@link BrowserModule}: modal SFSafariViewController with its own chrome + cookie jar).
  * Shares the persistent cookie store, swipe back/forward, target=_blank stays in the same view.
  * iOS-only today: `capability` is 'native' on an iOS shell with the `webview` module, else 'none'.
@@ -30,7 +32,7 @@ export class WebViewModule {
     return this.kit.capability('webview');
   }
 
-  /** Show the overlay at `url` (navigates it if already open). */
+  /** Show the overlay at `url` (navigates it if already open; re-applies top/bottom insets). */
   open(url: string, opts: WebViewOpenOptions = {}): Promise<WebViewState> {
     return this.kit.invoke('webview.open', { url, ...opts });
   }
@@ -44,8 +46,9 @@ export class WebViewModule {
     return this.kit.invoke('webview.hide', {});
   }
 
-  show(): Promise<{ open: boolean }> {
-    return this.kit.invoke('webview.show', {});
+  /** Reveal again; pass top/bottom to re-inset (e.g. the page's dock height changed) without reloading. */
+  show(opts: WebViewOpenOptions = {}): Promise<{ open: boolean }> {
+    return this.kit.invoke('webview.show', { ...opts });
   }
 
   /** Tear the overlay down (fires {@link onClosed}). */
