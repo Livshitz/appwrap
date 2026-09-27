@@ -9,13 +9,13 @@ const KVO_KEYS = ['URL', 'title', 'canGoBack', 'canGoForward', 'loading'];
 
 /**
  * In-app WebView OVERLAY (iOS) — a second, full WKWebView layered over the app's own WebView, below
- * `top` CSS px (so the page keeps its own top bar visible above it). Unlike `browser.open`
+ * `top` CSS px and above `bottom` CSS px (so the page keeps its own top bar / bottom dock visible). Unlike `browser.open`
  * (SFSafariViewController: modal, its own chrome, isolated cookies), this is chrome-less, page-driven
  * and shares the PERSISTENT default data store (cookies/logins survive relaunch).
  *
- *   webview.open  {url, top?}                   — show (or, if open, navigate + show)
+ *   webview.open  {url, top?, bottom?}          — show (or, if open, navigate + show / re-inset)
  *   webview.nav   {op:'back'|'forward'|'reload'|'go', url?}
- *   webview.hide / webview.show                 — keep state, reveal/cover the page beneath
+ *   webview.hide / webview.show {top?,bottom?}  — keep state, reveal/cover the page beneath (show re-insets)
  *   webview.close                               — tear down; emits `webview.closed`
  * Events: `webview.state` {url,title,canGoBack,canGoForward,loading} on every navigation change.
  *
@@ -33,6 +33,7 @@ function registerIos(): void {
   let observer: NSObject | null = null;
   let uiDelegate: WKUIDelegate | null = null;
   let topConstraint: NSLayoutConstraint | null = null;
+  let bottomConstraint: NSLayoutConstraint | null = null;
   let emitQueued = false;
   let ObserverClass: any; // KVO sink, built once (ObjC class names are global)
 
@@ -57,7 +58,7 @@ function registerIos(): void {
     wv!.loadRequest(NSURLRequest.requestWithURL(nsUrl));
   };
 
-  const create = (top: number) => {
+  const create = (top: number, bottom: number) => {
     const host = bridge.getWebView()?.ios as WKWebView | undefined;
     const container = host?.superview ?? Utils.ios.getRootViewController()?.view;
     if (!container) throw err('NATIVE_ERROR', 'webview.open: no host view');
@@ -74,14 +75,15 @@ function registerIos(): void {
 
     view.translatesAutoresizingMaskIntoConstraints = false;
     container.addSubview(view);
-    // Anchor to the app WebView's box so `top` is in the page's own CSS px (== points).
+    // Anchor to the app WebView's box so `top`/`bottom` are in the page's own CSS px (== points).
     const ref: any = host ?? container;
     topConstraint = view.topAnchor.constraintEqualToAnchorConstant(ref.topAnchor, top);
+    bottomConstraint = view.bottomAnchor.constraintEqualToAnchorConstant(ref.bottomAnchor, -bottom);
     NSLayoutConstraint.activateConstraints([
       topConstraint,
+      bottomConstraint,
       view.leadingAnchor.constraintEqualToAnchor(ref.leadingAnchor),
       view.trailingAnchor.constraintEqualToAnchor(ref.trailingAnchor),
-      view.bottomAnchor.constraintEqualToAnchor(ref.bottomAnchor),
     ] as any);
 
     ObserverClass ??= (NSObject as any).extend(
@@ -98,7 +100,7 @@ function registerIos(): void {
     for (const k of KVO_KEYS) { try { wv.removeObserverForKeyPath(observer!, k); } catch { /* not observed */ } }
     wv.stopLoading();
     wv.removeFromSuperview();
-    wv = null; observer = null; uiDelegate = null; topConstraint = null;
+    wv = null; observer = null; uiDelegate = null; topConstraint = null; bottomConstraint = null;
     bridge.emit('webview.closed', {});
   };
 
@@ -107,13 +109,19 @@ function registerIos(): void {
       try { resolve(fn()); } catch (e) { reject(e); }
     }));
 
-  bridge.register('webview.open', ({ url, top }: { url: string; top?: number }) => {
+  const inset = (v?: number) => Math.max(0, Number(v) || 0);
+  /** Re-apply insets on a live overlay; an omitted side keeps its current value. */
+  const setInsets = (top?: number, bottom?: number) => {
+    if (top !== undefined && topConstraint) topConstraint.constant = inset(top);
+    if (bottom !== undefined && bottomConstraint) bottomConstraint.constant = -inset(bottom);
+  };
+
+  bridge.register('webview.open', ({ url, top, bottom }: { url: string; top?: number; bottom?: number }) => {
     const target = String(url ?? '');
     if (!target) throw err('NATIVE_ERROR', 'webview.open: empty url');
-    const offset = Math.max(0, Number(top) || 0);
     return onMain(() => {
-      if (!wv) create(offset);
-      else if (topConstraint) topConstraint.constant = offset;
+      if (!wv) create(inset(top), inset(bottom));
+      else setInsets(top, bottom);
       wv!.hidden = false;
       wv!.superview?.bringSubviewToFront(wv!);
       load(target);
@@ -134,8 +142,8 @@ function registerIos(): void {
   );
 
   bridge.register('webview.hide', () => onMain(() => { if (wv) wv.hidden = true; return { open: !!wv }; }));
-  bridge.register('webview.show', () => onMain(() => {
-    if (wv) { wv.hidden = false; wv.superview?.bringSubviewToFront(wv); }
+  bridge.register('webview.show', (p?: { top?: number; bottom?: number } | null) => onMain(() => {
+    if (wv) { setInsets(p?.top, p?.bottom); wv.hidden = false; wv.superview?.bringSubviewToFront(wv); }
     return { open: !!wv };
   }));
   bridge.register('webview.close', () => onMain(() => { destroy(); }));

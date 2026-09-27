@@ -36,8 +36,10 @@ export function registerKeyboardHandlers(): void {
   bridge.register('keyboard.hide', () => {
     Utils.dispatchToMainThread(() => {
       if (isIOS) {
-        // WKWebView is a UIView → endEditing resigns the active field's first responder.
-        (bridge.getWebView()?.ios as any)?.endEditing?.(true);
+        // endEditing on the WINDOW resigns whichever field is first responder — incl. one inside a
+        // sibling view (the `webview` overlay), which the app WebView's own endEditing can't reach.
+        const wv = bridge.getWebView()?.ios as any;
+        (wv?.window ?? UIApplication.sharedApplication.keyWindow ?? wv)?.endEditing?.(true);
       } else if (isAndroid) {
         hideAndroidKeyboard();
       }
