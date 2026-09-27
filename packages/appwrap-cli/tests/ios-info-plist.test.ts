@@ -67,3 +67,17 @@ describe('iosInfoPlist reaches the plist', () => {
     try { expect(g.plist).not.toContain('NSSupportsLiveActivities'); } finally { cleanup(g.dir); }
   });
 });
+
+describe('iosKeyboardWithoutUserAction reaches the plist', () => {
+  test('true stamps the key AppwrapKeyboardFocus.m reads; absent stamps nothing', () => {
+    const on = generate({ iosKeyboardWithoutUserAction: true });
+    const off = generate({});
+    try {
+      expect(on.ok).toBe(true);
+      expect(on.plist).toMatch(/<key>AppwrapKeyboardWithoutUserAction<\/key>\s*<true\/>/);
+      expect(on.stderr).not.toContain('iosKeyboardWithoutUserAction');
+      expect(off.ok).toBe(true);
+      expect(off.plist).not.toContain('AppwrapKeyboardWithoutUserAction');
+    } finally { cleanup(on.dir); cleanup(off.dir); }
+  });
+});

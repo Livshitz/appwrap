@@ -1086,6 +1086,7 @@ function stampIOSDisplayName(outDir: string, cfg: AppwrapConfig, req: NativeReqs
   }
   // Read by the native AppwrapKeyboardAccessory +load (runtime App_Resources/iOS/src) — no JS involved.
   if (cfg.iosHideKeyboardAccessory) extras.push(`  <key>AppwrapHideKeyboardAccessory</key>\n  <true/>`);
+  if (cfg.iosKeyboardWithoutUserAction) extras.push(`  <key>AppwrapKeyboardWithoutUserAction</key>\n  <true/>`);
   if (cfg.urlScheme) {
     extras.push(
       `  <key>CFBundleURLTypes</key>\n  <array>\n    <dict>\n      <key>CFBundleTypeRole</key>\n      <string>Editor</string>\n      <key>CFBundleURLName</key>\n      <string>${cfg.id}</string>\n      <key>CFBundleURLSchemes</key>\n      <array>\n        <string>${cfg.urlScheme}</string>\n      </array>\n    </dict>\n  </array>`
