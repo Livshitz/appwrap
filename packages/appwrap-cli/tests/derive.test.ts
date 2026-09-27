@@ -4,6 +4,7 @@ import { join } from 'path';
 import {
   androidScreenOrientation,
   stampAppBoundDomains,
+  stampInsecureHosts,
   applyBuildNumberFlag,
   deriveBuild,
   iosOrientations,
@@ -481,5 +482,30 @@ describe('stampPrivacyTracking — ATT declarations into the real store-readines
     expect(reset).toContain('<key>NSPrivacyTracking</key>\n\t<false/>');
     expect(reset).toMatch(/<key>NSPrivacyTrackingDomains<\/key>\s*<array\/>/);
     expect(reset).not.toContain('a.example.com');
+  });
+});
+
+describe('stampInsecureHosts — ATS NSExceptionDomains (REAL Info.plist template)', () => {
+  const PLIST = readFileSync(join(import.meta.dir, '../../../runtime/App_Resources/iOS/Info.plist'), 'utf8');
+  const parse = (src: string) => {
+    const r = Bun.spawnSync(['plutil', '-convert', 'json', '-o', '-', '-'], { stdin: Buffer.from(src) });
+    if (r.exitCode !== 0) throw new Error(r.stderr.toString());
+    return JSON.parse(r.stdout.toString());
+  };
+
+  test('empty/undefined → template unchanged', () => {
+    expect(stampInsecureHosts(PLIST, undefined)).toBe(PLIST);
+    expect(stampInsecureHosts(PLIST, [])).toBe(PLIST);
+  });
+
+  test('merges into the existing ATS dict (valid plist, no arbitrary loads), idempotent + reversible', () => {
+    const out = stampInsecureHosts(PLIST, ['ts.net', '*.example.com']);
+    const ats = parse(out).NSAppTransportSecurity;
+    expect(ats.NSAllowsLocalNetworking).toBe(true);
+    expect(ats.NSAllowsArbitraryLoads).toBeUndefined();
+    expect(ats.NSExceptionDomains['ts.net']).toEqual({ NSIncludesSubdomains: true, NSExceptionAllowsInsecureHTTPLoads: true });
+    expect(ats.NSExceptionDomains['example.com']).toBeDefined();
+    expect(stampInsecureHosts(out, ['ts.net', '*.example.com'])).toBe(out);
+    expect(stampInsecureHosts(out, [])).toBe(PLIST);
   });
 });

@@ -262,6 +262,26 @@ export function stampAppBoundDomains(src: string, domains: string[] | undefined)
 }
 
 /**
+ * Stamp ATS exceptions for plain-http hosts (config `insecureHosts`) into the template's EXISTING
+ * `NSAppTransportSecurity` dict as `NSExceptionDomains` — each host with IncludesSubdomains +
+ * InsecureHTTPLoads. Scoped per domain on purpose (never NSAllowsArbitraryLoads, an App Review flag).
+ * e.g. `['ts.net']` lets the WebView load `http://box.tailnet.ts.net:7707`. Idempotent both ways:
+ * the marked block is stripped first, so an empty/absent list removes it.
+ */
+export function stampInsecureHosts(src: string, hosts: string[] | undefined): string {
+  src = src.replace(/\s*<!-- appwrap:insecure -->[\s\S]*?<!-- \/appwrap:insecure -->/g, '');
+  const list = (hosts ?? []).map((h) => h.trim().replace(/^\*?\./, '')).filter(Boolean);
+  if (!list.length) return src;
+  const ats = /(<key>NSAppTransportSecurity<\/key>\s*<dict>)/;
+  const entries = list.map((h) =>
+    `\t\t\t<key>${h}</key>\n\t\t\t<dict>\n\t\t\t\t<key>NSIncludesSubdomains</key>\n\t\t\t\t<true/>\n` +
+    `\t\t\t\t<key>NSExceptionAllowsInsecureHTTPLoads</key>\n\t\t\t\t<true/>\n\t\t\t</dict>`).join('\n');
+  const block = `\n\t\t<!-- appwrap:insecure -->\n\t\t<key>NSExceptionDomains</key>\n\t\t<dict>\n${entries}\n\t\t</dict>\n\t\t<!-- /appwrap:insecure -->`;
+  if (ats.test(src)) return src.replace(ats, `$1${block}`);
+  return src.replace(/<\/dict>\s*<\/plist>\s*$/, `\t<key>NSAppTransportSecurity</key>\n\t<dict>${block}\n\t</dict>\n</dict>\n</plist>\n`);
+}
+
+/**
  * Stamp the App Tracking Transparency declarations into PrivacyInfo.xcprivacy. Rewrites the two
  * tracking keys IN PLACE (the template ships them, so we never restructure the doc — we only flip
  * values), keeping the required-reason API declarations the store-readiness manifest carries intact.
