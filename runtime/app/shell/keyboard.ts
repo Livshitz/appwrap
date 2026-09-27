@@ -205,22 +205,33 @@ function armIosKeyboardObservers(): void {
   armScrollClamp();
 }
 
+/** The page's colour where the keyboard meets it: the first opaque background up from the element at the
+ *  bottom-centre (then body/html). A transparent body (rgba(0,0,0,0)) must not read as black. */
+const BOTTOM_BG_JS = `(() => {
+  const op = (c) => c && !/^rgba\\(.*,\\s*0\\)$/.test(c) && c !== 'transparent';
+  for (let e = document.elementFromPoint(innerWidth / 2, innerHeight - 2); e; e = e.parentElement) { const c = getComputedStyle(e).backgroundColor; if (op(c)) return c; }
+  for (const e of [document.body, document.documentElement]) { const c = e && getComputedStyle(e).backgroundColor; if (op(c)) return c; }
+  return '';
+})()`;
+
 /**
- * Sample the page's background color once per keyboard-show and paint the webview + its window with
+ * Sample the page's bottom background color once per keyboard-show and paint the webview + its window with
  * it (Capacitor's autoBackdropColor) so there are no white flashes during the resize.
  */
 function syncBackdropColor(): void {
   try {
     const wk = bridge.getWebView()?.ios as WKWebView | undefined;
     if (!wk) return;
-    wk.evaluateJavaScriptCompletionHandler('window.getComputedStyle(document.body).backgroundColor', (result: any) => {
+    wk.evaluateJavaScriptCompletionHandler(BOTTOM_BG_JS, (result: any) => {
       const m = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(String(result ?? ''));
       if (!m) return;
       Utils.dispatchToMainThread(() => {
         const w = bridge.getWebView()?.ios as WKWebView | undefined;
         if (!w) return;
         const color = UIColor.colorWithRedGreenBlueAlpha(+m[1] / 255, +m[2] / 255, +m[3] / 255, 1);
-        w.backgroundColor = color;
+        // The keyboard's rounded corners (iOS 26) show whatever native view is behind the webview — paint
+        // the whole chain up to the window, not only the webview + window (a dark host view showed through).
+        for (let v: UIView | null = w; v; v = v.superview) v.backgroundColor = color;
         if (w.window) w.window.backgroundColor = color;
         if (SHELL_CONFIG.debug) appwrapNativeLog(`[native:keyboard] backdrop ← rgb(${m[1]},${m[2]},${m[3]})`);
       });
