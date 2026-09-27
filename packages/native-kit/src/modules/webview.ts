@@ -23,7 +23,7 @@ export type WebViewNavOp = 'back' | 'forward' | 'reload' | 'go';
  * In-app WebView OVERLAY — a chrome-less native WebView layered over the app between `top` and `bottom` px, driven by
  * the page (vs {@link BrowserModule}: modal SFSafariViewController with its own chrome + cookie jar).
  * Shares the persistent cookie store, swipe back/forward, target=_blank stays in the same view.
- * iOS-only today: `capability` is 'native' on an iOS shell with the `webview` module, else 'none'.
+ * `capability` is 'native' on an iOS or Android shell with the `webview` module, else 'none'.
  */
 export class WebViewModule {
   constructor(private kit: NativeKit) {}

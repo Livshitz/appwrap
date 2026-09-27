@@ -3,7 +3,7 @@ import { SHELL_CONFIG } from './config';
 import { mimeFor } from './mime';
 import { APPWRAP_GLOBALS_JS, NATIVE_FEEL_JS, serviceWorkerGuardJs, externalNavGuardJs } from './web-quirks';
 import { envGlobalsJs } from './env';
-import { requestPermissions } from './android-helpers';
+import { handleWebPermissionRequest } from './android-helpers';
 import { showFileChooser } from './file-chooser.android';
 import { hostOf } from './env-switcher';
 
@@ -66,20 +66,7 @@ function getChromeClientClass(): any {
     // app holds the matching OS runtime permission (CAMERA / RECORD_AUDIO).
     // No instance state — safe on the shared class.
     onPermissionRequest(request: android.webkit.PermissionRequest): void {
-      const PR = android.webkit.PermissionRequest;
-      const resources: string[] = Array.from(request.getResources());
-      const perms = new Set<string>();
-      for (const r of resources) {
-        if (r === PR.RESOURCE_VIDEO_CAPTURE) perms.add('android.permission.CAMERA');
-        if (r === PR.RESOURCE_AUDIO_CAPTURE) perms.add('android.permission.RECORD_AUDIO');
-      }
-      if (!perms.size) {
-        Utils.dispatchToMainThread(() => request.grant(request.getResources()));
-        return;
-      }
-      requestPermissions(Array.from(perms)).then((ok) =>
-        Utils.dispatchToMainThread(() => (ok ? request.grant(request.getResources()) : request.deny()))
-      );
+      handleWebPermissionRequest(request);
     },
 
     // <input type="file"> — NOT optional here: replacing NS's WebChromeClient removed the
