@@ -73,6 +73,9 @@ export const SHELL_CONFIG = {
    * Lifting extra makes the page cover that strip (the keyboard hides the thin bottom row of content).
    * Default 82. Set 0 for NO extra lift (input sits flush at the reported height; the strip may show). */
   iosKeyboardExtraLift: 82,
+  /** iOS only. Remove WKWebView's ▲▼✓ keyboard accessory bar (native: App_Resources/iOS/src/AppwrapKeyboardAccessory.m, gated on Info.plist AppwrapHideKeyboardAccessory). With the bar
+   * gone the extra lift above is not applied — it only compensates the bar's phantom reservation. */
+  iosHideKeyboardAccessory: false,
   /** `splashHold` config: hold the launch splash over the WebView until the page calls
    * `ui.splash.hide` (or `timeoutMs` passes / the load fails). `logo` = a `splashIcon` was stamped
    * (iOS `LaunchScreen.Center` imageset, Android `splash_logo` drawable). See wireSplashHold. */
