@@ -93,7 +93,14 @@ function registerIos(): void {
     ] as any);
 
     ObserverClass ??= (NSObject as any).extend(
-      { observeValueForKeyPathOfObjectChangeContext() { emitState(); } },
+      {
+        observeValueForKeyPathOfObjectChangeContext() {
+          // Shell-coloured + non-opaque only to avoid a white flash before the first load; after it, WebKit
+          // must paint the page's own canvas, or a page with no background shows the (dark) shell through.
+          if (wv && !wv.opaque && !wv.loading && wv.URL) wv.opaque = true;
+          emitState();
+        },
+      },
       { name: 'AppwrapWebViewOverlayObserver' }
     );
     observer = ObserverClass.new();
