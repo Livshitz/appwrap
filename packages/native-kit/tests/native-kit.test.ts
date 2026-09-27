@@ -374,6 +374,32 @@ describe('Fs', () => {
   });
 });
 
+describe('WebView overlay', () => {
+  test('open/nav/hide/show/close route to webview.* with the fixed contract params', async () => {
+    const calls: Array<[string, unknown]> = [];
+    const kit = new NativeKit({
+      adapters: [fakeAdapter({
+        handshake: async () => ({ ...HS, capabilities: { webview: 'native' } }),
+        invoke: async <T,>(m: string, p?: unknown) => { calls.push([m, p]); return (undefined as unknown) as T; },
+      })],
+    });
+    await kit.ready();
+    expect(kit.webview.capability).toBe('native');
+    await kit.webview.open('https://a.test', { top: 44 });
+    await kit.webview.nav('back');
+    await kit.webview.nav('go', 'https://b.test');
+    await kit.webview.hide();
+    await kit.webview.show();
+    await kit.webview.close();
+    expect(calls).toEqual([
+      ['webview.open', { url: 'https://a.test', top: 44 }],
+      ['webview.nav', { op: 'back', url: undefined }],
+      ['webview.nav', { op: 'go', url: 'https://b.test' }],
+      ['webview.hide', {}], ['webview.show', {}], ['webview.close', {}],
+    ]);
+  });
+});
+
 describe('Scanner', () => {
   test('scan/cancel route to namespaced scanner.* with options merged in', async () => {
     const calls: Array<[string, unknown]> = [];

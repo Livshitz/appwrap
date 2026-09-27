@@ -9,6 +9,7 @@ import { ShareTargetModule } from '../modules/shareTarget';
 import { BackgroundTaskModule } from '../modules/backgroundTask';
 import { BiometricsModule } from '../modules/biometrics';
 import { BrowserModule } from '../modules/browser';
+import { WebViewModule } from '../modules/webview';
 import { CalendarModule } from '../modules/calendar';
 import { ClipboardModule } from '../modules/clipboard';
 import { ContactsModule } from '../modules/contacts';
@@ -103,6 +104,7 @@ export class NativeKit {
   public readonly calendar = new CalendarModule(this);
   public readonly app = new AppModule(this);
   public readonly browser = new BrowserModule(this);
+  public readonly webview = new WebViewModule(this);
   public readonly oauth = new OAuthModule(this);
   public readonly updates = new UpdatesModule(this);
   public readonly backgroundTask = new BackgroundTaskModule(this);
@@ -151,7 +153,7 @@ export class NativeKit {
       biometrics: this.biometrics, geo: this.geo, heading: this.heading, photos: this.photos,
       network: this.network, lifecycle: this.lifecycle, reviews: this.reviews, motion: this.motion,
       media: this.media, contacts: this.contacts, scanner: this.scanner,
-      speech: this.speech, calendar: this.calendar, app: this.app, browser: this.browser,
+      speech: this.speech, calendar: this.calendar, app: this.app, browser: this.browser, webview: this.webview,
       oauth: this.oauth, updates: this.updates,
       backgroundTask: this.backgroundTask, tracking: this.tracking, appleSignIn: this.appleSignIn,
       shareTarget: this.shareTarget,
@@ -376,6 +378,7 @@ declare module './module-registry' {
     calendar: CalendarModule;
     app: AppModule;
     browser: BrowserModule;
+    webview: WebViewModule;
     oauth: OAuthModule;
     updates: UpdatesModule;
     backgroundTask: BackgroundTaskModule;
