@@ -131,6 +131,10 @@ export interface AppwrapConfig {
    * re-focus, leaving a black strip). Default 82; the keyboard covers the thin bottom content row.
    * Set 0 for no extra lift (input flush at the reported height; the strip may show). */
   iosKeyboardExtraLift?: number;
+  /** iOS only. Let programmatic `el.focus()` raise the keyboard without a user tap (the UIWebView-era
+   * `keyboardDisplayRequiresUserAction = false`; WKWebView has no public switch, so a native +load
+   * forces WebKit's focus path to `userIsInteracting`). Applies to every WKWebView in the app. Default false. */
+  iosKeyboardWithoutUserAction?: boolean;
   pwaDist: string;
   /** Desktop-shell block, consumed by an external desktop host (a module pack) that registers a
    * `'desktop'` platform handler via `runCli({ platforms })`. Carried OPAQUE — nothing here reads
@@ -406,7 +410,7 @@ export function defineConfig(config: AppwrapConfig): AppwrapConfig {
  */
 export const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
   'androidAppLinks', 'appBoundDomains', 'backendOrigin', 'backgroundAudio', 'backgroundColor', 'backgroundTasks', 'buildNumber', 'ci', 'debug',
-  'debugLog', 'desktop', 'devMenu', 'edgeToEdge', 'entry', 'icon', 'id', 'iosKeyboardExtraLift', 'loader', 'modules', 'modulePacks', 'name',
+  'debugLog', 'desktop', 'devMenu', 'edgeToEdge', 'entry', 'icon', 'id', 'iosKeyboardExtraLift', 'iosKeyboardWithoutUserAction', 'loader', 'modules', 'modulePacks', 'name',
   'androidLockTextZoom', 'envSwitcher', 'iosEntitlements', 'iosInfoPlist', 'neutralizeServiceWorker', 'oauthRedirectSchemes', 'openNewWindowsInBrowser', 'orientation', 'overrides', 'permissions',
   'plugins', 'push', 'pwaDist', 'queryPackages', 'queryUrlSchemes', 'serverUrl', 'shareTarget', 'signing', 'signingProfiles', 'statusBarStyle', 'store',
   'splashHold', 'splashIcon', 'storekitConfig', 'targetedDevices', 'teamId', 'themeColor', 'trackingDomains', 'urlScheme',

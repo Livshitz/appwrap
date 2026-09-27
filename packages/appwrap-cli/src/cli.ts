@@ -1078,6 +1078,7 @@ function stampIOSDisplayName(outDir: string, cfg: AppwrapConfig, req: NativeReqs
   for (const { key, usage } of req.iosPlist) {
     extras.push(`  <key>${key}</key>\n  <string>${usage}</string>`);
   }
+  if (cfg.iosKeyboardWithoutUserAction) extras.push(`  <key>AppwrapKeyboardWithoutUserAction</key>\n  <true/>`);
   if (cfg.urlScheme) {
     extras.push(
       `  <key>CFBundleURLTypes</key>\n  <array>\n    <dict>\n      <key>CFBundleTypeRole</key>\n      <string>Editor</string>\n      <key>CFBundleURLName</key>\n      <string>${cfg.id}</string>\n      <key>CFBundleURLSchemes</key>\n      <array>\n        <string>${cfg.urlScheme}</string>\n      </array>\n    </dict>\n  </array>`
