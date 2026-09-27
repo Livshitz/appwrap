@@ -212,6 +212,15 @@ export const MODULES: ModuleManifest[] = [
     },
   },
 
+  // ── webview — in-app WebView OVERLAY (a second chrome-less WKWebView over the app, page-driven) ──
+  // vs browser.open (SFSafariViewController: modal, own chrome, separate cookie jar): this one shares the
+  // persistent default data store and is steered by the page (open/nav/hide/show/close + webview.state
+  // events). iOS-only for now (android:false → kit 'none'). No permission, no native dep. Strippable.
+  {
+    name: 'webview', group: 'webview',
+    capabilities: { webview: { ios: true, android: false } },
+  },
+
   // ── speech (TTS + STT) — opt-in module; ONE coherent kit.speech, TWO honest capabilities ──
   // ONE module (not split TTS-core / STT-opt-in): TTS-only apps are rare and a split fractures
   // `kit.speech` across tiers. The module declares the STT perms (mic + speech-recognition); the
@@ -341,7 +350,7 @@ export const MODULES: ModuleManifest[] = [
 
 /** Opt-in registration groups that own their own NS handler file (strippable when inactive). Core
  * groups (core/extended/parity/system/media) are always bundled; only these are CLI-gated. */
-export const OPTIONAL_GROUPS = ['oauth', 'reviews', 'scanner', 'speech', 'tracking', 'appleSignIn', 'backgroundTask', 'shareTarget'] as const;
+export const OPTIONAL_GROUPS = ['oauth', 'reviews', 'scanner', 'speech', 'tracking', 'appleSignIn', 'backgroundTask', 'shareTarget', 'webview'] as const;
 
 /** CLI-gated groups (strippable in explicit mode) that legacy mode (no `modules` key) STILL auto-bundles
  * for back-compat. Empty now that billing (its only member) moved to a host-provided pack — kept as the

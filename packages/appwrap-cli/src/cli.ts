@@ -401,6 +401,7 @@ const OPTIONAL_GROUP_HANDLERS: Record<string, { file: string; fn: string }> = {
   appleSignIn: { file: './handlers-apple-signin', fn: 'registerAppleSignInHandlers' },
   backgroundTask: { file: './handlers-background', fn: 'registerBackgroundTaskHandlers' },
   shareTarget: { file: './handlers-share-target', fn: 'registerShareTargetHandlers' },
+  webview: { file: './handlers-webview', fn: 'registerWebViewHandlers' },
   // billing/health/widget live in host-provided module packs — a consumer opts in via modulePacks.
 };
 
