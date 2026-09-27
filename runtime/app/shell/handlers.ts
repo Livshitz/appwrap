@@ -15,7 +15,7 @@ import { appwrapNativeLog } from './native-log';
 const dlog = (line: string) => { if (SHELL_CONFIG.debug) appwrapNativeLog(line); };
 
 /** Build identifier for the native shell bundle — bump per deploy to spot stale bundles. */
-export const SHELL_BUILD = 'save-to-photos-1';
+export const SHELL_BUILD = 'webview-overlay-1';
 
 /** Version status the web side (native-kit `kit.updates`) reports via `app.reportWebVersion`. */
 export interface WebVersionInfo { current?: string; latest?: string; build?: string | number; updateAvailable?: boolean; }
