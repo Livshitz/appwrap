@@ -30,6 +30,26 @@ export function requestPermissions(permissions: string[]): Promise<boolean> {
   });
 }
 
+/** WebChromeClient.onPermissionRequest (getUserMedia): grant the WebView's per-origin capture after
+ * ensuring the app holds the matching OS runtime permission (CAMERA / RECORD_AUDIO). Stateless —
+ * shared by the app WebView and the `webview` overlay. */
+export function handleWebPermissionRequest(request: android.webkit.PermissionRequest): void {
+  const PR = android.webkit.PermissionRequest;
+  const resources: string[] = Array.from(request.getResources());
+  const perms = new Set<string>();
+  for (const r of resources) {
+    if (r === PR.RESOURCE_VIDEO_CAPTURE) perms.add('android.permission.CAMERA');
+    if (r === PR.RESOURCE_AUDIO_CAPTURE) perms.add('android.permission.RECORD_AUDIO');
+  }
+  if (!perms.size) {
+    Utils.dispatchToMainThread(() => request.grant(request.getResources()));
+    return;
+  }
+  requestPermissions(Array.from(perms)).then((ok) =>
+    Utils.dispatchToMainThread(() => (ok ? request.grant(request.getResources()) : request.deny()))
+  );
+}
+
 /** Decode a content Uri (downscaled to `maxSize` longest edge) into a JPEG data URL. */
 export function uriToDataUrl(uri: android.net.Uri, maxSize: number): string | null {
   const cr = Utils.android.getApplicationContext().getContentResolver();
