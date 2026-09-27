@@ -215,10 +215,10 @@ export const MODULES: ModuleManifest[] = [
   // ── webview — in-app WebView OVERLAY (a second chrome-less WKWebView over the app, page-driven) ──
   // vs browser.open (SFSafariViewController: modal, own chrome, separate cookie jar): this one shares the
   // persistent default data store and is steered by the page (open/nav/hide/show/close + webview.state
-  // events). iOS-only for now (android:false → kit 'none'). No permission, no native dep. Strippable.
+  // events). iOS: WKWebView; Android: android.webkit.WebView in the content frame. No permission, no native dep. Strippable.
   {
     name: 'webview', group: 'webview',
-    capabilities: { webview: { ios: true, android: false } },
+    capabilities: { webview: { ios: true, android: true } },
   },
 
   // ── speech (TTS + STT) — opt-in module; ONE coherent kit.speech, TWO honest capabilities ──
