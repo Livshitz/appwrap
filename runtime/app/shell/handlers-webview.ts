@@ -1,6 +1,7 @@
-import { Utils, isIOS } from '@nativescript/core';
+import { Utils, isIOS, isAndroid, Application } from '@nativescript/core';
 import { bridge } from './bridge';
 import { createUiDelegate } from './ios-ui-delegate';
+import { handleWebPermissionRequest } from './android-helpers';
 
 const err = (code: string, message: string) => Object.assign(new Error(message), { code });
 
@@ -21,11 +22,16 @@ const KVO_KEYS = ['URL', 'title', 'canGoBack', 'canGoForward', 'loading'];
  *
  * Swipe back/forward on, target=_blank/window.open loads in place (shared ios-ui-delegate), keyboard +
  * safe areas handled by WKWebView's own scroll-view insets (contentInsetAdjustment automatic).
- * iOS-only (the manifest advertises android:false → kit capability 'none').
+ * Android: an android.webkit.WebView added to the activity's content frame, margins derived from the app
+ * WebView's box (re-applied when it re-lays out), cookies via the process-wide CookieManager (persistent),
+ * getUserMedia via the shared permission handler, _blank in place (no multiple-window support).
  */
 export function registerWebViewHandlers(): void {
   if (isIOS) registerIos();
+  else if (isAndroid) registerAndroid();
 }
+
+
 
 function registerIos(): void {
   // Strong refs — WKWebView holds its delegates weakly and KVO observers aren't retained.
@@ -144,6 +150,148 @@ function registerIos(): void {
   bridge.register('webview.hide', () => onMain(() => { if (wv) wv.hidden = true; return { open: !!wv }; }));
   bridge.register('webview.show', (p?: { top?: number; bottom?: number } | null) => onMain(() => {
     if (wv) { setInsets(p?.top, p?.bottom); wv.hidden = false; wv.superview?.bringSubviewToFront(wv); }
+    return { open: !!wv };
+  }));
+  bridge.register('webview.close', () => onMain(() => { destroy(); }));
+}
+
+function registerAndroid(): void {
+  let wv: any = null; // android.webkit.WebView
+  let insets = { top: 0, bottom: 0 };
+  let layoutListener: any = null;
+  let host: any = null;
+  let emitQueued = false;
+  // NS caches extend() proxies by shape — build each client class ONCE; route to the single live overlay.
+  let ViewClient: any, ChromeClient: any;
+
+  const state = () => ({
+    url: wv?.getUrl() ?? '',
+    title: wv?.getTitle() ?? '',
+    canGoBack: !!wv?.canGoBack(),
+    canGoForward: !!wv?.canGoForward(),
+    loading: !!wv && wv.getProgress() < 100,
+  });
+  const emitState = () => {
+    if (emitQueued) return;
+    emitQueued = true;
+    setTimeout(() => { emitQueued = false; if (wv) bridge.emit('webview.state', state()); }, 0);
+  };
+
+  const activity = () => Application.android.foregroundActivity ?? Application.android.startActivity;
+  const density = () => Utils.android.getApplicationContext().getResources().getDisplayMetrics().density || 1;
+  const content = (): any => activity()?.findViewById(android.R.id.content); // FrameLayout
+
+  /** Place the overlay over the app WebView's box, `top`/`bottom` CSS px inside it. */
+  const layout = () => {
+    const frame = content();
+    if (!wv || !frame) return;
+    const d = density();
+    const fl = [0, 0], hl = [0, 0];
+    frame.getLocationInWindow(fl);
+    let boxTop = 0, boxBottom = 0;
+    if (host) {
+      host.getLocationInWindow(hl);
+      boxTop = hl[1] - fl[1];
+      boxBottom = frame.getHeight() - (boxTop + host.getHeight());
+    }
+    const lp = new android.widget.FrameLayout.LayoutParams(-1, -1);
+    lp.topMargin = Math.max(0, Math.round(boxTop + insets.top * d));
+    lp.bottomMargin = Math.max(0, Math.round(boxBottom + insets.bottom * d));
+    wv.setLayoutParams(lp);
+  };
+
+  const load = (url: string) => {
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) throw err('NATIVE_ERROR', `webview: invalid url ${url}`);
+    wv.loadUrl(url);
+  };
+
+  const create = () => {
+    const frame = content();
+    if (!frame) throw err('NATIVE_ERROR', 'webview.open: no host view');
+    host = bridge.getWebView()?.android ?? null;
+    ViewClient ??= (android.webkit.WebViewClient as any).extend({
+      onPageStarted() { emitState(); },
+      onPageFinished() { emitState(); },
+      doUpdateVisitedHistory() { emitState(); },
+    });
+    ChromeClient ??= (android.webkit.WebChromeClient as any).extend({
+      onReceivedTitle() { emitState(); },
+      onProgressChanged() { emitState(); },
+      onPermissionRequest(request: any) { handleWebPermissionRequest(request); },
+    });
+    const view = new android.webkit.WebView(activity());
+    const st = view.getSettings();
+    st.setJavaScriptEnabled(true);
+    st.setDomStorageEnabled(true);
+    st.setMediaPlaybackRequiresUserGesture(false);
+    st.setSupportMultipleWindows(false); // target=_blank / window.open load in place
+    android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(view, true);
+    const client = new ViewClient(), chrome = new ChromeClient();
+    view.setWebViewClient(client);
+    view.setWebChromeClient(chrome);
+    (view as any)._appwrapClients = [client, chrome]; // keep JS peers alive (NS GC doesn't see the native hold)
+    const bg = host?.getBackground?.();
+    if (bg instanceof android.graphics.drawable.ColorDrawable) view.setBackgroundColor(bg.getColor());
+    android.webkit.WebView.setWebContentsDebuggingEnabled(true);
+    wv = view;
+    frame.addView(view);
+    layout();
+    if (host) {
+      layoutListener = new android.view.View.OnLayoutChangeListener({ onLayoutChange() { layout(); } });
+      host.addOnLayoutChangeListener(layoutListener);
+    }
+  };
+
+  const destroy = () => {
+    if (!wv) return;
+    if (host && layoutListener) host.removeOnLayoutChangeListener(layoutListener);
+    wv.stopLoading();
+    wv.getParent()?.removeView(wv);
+    wv.destroy();
+    wv = null; host = null; layoutListener = null;
+    android.webkit.CookieManager.getInstance().flush();
+    bridge.emit('webview.closed', {});
+  };
+
+  const onMain = <T>(fn: () => T): Promise<T> =>
+    new Promise((resolve, reject) => Utils.dispatchToMainThread(() => {
+      try { resolve(fn()); } catch (e) { reject(e); }
+    }));
+  const inset = (v?: number) => Math.max(0, Number(v) || 0);
+  const setInsets = (top?: number, bottom?: number) => {
+    if (top !== undefined) insets.top = inset(top);
+    if (bottom !== undefined) insets.bottom = inset(bottom);
+    layout();
+  };
+  const reveal = () => { wv.setVisibility(android.view.View.VISIBLE); wv.bringToFront(); };
+
+  bridge.register('webview.open', ({ url, top, bottom }: { url: string; top?: number; bottom?: number }) => {
+    const target = String(url ?? '');
+    if (!target) throw err('NATIVE_ERROR', 'webview.open: empty url');
+    return onMain(() => {
+      if (!wv) { insets = { top: inset(top), bottom: inset(bottom) }; create(); }
+      else setInsets(top, bottom);
+      reveal();
+      load(target);
+      return state();
+    });
+  });
+
+  bridge.register('webview.nav', ({ op, url }: { op: string; url?: string }) =>
+    onMain(() => {
+      if (!wv) throw err('NATIVE_ERROR', 'webview.nav: not open');
+      if (op === 'back') { if (wv.canGoBack()) wv.goBack(); }
+      else if (op === 'forward') { if (wv.canGoForward()) wv.goForward(); }
+      else if (op === 'reload') wv.reload();
+      else if (op === 'go') load(String(url ?? ''));
+      else throw err('NATIVE_ERROR', `webview.nav: unknown op ${op}`);
+      return state();
+    })
+  );
+
+  bridge.register('webview.hide', () => onMain(() => { wv?.setVisibility(android.view.View.GONE); return { open: !!wv }; }));
+  bridge.register('webview.show', (p?: { top?: number; bottom?: number } | null) => onMain(() => {
+    if (wv) { setInsets(p?.top, p?.bottom); reveal(); }
     return { open: !!wv };
   }));
   bridge.register('webview.close', () => onMain(() => { destroy(); }));
