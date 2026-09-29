@@ -18,6 +18,8 @@ const KVO_KEYS = ['URL', 'title', 'canGoBack', 'canGoForward', 'loading'];
  *   webview.nav   {op:'back'|'forward'|'reload'|'go', url?}
  *   webview.hide / webview.show {top?,bottom?}  — keep state, reveal/cover the page beneath (show re-insets)
  *   webview.close                               — tear down; emits `webview.closed`
+ *   webview.cookies {cookies: Cookie[]}         — write cookies into the overlay's (persistent) jar; resolves {set}
+ *                                                 once all are stored (Bare Remote's opt-in "sign in like the Mac")
  * Events: `webview.state` {url,title,canGoBack,canGoForward,loading} on every navigation change.
  *
  * Swipe back/forward on, target=_blank/window.open loads in place (shared ios-ui-delegate), keyboard +
@@ -26,6 +28,14 @@ const KVO_KEYS = ['URL', 'title', 'canGoBack', 'canGoForward', 'loading'];
  * WebView's box (re-applied when it re-lays out), cookies via the process-wide CookieManager (persistent),
  * getUserMedia via the shared permission handler, _blank in place (no multiple-window support).
  */
+/** A cookie as data (Bare's desktop `remote.cookies` shape); `expires` = unix seconds, absent = session cookie. */
+type Cookie = { name: string; value: string; domain: string; path?: string; secure?: boolean; httpOnly?: boolean; expires?: number | null; sameSite?: string | null };
+const cookieList = (p: { cookies?: Cookie[] } | null): Cookie[] => {
+  const l = p?.cookies;
+  if (!Array.isArray(l)) throw err('NATIVE_ERROR', 'webview.cookies: cookies[] required');
+  return l.filter((c) => c && c.name && c.domain);
+};
+
 export function registerWebViewHandlers(): void {
   if (isIOS) registerIos();
   else if (isAndroid) registerAndroid();
@@ -160,6 +170,31 @@ function registerIos(): void {
     return { open: !!wv };
   }));
   bridge.register('webview.close', () => onMain(() => { destroy(); }));
+
+  bridge.register('webview.cookies', (p: { cookies?: Cookie[] } | null) => {
+    const list = cookieList(p);
+    return onMain(() => new Promise<{ set: number }>((resolve) => {
+      const jar = WKWebsiteDataStore.defaultDataStore().httpCookieStore;
+      let left = list.length, set = 0;
+      const done = () => { if (--left <= 0) resolve({ set }); };
+      if (!left) return resolve({ set });
+      for (const c of list) {
+        const props = NSMutableDictionary.new<string, any>();
+        props.setObjectForKey(c.name, NSHTTPCookieName);
+        props.setObjectForKey(c.value ?? '', NSHTTPCookieValue);
+        props.setObjectForKey(c.domain, NSHTTPCookieDomain);
+        props.setObjectForKey(c.path || '/', NSHTTPCookiePath);
+        if (c.secure) props.setObjectForKey('TRUE', NSHTTPCookieSecure);
+        if (c.httpOnly) props.setObjectForKey('TRUE', 'HttpOnly'); // no public constant; the key CFNetwork reads
+        if (c.expires) props.setObjectForKey(NSDate.dateWithTimeIntervalSince1970(c.expires), NSHTTPCookieExpires);
+        if (c.sameSite === 'lax') props.setObjectForKey(NSHTTPCookieSameSiteLax, NSHTTPCookieSameSitePolicy);
+        else if (c.sameSite === 'strict') props.setObjectForKey(NSHTTPCookieSameSiteStrict, NSHTTPCookieSameSitePolicy);
+        const cookie = NSHTTPCookie.cookieWithProperties(props);
+        if (!cookie) { console.warn(`[webview] cookie skipped (invalid): ${c.name} @ ${c.domain}`); done(); continue; }
+        jar.setCookieCompletionHandler(cookie, () => { set++; done(); });
+      }
+    }));
+  });
 }
 
 function registerAndroid(): void {
@@ -302,4 +337,23 @@ function registerAndroid(): void {
     return { open: !!wv };
   }));
   bridge.register('webview.close', () => onMain(() => { destroy(); }));
+
+  bridge.register('webview.cookies', (p: { cookies?: Cookie[] } | null) => {
+    const list = cookieList(p);
+    return onMain(() => new Promise<{ set: number }>((resolve) => {
+      const cm = android.webkit.CookieManager.getInstance();
+      let left = list.length, set = 0;
+      const done = () => { if (--left <= 0) { cm.flush(); resolve({ set }); } };
+      if (!left) return resolve({ set });
+      for (const c of list) {
+        const path = c.path || '/', host = c.domain.replace(/^\./, '');
+        const attrs = [`${c.name}=${c.value ?? ''}`, ...(c.domain.startsWith('.') ? [`Domain=${c.domain}`] : []), `Path=${path}`,
+          ...(c.secure ? ['Secure'] : []), ...(c.httpOnly ? ['HttpOnly'] : []),
+          ...(c.expires ? [`Expires=${new Date(c.expires * 1000).toUTCString()}`] : []),
+          ...(c.sameSite ? [`SameSite=${c.sameSite}`] : [])];
+        cm.setCookie(`${c.secure ? 'https' : 'http'}://${host}${path}`, attrs.join('; '),
+          new android.webkit.ValueCallback<java.lang.Boolean>({ onReceiveValue: (ok) => { if (ok) set++; done(); } }));
+      }
+    }));
+  });
 }
