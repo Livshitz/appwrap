@@ -17,6 +17,18 @@ export interface WebViewOpenOptions {
   bottom?: number;
 }
 
+/** A cookie as data; `expires` = unix seconds, absent/null = session cookie. A leading-dot `domain` = domain cookie. */
+export interface WebViewCookie {
+  name: string;
+  value: string;
+  domain: string;
+  path?: string;
+  secure?: boolean;
+  httpOnly?: boolean;
+  expires?: number | null;
+  sameSite?: string | null;
+}
+
 export type WebViewNavOp = 'back' | 'forward' | 'reload' | 'go';
 
 /**
@@ -49,6 +61,11 @@ export class WebViewModule {
   /** Reveal again; pass top/bottom to re-inset (e.g. the page's dock height changed) without reloading. */
   show(opts: WebViewOpenOptions = {}): Promise<{ open: boolean }> {
     return this.kit.invoke('webview.show', { ...opts });
+  }
+
+  /** Write cookies into the overlay's persistent jar (e.g. before {@link open}, to arrive signed in); resolves once stored. */
+  setCookies(cookies: WebViewCookie[]): Promise<{ set: number }> {
+    return this.kit.invoke('webview.cookies', { cookies });
   }
 
   /** Tear the overlay down (fires {@link onClosed}). */
