@@ -21,6 +21,9 @@ const KVO_KEYS = ['URL', 'title', 'canGoBack', 'canGoForward', 'loading'];
  *   webview.close                               — tear down; emits `webview.closed`
  *   webview.cookies {cookies: Cookie[]}         — write cookies into the overlay's (persistent) jar; resolves {set}
  *                                                 once all are stored (Bare Remote's opt-in "sign in like the Mac")
+ *   webview.snapshot {width?, quality?}         — what the overlay shows now as a JPEG ~`width` px wide (default 360,
+ *                                                 quality 0.6); resolves {jpeg: base64, width, height}. Must run while
+ *                                                 it is still shown (take it before hide/close).
  * Events: `webview.state` {url,title,canGoBack,canGoForward,loading} on every navigation change.
  *
  * Swipe back/forward on, target=_blank/window.open loads in place (shared ios-ui-delegate), keyboard +
@@ -36,6 +39,12 @@ const cookieList = (p: { cookies?: Cookie[] } | null): Cookie[] => {
   if (!Array.isArray(l)) throw err('NATIVE_ERROR', 'webview.cookies: cookies[] required');
   return l.filter((c) => c && c.name && c.domain);
 };
+
+/** webview.snapshot params → target pixel width (clamped) + JPEG quality 0..1. */
+const snapOpts = (p?: { width?: number; quality?: number } | null) => ({
+  width: Math.round(Math.min(1024, Math.max(64, Number(p?.width) || 360))),
+  quality: Math.min(1, Math.max(0.1, Number(p?.quality) || 0.6)),
+});
 
 export function registerWebViewHandlers(): void {
   if (isIOS) registerIos();
@@ -171,6 +180,20 @@ function registerIos(): void {
     return { open: !!wv };
   }));
   bridge.register('webview.close', () => onMain(() => { destroy(); }));
+
+  bridge.register('webview.snapshot', (p?: { width?: number; quality?: number } | null) => {
+    const o = snapOpts(p);
+    return onMain(() => new Promise<{ jpeg: string; width: number; height: number }>((resolve, reject) => {
+      if (!wv || wv.hidden) return reject(err('NATIVE_ERROR', 'webview.snapshot: not shown'));
+      const cfg = WKSnapshotConfiguration.new();
+      cfg.snapshotWidth = o.width / (UIScreen.mainScreen.scale || 1) as any; // points; the image comes at screen scale
+      wv.takeSnapshotWithConfigurationCompletionHandler(cfg, (img: UIImage, e: NSError) => {
+        const data = img && UIImageJPEGRepresentation(img, o.quality);
+        if (!data) return reject(err('NATIVE_ERROR', `webview.snapshot: ${e?.localizedDescription || 'no image'}`));
+        resolve({ jpeg: data.base64EncodedStringWithOptions(0 as any), width: Math.round(img.size.width * img.scale), height: Math.round(img.size.height * img.scale) });
+      });
+    }));
+  });
 
   bridge.register('webview.cookies', (p: { cookies?: Cookie[] } | null) => {
     const list = cookieList(p);
@@ -338,6 +361,23 @@ function registerAndroid(): void {
     return { open: !!wv };
   }));
   bridge.register('webview.close', () => onMain(() => { destroy(); }));
+
+  bridge.register('webview.snapshot', (p?: { width?: number; quality?: number } | null) => {
+    const o = snapOpts(p);
+    return onMain(() => {
+      if (!wv || wv.getVisibility() !== android.view.View.VISIBLE || !wv.getWidth() || !wv.getHeight()) throw err('NATIVE_ERROR', 'webview.snapshot: not shown');
+      const s = o.width / wv.getWidth(), h = Math.max(1, Math.round(wv.getHeight() * s));
+      const bmp = android.graphics.Bitmap.createBitmap(o.width, h, android.graphics.Bitmap.Config.ARGB_8888);
+      const c = new android.graphics.Canvas(bmp);
+      c.scale(s, s);
+      c.translate(-wv.getScrollX(), -wv.getScrollY()); // draw() paints from the content origin
+      wv.draw(c);
+      const out = new java.io.ByteArrayOutputStream();
+      bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, Math.round(o.quality * 100), out);
+      bmp.recycle();
+      return { jpeg: android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP), width: o.width, height: h };
+    });
+  });
 
   bridge.register('webview.cookies', (p: { cookies?: Cookie[] } | null) => {
     const list = cookieList(p);
