@@ -68,6 +68,11 @@ export class WebViewModule {
     return this.kit.invoke('webview.cookies', { cookies });
   }
 
+  /** What the overlay shows now as a JPEG about `width` px wide (default 360). Take it while it is shown (before hide/close). */
+  snapshot(opts: { width?: number; quality?: number } = {}): Promise<{ jpeg: string; width: number; height: number }> {
+    return this.kit.invoke('webview.snapshot', { ...opts });
+  }
+
   /** Tear the overlay down (fires {@link onClosed}). */
   close(): Promise<void> {
     return this.kit.invoke('webview.close', {});
