@@ -79,12 +79,17 @@ export function storedUrlParams(): Record<string, string> {
   }
 }
 
-/** Append the stored URL params to a load URL (encoded; existing query/fragment preserved). */
+/** Apply the stored URL params to a load URL (a key already in the URL is REPLACED, not duplicated). */
 export function withUrlParams(url: string): string {
-  const qs = Object.entries(storedUrlParams()).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
-  if (!qs) return url;
-  const [head, frag] = url.split('#', 2);
-  return `${head}${head.includes('?') ? '&' : '?'}${qs}${frag !== undefined ? `#${frag}` : ''}`;
+  const params = Object.entries(storedUrlParams());
+  if (!params.length) return url;
+  try {
+    const u = new URL(url);
+    for (const [k, v] of params) u.searchParams.set(k, v);
+    return u.toString();
+  } catch {
+    return url; // unparseable base — load it untouched rather than corrupt it
+  }
 }
 
 /** The env base URL (override or build default) WITHOUT the URL params — what option sources resolve against. */

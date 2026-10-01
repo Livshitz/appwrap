@@ -6,7 +6,7 @@ import { URL_PARAMS_KEY, effectiveBaseUrl, storedUrlParams } from './server-url'
  * Config-driven URL-param menu for the env-switcher (`envSwitcher.params`). Each declared param adds a
  * "<Label>: <current>" entry to the Switch Environment sheet; picking a value persists it (`kit:urlParams`)
  * and reloads the WebView with `?<key>=<value>` appended (see `withUrlParams` in server-url.ts). The first
- * option, "default", means "no param". Same gate as the env-switcher itself — no separate trust surface.
+ * option, "default", means "no param" — or `?<key>=<defaultValue>` when the param declares one. Same gate as the env-switcher itself — no separate trust surface.
  *
  * Options come from a static `options` list and/or `optionsUrl` — a JSON GET resolved against the ACTIVE
  * env's base URL (so a relative path follows an env switch). `optionsPath` (dot path) selects the value
@@ -23,7 +23,13 @@ export function urlParamDefs(): UrlParamDef[] {
 
 /** Menu entry label for a param, e.g. "Segment: senior". */
 export function paramMenuLabel(p: UrlParamDef): string {
-  return `${p.label || p.key}: ${storedUrlParams()[p.key] || DEFAULT_OPTION}`;
+  return `${p.label || p.key}: ${currentOption(p)}`;
+}
+
+/** The menu option currently selected — a stored `defaultValue` reads back as "default". */
+export function currentOption(p: UrlParamDef): string {
+  const v = storedUrlParams()[p.key];
+  return !v || v === p.defaultValue ? DEFAULT_OPTION : v;
 }
 
 /** Extract string options from a JSON response: walk `path`, then array → strings, object → keys. */
@@ -37,7 +43,7 @@ export function extractOptions(json: unknown, path = ''): string[] {
 /** Resolve the param's options: "default" + static options + fetched options (deduped). A failed fetch
  * is logged and falls back to the static list — the menu still opens. */
 export async function loadParamOptions(p: UrlParamDef): Promise<string[]> {
-  const opts = [...(p.options ?? [])];
+  const opts = (p.options ?? []).filter((o) => o !== p.defaultValue);
   if (p.optionsUrl) {
     const url = new URL(p.optionsUrl, effectiveBaseUrl()).toString();
     try {
@@ -51,17 +57,20 @@ export async function loadParamOptions(p: UrlParamDef): Promise<string[]> {
   return [...new Set([DEFAULT_OPTION, ...opts])];
 }
 
-/** Persist one param value ('' / "default" clears it). */
-export function setUrlParam(key: string, value: string): void {
+/** Persist one param pick. "default" (or '') stores the param's `defaultValue` when declared — an explicit
+ * reset sent to the page (e.g. `?segment=default`) — else clears it so the param is omitted. Only an
+ * explicit pick is ever sent; an untouched app never gets the defaultValue appended. */
+export function setUrlParam(p: UrlParamDef, value: string): void {
   const next = { ...storedUrlParams() };
-  if (!value || value === DEFAULT_OPTION) delete next[key];
-  else next[key] = value;
+  const v = !value || value === DEFAULT_OPTION ? p.defaultValue ?? '' : value;
+  if (v) next[p.key] = v;
+  else delete next[p.key];
   ApplicationSettings.setString(URL_PARAMS_KEY, JSON.stringify(next));
 }
 
 /** Action sheet for one param; on a changed pick, persist + `reload()`. */
 export async function showParamPicker(p: UrlParamDef, reload: () => void): Promise<void> {
-  const current = storedUrlParams()[p.key] || DEFAULT_OPTION;
+  const current = currentOption(p);
   const options = await loadParamOptions(p);
   const choice = await Dialogs.action({
     title: p.label || p.key,
@@ -72,6 +81,6 @@ export async function showParamPicker(p: UrlParamDef, reload: () => void): Promi
   if (!choice || choice === 'Cancel') return;
   const value = choice.replace(/ ✓$/, '');
   if (value === current) return;
-  setUrlParam(p.key, value);
+  setUrlParam(p, value);
   reload();
 }

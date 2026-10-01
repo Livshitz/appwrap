@@ -52,6 +52,9 @@ export interface EnvSwitcherParam {
   options?: string[];
   optionsUrl?: string;
   optionsPath?: string;
+  /** Value sent when "default" is picked (e.g. 'default' → `?segment=default`, an explicit reset). Absent →
+   * the param is omitted. Only sent after an explicit pick, never on an untouched app. */
+  defaultValue?: string;
 }
 
 /** iOS share-extension direct sync (`shareTarget.directSync`). When configured, the generated

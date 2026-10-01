@@ -31,7 +31,7 @@ const shell = {
       enabled: true,
       envs: [{ label: 'Lab', url: 'https://lab.example.com' }],
       allowPattern: '',
-      params: [{ key: 'segment', label: 'Segment', options: [] as string[], optionsUrl: '/api/v1/segments/names', optionsPath: 'names' }],
+      params: [{ key: 'segment', label: 'Segment', options: [] as string[], optionsUrl: '/api/v1/segments/names', optionsPath: 'names' } as { key: string; label: string; options: string[]; optionsUrl: string; optionsPath: string; defaultValue?: string }],
     },
   },
 };
@@ -51,23 +51,47 @@ beforeEach(() => {
 describe('url params on the load URL', () => {
   test('no pick → plain URL; pick → ?segment=; default → cleared', () => {
     expect(effectiveServerUrl()).toBe('https://agf.example.com');
-    setUrlParam('segment', 'senior');
-    expect(effectiveServerUrl()).toBe('https://agf.example.com?segment=senior');
+    setUrlParam(seg, 'senior');
+    expect(effectiveServerUrl()).toBe('https://agf.example.com/?segment=senior');
     expect(paramMenuLabel(seg)).toBe('Segment: senior');
-    setUrlParam('segment', 'default');
+    setUrlParam(seg, 'default');
     expect(effectiveServerUrl()).toBe('https://agf.example.com');
     expect(paramMenuLabel(seg)).toBe('Segment: default');
   });
   test('applies on top of an env override, value encoded', () => {
     store[OVERRIDE_KEY] = JSON.stringify('https://lab.example.com');
-    setUrlParam('segment', 'a b&c');
-    expect(effectiveServerUrl()).toBe('https://lab.example.com?segment=a%20b%26c');
+    setUrlParam(seg, 'a b&c');
+    expect(new URL(effectiveServerUrl()).searchParams.get('segment')).toBe('a b&c');
+    expect(effectiveServerUrl().startsWith('https://lab.example.com/?segment=')).toBe(true);
   });
   test('undeclared keys (page-written) ignored; disabled switcher ignores all', () => {
     store[URL_PARAMS_KEY] = JSON.stringify({ evil: 'x', segment: 'senior' });
-    expect(effectiveServerUrl()).toBe('https://agf.example.com?segment=senior');
+    expect(effectiveServerUrl()).toBe('https://agf.example.com/?segment=senior');
     shell.SHELL_CONFIG.envSwitcher.enabled = false;
     expect(effectiveServerUrl()).toBe('https://agf.example.com');
+  });
+});
+
+describe('defaultValue + replace', () => {
+  test('"default" pick sends ?key=defaultValue (explicit reset); untouched app sends nothing', () => {
+    const p = { ...seg, defaultValue: 'default' };
+    shell.SHELL_CONFIG.envSwitcher.params[0] = p;
+    try {
+      expect(effectiveServerUrl()).toBe('https://agf.example.com');
+      setUrlParam(p, 'senior');
+      setUrlParam(p, 'default');
+      expect(effectiveServerUrl()).toBe('https://agf.example.com/?segment=default');
+      expect(paramMenuLabel(p)).toBe('Segment: default');
+    } finally {
+      shell.SHELL_CONFIG.envSwitcher.params[0] = seg;
+    }
+  });
+  test('a key already in the env URL is replaced, not duplicated', () => {
+    store[OVERRIDE_KEY] = JSON.stringify('https://lab.example.com/?segment=old&x=1');
+    shell.SHELL_CONFIG.envSwitcher.envs.push({ label: 'Q', url: 'https://lab.example.com/?segment=old&x=1' });
+    setUrlParam(seg, 'senior');
+    expect(effectiveServerUrl()).toBe('https://lab.example.com/?segment=senior&x=1');
+    shell.SHELL_CONFIG.envSwitcher.envs.pop();
   });
 });
 

@@ -84,7 +84,7 @@ export const SHELL_CONFIG = {
    * present AND not `enabled:false`); when false the menu action, banner, and boot override are all
    * inert. `envs` = declared presets; `allowPattern` = anchored regex gating "Other" (default-deny
    * when ''). Stamped by `appwrap init`/`sync` — see `stampShellConfig`. */
-  envSwitcher: { enabled: false, envs: [] as { label: string; url: string }[], allowPattern: '', params: [] as { key: string; label: string; options: string[]; optionsUrl: string; optionsPath: string }[] },
+  envSwitcher: { enabled: false, envs: [] as { label: string; url: string }[], allowPattern: '', params: [] as { key: string; label: string; options: string[]; optionsUrl: string; optionsPath: string; defaultValue?: string }[] },
   /** TCC-gated web APIs this build DECLARED (active modules + the config's `permissions{}`) — what the
    * document-start capability guard exposes to the page. NOT the same question as "is the Info.plist
    * usage string present": the plist also carries the webview baseline (NSCameraUsageDescription is
