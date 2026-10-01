@@ -38,6 +38,20 @@ export interface EnvSwitcherConfig {
   allowPattern?: string;
   /** Deeplink auto-switch (Phase 2 — not yet implemented). Opt-in. */
   deeplink?: boolean;
+  /** Extra URL query params pickable from the switch menu (same gate). Each adds "<label>: <value>";
+   * a pick persists and reloads with `?<key>=<value>` ("default" = param omitted). */
+  params?: EnvSwitcherParam[];
+}
+
+/** One switchable URL param. Options = static `options` + `optionsUrl` (JSON GET, resolved against the
+ * ACTIVE env's URL, so a relative path follows env switches); `optionsPath` dot-path picks the value —
+ * an array gives its strings, an object gives its keys. */
+export interface EnvSwitcherParam {
+  key: string;
+  label?: string;
+  options?: string[];
+  optionsUrl?: string;
+  optionsPath?: string;
 }
 
 /** iOS share-extension direct sync (`shareTarget.directSync`). When configured, the generated

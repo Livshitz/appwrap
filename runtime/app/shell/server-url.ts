@@ -58,6 +58,37 @@ export function isOverrideAllowed(url: string): boolean {
  * override against the same allowlist the switcher uses — the native menu isn't the only writer of the
  * key (any page JS can write it via `kit.storage.set`), so the read side must not trust it blindly. */
 export function effectiveServerUrl(): string {
+  return withUrlParams(effectiveBaseUrl());
+}
+
+/** Persisted values for the config-declared URL params (`envSwitcher.params`), `{ key: value }`. */
+export const URL_PARAMS_KEY = 'kit:urlParams';
+
+/** The persisted URL-param selections, filtered to keys DECLARED in `envSwitcher.params` (a page can write
+ * the key via `kit.storage`, so undeclared keys / non-string values are dropped). {} when disabled. */
+export function storedUrlParams(): Record<string, string> {
+  const declared = new Set((SHELL_CONFIG.envSwitcher?.params ?? []).map((p) => p.key));
+  if (SHELL_CONFIG.loader !== 'server' || !SHELL_CONFIG.envSwitcher?.enabled || !declared.size) return {};
+  try {
+    const raw = JSON.parse(ApplicationSettings.getString(URL_PARAMS_KEY, '') || '{}');
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(raw ?? {})) if (declared.has(k) && typeof v === 'string' && v) out[k] = v;
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** Append the stored URL params to a load URL (encoded; existing query/fragment preserved). */
+export function withUrlParams(url: string): string {
+  const qs = Object.entries(storedUrlParams()).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+  if (!qs) return url;
+  const [head, frag] = url.split('#', 2);
+  return `${head}${head.includes('?') ? '&' : '?'}${qs}${frag !== undefined ? `#${frag}` : ''}`;
+}
+
+/** The env base URL (override or build default) WITHOUT the URL params — what option sources resolve against. */
+export function effectiveBaseUrl(): string {
   if (SHELL_CONFIG.loader !== 'server') return SHELL_CONFIG.serverUrl;
   if (SHELL_CONFIG.envSwitcher?.enabled) {
     try {

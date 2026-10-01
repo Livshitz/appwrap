@@ -5,6 +5,7 @@ import { OVERRIDE_KEY, effectiveServerUrl, isUrlAllowed } from './server-url';
 import { bridge } from './bridge';
 import { refreshEnvBanner } from './env-banner';
 import { refreshEnvKeepAwake } from './env-keepawake';
+import { paramMenuLabel, showParamPicker, urlParamDefs } from './url-params';
 
 /**
  * Runtime env-switcher — re-point a `loader:'server'` shell between declared environments (prod / lab /
@@ -164,6 +165,8 @@ export async function showEnvSwitcher(): Promise<void> {
     const allowOther = !!SHELL_CONFIG.envSwitcher?.allowPattern;
     const actions = envs.map((e) => (e.url === active ? `${e.label} ✓` : e.label));
     if (allowOther) actions.push('Other…');
+    const params = urlParamDefs().map((p) => ({ p, label: paramMenuLabel(p) }));
+    actions.push(...params.map((x) => x.label));
     actions.push('Reset to default');
 
     const choice = await Dialogs.action({
@@ -176,6 +179,8 @@ export async function showEnvSwitcher(): Promise<void> {
 
     if (choice === 'Reset to default') return void (await applySwitch(null, 'default'));
     if (choice === 'Other…') return void (await promptOther());
+    const param = params.find((x) => x.label === choice);
+    if (param) return void (await showParamPicker(param.p, reloadToEffective));
 
     const label = choice.replace(/ ✓$/, '');
     const env = envs.find((e) => e.label === label);

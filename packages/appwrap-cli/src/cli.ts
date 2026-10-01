@@ -975,6 +975,10 @@ export function stampShellConfig(outDir: string, cfg: AppwrapConfig): void {
     enabled: !!es && es.enabled !== false,
     envs: (es?.envs ?? []).map((e) => ({ label: String(e.label), url: String(e.url) })),
     allowPattern: es?.allowPattern ?? '',
+    params: (es?.params ?? []).map((p) => ({
+      key: String(p.key), label: String(p.label ?? p.key), options: (p.options ?? []).map(String),
+      optionsUrl: String(p.optionsUrl ?? ''), optionsPath: String(p.optionsPath ?? ''),
+    })),
   };
   const hold = cfg.splashHold;
   const splash = {
@@ -1012,7 +1016,7 @@ export const SHELL_CONFIG = {
   iosKeyboardExtraLift: ${JSON.stringify(cfg.iosKeyboardExtraLift ?? 82)},
   iosHideKeyboardAccessory: ${JSON.stringify(cfg.iosHideKeyboardAccessory ?? false)},
   splash: ${JSON.stringify(splash)} as { hold: boolean; timeoutMs: number; logo: boolean },
-  envSwitcher: ${JSON.stringify(envSwitcher)} as { enabled: boolean; envs: { label: string; url: string }[]; allowPattern: string },
+  envSwitcher: ${JSON.stringify(envSwitcher)} as { enabled: boolean; envs: { label: string; url: string }[]; allowPattern: string; params: { key: string; label: string; options: string[]; optionsUrl: string; optionsPath: string }[] },
   webCaps: ${JSON.stringify(webCaps)} as { camera: boolean; microphone: boolean; geolocation: boolean },
 };
 `;
