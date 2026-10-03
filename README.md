@@ -175,6 +175,8 @@ await kit.share.files([{ name: 'card.png', mimeType: 'image/png', base64 }]); //
 // both resolve when the sheet CLOSES: { completed, activity? } (iOS activity e.g. 'com.apple.UIKit.activity.SaveToCameraRoll'; Android chooser → undefined, web → no activity)
 await kit.storage.set('k', { any: 'json' });
 await kit.storage.secure.set('token', 's3cret');   // Keychain / Keystore
+// Only the app's own origin (app://localhost, the server loader's origin, appBoundDomains) gets the full bridge;
+// any other page the WebView shows gets UI/haptics/share/push/scanner only — the rest answers FORBIDDEN.
 await kit.toast.show('hi');
 await kit.ui.setStatusBarStyle('light');
 await kit.device.info();

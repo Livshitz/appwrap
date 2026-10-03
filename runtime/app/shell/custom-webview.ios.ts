@@ -38,7 +38,9 @@ class AppwrapScriptHandler extends NSObject implements WKScriptMessageHandler {
     const body = message.body;
     // Envelopes always travel as JSON strings (protocol v1)
     if (view?.onAppwrapMessage && typeof body === 'string') {
-      view.onAppwrapMessage(body);
+      // The CALLING frame's origin (WebKit-reported, not page-controlled) — the bridge gates on it.
+      const so = message.frameInfo?.securityOrigin;
+      view.onAppwrapMessage(body, so ? `${so.protocol}://${so.host}${so.port ? `:${so.port}` : ''}` : '');
     } else {
       // Nothing to dispatch to (bridge detached / view gone) or a non-string body ⇒ this request is
       // DROPPED and can never be answered — the caller's watchdog will report a false TIMEOUT for it.
@@ -195,7 +197,7 @@ export class CustomWebView extends WebView {
   }
 
   /** Set by the bridge before load; receives raw envelope JSON. */
-  onAppwrapMessage: ((json: string) => void) | null = null;
+  onAppwrapMessage: ((json: string, origin: string) => void) | null = null;
   private _scriptHandler!: AppwrapScriptHandler; // retained — WKUserContentController holds it weakly
   private _logHandler!: AppwrapLogHandler; // retained — debug console-forwarding handler
   private _schemeHandler!: WKURLSchemeHandler;

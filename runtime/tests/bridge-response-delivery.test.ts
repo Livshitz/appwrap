@@ -22,7 +22,7 @@ function harness(evalImpl: (js: string) => Promise<unknown>) {
   b.attach(view);
   b.evalJs = evalImpl;
   const delivered: any[] = [];
-  const send = (method: string, id = 'k1') => view.onAppwrapMessage(JSON.stringify({ v: 1, id, kind: 'request', method }));
+  const send = (method: string, id = 'k1') => view.onAppwrapMessage(JSON.stringify({ v: 1, id, kind: 'request', method }), 'app://localhost');
   /** Parse an envelope back out of the `window.__appwrapDeliver("…")` script the bridge builds. */
   const parse = (js: string) => JSON.parse(JSON.parse(js.slice(js.indexOf('(') + 1, js.lastIndexOf(')'))));
   return { b, send, delivered, parse };

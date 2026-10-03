@@ -7,7 +7,7 @@ import { WebView } from '@nativescript/core';
  */
 export class CustomWebView extends WebView {
   /** Set by the bridge before load; receives raw envelope JSON. */
-  onAppwrapMessage: ((json: string) => void) | null = null;
+  onAppwrapMessage: ((json: string, origin: string) => void) | null = null;
 
   /** Pause/resume the render + JS-timer pipeline on app background/foreground. Platform-specific
    * (see custom-webview.android.ts); no-op on iOS, which suspends rAF on its own. */

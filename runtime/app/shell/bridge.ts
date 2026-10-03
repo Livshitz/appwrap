@@ -1,5 +1,6 @@
 import { isAndroid, isIOS } from '@nativescript/core';
 import { CustomWebView } from './custom-webview';
+import { bridgeAllows } from './bridge-origin';
 
 // params: any — the bridge payload is an untyped JSON object decoded from the WebView; each handler
 // narrows it to its own param shape at the call site.
@@ -39,7 +40,7 @@ export class Bridge {
    */
   attach(webView: CustomWebView): void {
     this.webView = webView;
-    webView.onAppwrapMessage = (json) => this.onMessage(json);
+    webView.onAppwrapMessage = (json, origin) => this.onMessage(json, origin);
   }
 
   detach(): void {
@@ -68,7 +69,8 @@ export class Bridge {
    * renderer would silently stall the retry loop and we would be back to the 60s lie. */
   static responseAttemptTimeoutMs = 3_000;
 
-  private async onMessage(json: string): Promise<void> {
+  /** `origin` = the calling frame's origin, from the transport (never from the page's own payload). */
+  private async onMessage(json: string, origin: string): Promise<void> {
     let req: RequestEnvelope;
     try {
       req = JSON.parse(json);
@@ -78,6 +80,11 @@ export class Bridge {
     }
     if (req.kind !== 'request' || !req.id || !req.method) return;
 
+    if (!bridgeAllows(origin, req.method)) {
+      console.warn(`Bridge: ${req.method} denied for foreign origin ${origin || '(unknown)'}`);
+      this.respond(req.id, undefined, { code: 'FORBIDDEN', message: `${req.method} is not available to ${origin || 'this page'}` });
+      return;
+    }
     const handler = this.handlers.get(req.method);
     if (!handler) {
       this.respond(req.id, undefined, { code: 'UNSUPPORTED', message: `No handler for ${req.method}` });
