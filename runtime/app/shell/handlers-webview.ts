@@ -28,7 +28,14 @@ const KVO_KEYS = ['URL', 'title', 'canGoBack', 'canGoForward', 'loading'];
  *                                                 overlay's page; resolves {result} (the returned value, JSON round-tripped).
  *                                                 `world` = a named isolated JS world (iOS; Android has one world). The
  *                                                 hub's own (trusted) origin only — never in bridge-origin's FOREIGN_ALLOWED.
- * Events: `webview.state` {url,title,canGoBack,canGoForward,loading} on every navigation change.
+ *   webview.fab {show, bottom?, right?, size?, color?, symbol?, text?, label?}
+ *                                               — a round floating button over the app AND the overlay (an "assistant"
+ *                                                 button that stays tappable while a page is shown): `bottom`/`right` = CSS px
+ *                                                 from the app WebView's bottom-right, `size` (52), `color` #rrggbb, `symbol` an
+ *                                                 SF Symbol (iOS, default 'sparkles'), `text` its glyph on Android ('✦'),
+ *                                                 `label` = accessibility, `radius` (default round), symbol/text '' = a
+ *                                                 plain shape. show:false hides it. Taps emit `webview.fab`.
+ * Events: `webview.state` {url,title,canGoBack,canGoForward,loading} on every navigation change; `webview.fab` on a tap.
  *
  * Swipe back/forward on, target=_blank/window.open loads in place (shared ios-ui-delegate), keyboard +
  * safe areas handled by WKWebView's own scroll-view insets (contentInsetAdjustment automatic).
@@ -51,6 +58,14 @@ const evalJs = (p?: { js?: string } | null) => {
   if (!js) throw err('NATIVE_ERROR', 'webview.eval: empty js');
   return js;
 };
+/** webview.fab params (sizes in CSS px). */
+type Fab = { show?: boolean; bottom?: number; right?: number; size?: number; radius?: number; color?: string; symbol?: string; text?: string; label?: string };
+const fabOpts = (p?: Fab | null) => ({
+  show: !!p?.show, bottom: Math.max(0, Number(p?.bottom) || 16), right: Math.max(0, Number(p?.right) || 16),
+  size: Math.min(96, Math.max(32, Number(p?.size) || 52)), rgb: /^#?([0-9a-f]{6})$/i.exec(String(p?.color ?? '').trim())?.[1] ?? '2f6b4c',
+  symbol: p?.symbol === '' ? '' : String(p?.symbol || 'sparkles'), text: p?.text === '' ? '' : String(p?.text || '✦'),
+  radius: p?.radius === undefined ? null : Math.max(0, Number(p.radius) || 0), label: String(p?.label || 'Assistant'),
+});
 const parsed = (s: unknown) => { try { return JSON.parse(String(s)); } catch { return s ?? null; } };
 const EVAL_TIMEOUT = 30000;
 
@@ -76,6 +91,11 @@ function registerIos(): void {
   let bottomConstraint: NSLayoutConstraint | null = null;
   let emitQueued = false;
   let ObserverClass: any; // KVO sink, built once (ObjC class names are global)
+  let fab: UIButton | null = null;
+  let fabTarget: any = null, FabTargetClass: any; // its tap target (an exposedMethods NSObject, built once)
+  let fabBottom: NSLayoutConstraint | null = null, fabRight: NSLayoutConstraint | null = null;
+  /** The button stays above the overlay (which comes to the front on open/show). */
+  const fabFront = () => { if (fab && !fab.hidden) fab.superview?.bringSubviewToFront(fab); };
 
   const state = () => ({
     url: wv?.URL?.absoluteString ?? '',
@@ -171,6 +191,7 @@ function registerIos(): void {
       else setInsets(top, bottom);
       wv!.hidden = false;
       wv!.superview?.bringSubviewToFront(wv!);
+      fabFront();
       load(target);
       return state();
     });
@@ -190,10 +211,47 @@ function registerIos(): void {
 
   bridge.register('webview.hide', () => onMain(() => { if (wv) wv.hidden = true; return { open: !!wv }; }));
   bridge.register('webview.show', (p?: { top?: number; bottom?: number } | null) => onMain(() => {
-    if (wv) { setInsets(p?.top, p?.bottom); wv.hidden = false; wv.superview?.bringSubviewToFront(wv); }
+    if (wv) { setInsets(p?.top, p?.bottom); wv.hidden = false; wv.superview?.bringSubviewToFront(wv); fabFront(); }
     return { open: !!wv };
   }));
   bridge.register('webview.close', () => onMain(() => { destroy(); }));
+
+  bridge.register('webview.fab', (p?: Fab | null) => {
+    const o = fabOpts(p);
+    return onMain(() => {
+      if (!fab) {
+        if (!o.show) return { shown: false };
+        const host = bridge.getWebView()?.ios as WKWebView | undefined;
+        const container = host?.superview ?? Utils.ios.getRootViewController()?.view;
+        if (!container) throw err('NATIVE_ERROR', 'webview.fab: no host view');
+        FabTargetClass ??= (NSObject as any).extend({ tap() { bridge.emit('webview.fab', {}); } }, { name: 'AppwrapFabTarget', exposedMethods: { tap: { returns: interop.types.void } } });
+        fabTarget = FabTargetClass.new();
+        const b = UIButton.buttonWithType(UIButtonType.System);
+        b.translatesAutoresizingMaskIntoConstraints = false;
+        b.addTargetActionForControlEvents(fabTarget, 'tap', UIControlEvents.TouchUpInside);
+        b.layer.shadowColor = UIColor.blackColor.CGColor; b.layer.shadowOpacity = 0.28; b.layer.shadowRadius = 9; b.layer.shadowOffset = CGSizeMake(0, 5);
+        container.addSubview(b);
+        const ref: any = host ?? container;
+        fabBottom = b.bottomAnchor.constraintEqualToAnchorConstant(ref.bottomAnchor, -o.bottom);
+        fabRight = b.trailingAnchor.constraintEqualToAnchorConstant(ref.trailingAnchor, -o.right);
+        NSLayoutConstraint.activateConstraints([fabBottom, fabRight, b.widthAnchor.constraintEqualToConstant(o.size), b.heightAnchor.constraintEqualToConstant(o.size)] as any);
+        fab = b;
+      }
+      const n = parseInt(o.rgb, 16);
+      fab.backgroundColor = UIColor.colorWithRedGreenBlueAlpha(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, 1);
+      // the glyph in black or white, whichever reads on the colour
+      const light = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) > 150;
+      fab.tintColor = light ? UIColor.colorWithRedGreenBlueAlpha(0.06, 0.15, 0.1, 1) : UIColor.whiteColor;
+      fab.setImageForState(o.symbol ? UIImage.systemImageNamedWithConfiguration(o.symbol, UIImageSymbolConfiguration.configurationWithPointSizeWeight(o.size * 0.42, UIImageSymbolWeight.Semibold)) : null, UIControlState.Normal);
+      fab.layer.cornerRadius = o.radius ?? o.size / 2;
+      fab.accessibilityLabel = o.label;
+      if (fabBottom) fabBottom.constant = -o.bottom;
+      if (fabRight) fabRight.constant = -o.right;
+      fab.hidden = !o.show;
+      fabFront();
+      return { shown: o.show };
+    });
+  });
 
   bridge.register('webview.snapshot', (p?: { width?: number; quality?: number } | null) => {
     const o = snapOpts(p);
@@ -355,7 +413,22 @@ function registerAndroid(): void {
     if (bottom !== undefined) insets.bottom = inset(bottom);
     layout();
   };
-  const reveal = () => { wv.setVisibility(android.view.View.VISIBLE); wv.bringToFront(); };
+  let fab: any = null, fabO = fabOpts(null);
+  /** Place the button at the app WebView's bottom-right (`bottom`/`right` CSS px inside it), above the overlay. */
+  const fabLayout = () => {
+    const frame = content();
+    if (!fab || !frame) return;
+    const d = density(), px = Math.round(fabO.size * d), fl = [0, 0], hl = [0, 0];
+    const h = host ?? bridge.getWebView()?.android;
+    let boxBottom = 0, boxRight = 0;
+    if (h) { frame.getLocationInWindow(fl); h.getLocationInWindow(hl); boxBottom = frame.getHeight() - (hl[1] - fl[1] + h.getHeight()); boxRight = frame.getWidth() - (hl[0] - fl[0] + h.getWidth()); }
+    const lp = new android.widget.FrameLayout.LayoutParams(px, px, android.view.Gravity.BOTTOM | android.view.Gravity.END);
+    lp.bottomMargin = Math.max(0, Math.round(boxBottom + fabO.bottom * d));
+    lp.rightMargin = Math.max(0, Math.round(boxRight + fabO.right * d));
+    fab.setLayoutParams(lp);
+    if (fab.getVisibility() === android.view.View.VISIBLE) fab.bringToFront();
+  };
+  const reveal = () => { wv.setVisibility(android.view.View.VISIBLE); wv.bringToFront(); if (fab?.getVisibility() === android.view.View.VISIBLE) fab.bringToFront(); };
 
   bridge.register('webview.open', ({ url, top, bottom }: { url: string; top?: number; bottom?: number }) => {
     const target = String(url ?? '');
@@ -387,6 +460,35 @@ function registerAndroid(): void {
     return { open: !!wv };
   }));
   bridge.register('webview.close', () => onMain(() => { destroy(); }));
+
+  bridge.register('webview.fab', (p?: Fab | null) => {
+    fabO = fabOpts(p);
+    return onMain(() => {
+      const frame = content();
+      if (!fab) {
+        if (!fabO.show) return { shown: false };
+        if (!frame) throw err('NATIVE_ERROR', 'webview.fab: no host view');
+        fab = new android.widget.TextView(activity());
+        fab.setGravity(android.view.Gravity.CENTER);
+        fab.setElevation(8 * density());
+        fab.setOnClickListener(new android.view.View.OnClickListener({ onClick() { bridge.emit('webview.fab', {}); } }));
+        frame.addView(fab);
+      }
+      const n = parseInt(fabO.rgb, 16), light = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) > 150;
+      const bg = new android.graphics.drawable.GradientDrawable();
+      if (fabO.radius === null) bg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+      else bg.setCornerRadius(fabO.radius * density());
+      bg.setColor(android.graphics.Color.rgb((n >> 16) & 255, (n >> 8) & 255, n & 255));
+      fab.setBackground(bg);
+      fab.setText(fabO.text);
+      fab.setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, fabO.size * 0.42);
+      fab.setTextColor(light ? android.graphics.Color.rgb(16, 38, 26) : android.graphics.Color.WHITE);
+      fab.setContentDescription(fabO.label);
+      fab.setVisibility(fabO.show ? android.view.View.VISIBLE : android.view.View.GONE);
+      fabLayout();
+      return { shown: fabO.show };
+    });
+  });
 
   bridge.register('webview.snapshot', (p?: { width?: number; quality?: number } | null) => {
     const o = snapOpts(p);
