@@ -6,6 +6,7 @@ import { envGlobalsJs } from './env';
 import { handleWebPermissionRequest } from './android-helpers';
 import { showFileChooser } from './file-chooser.android';
 import { hostOf } from './env-switcher';
+import { TRANSPORT_SHIM, PROMPT_PREFIX, CHUNK_PREFIX, takeChunk } from './prompt-transport';
 
 // `android` + `java` resolve to the real types-android namespaces (no declare needed).
 declare const androidx: any; // no NS types: androidx.webkit.* (WebViewFeature/WebViewCompat) not in the android-32 platform typings
@@ -13,18 +14,7 @@ declare const androidx: any; // no NS types: androidx.webkit.* (WebViewFeature/W
 /** Stable in-app origin — secure context, ES modules work (file:// blocks them). */
 export const APP_ORIGIN = 'https://appwrap.local';
 
-/**
- * Web→native transport shim. postMessage tunnels through window.prompt(), which
- * the shell intercepts synchronously in WebChromeClient.onJsPrompt — no compiled
- * @JavascriptInterface class, no polling. Injected at document start (androidx.webkit)
- * with an onPageStarted fallback; the guard makes double-injection a no-op.
- */
-const TRANSPORT_SHIM = `(function(){
-  if (window.appwrapNative) return;
-  window.appwrapNative = { postMessage: function(json){ window.prompt('__appwrap__:' + json); } };
-})();`;
-
-const PROMPT_PREFIX = '__appwrap__:';
+// Web→native transport (prompt() tunnel, chunked past Chromium's ~10K prompt cap): ./prompt-transport.
 
 /** Document-start scripts: env hints + framework globals (backend origin) + bridge transport +
  * native-feel. Globals first so the page can read __APPWRAP__ / __APPWRAP_BACKEND_ORIGIN__ before its
@@ -58,6 +48,12 @@ function getChromeClientClass(): any {
         result.confirm('');
         // `url` = the page that called prompt() (the bridge gates on its origin).
         CustomWebView.forNative(view)?.onAppwrapMessage?.(message.slice(PROMPT_PREFIX.length), url);
+        return true;
+      }
+      if (typeof message === 'string' && message.startsWith(CHUNK_PREFIX)) {
+        result.confirm('');
+        const json = takeChunk(message.slice(CHUNK_PREFIX.length), url);
+        if (json !== null) CustomWebView.forNative(view)?.onAppwrapMessage?.(json, url);
         return true;
       }
       return false; // genuine page prompt — default handling
