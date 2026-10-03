@@ -29,6 +29,8 @@ export function isTrustedOrigin(origin: string | null | undefined): boolean {
   const o = originOf(origin);
   if (!o) return false;
   if (o === 'app://localhost' || (SHELL_CONFIG.loader === 'file' && o === 'file://')) return true;
+  // Android serves the bundle from https://appwrap.local (custom-webview.android APP_ORIGIN, intercepted in-process).
+  if (SHELL_CONFIG.loader !== 'server' && SHELL_CONFIG.loader !== 'file' && o === 'https://appwrap.local') return true;
   if (SHELL_CONFIG.loader === 'server' && o === originOf(effectiveServerUrl())) return true;
   return (SHELL_CONFIG.appBoundDomains ?? []).some((h) => o === `https://${String(h).toLowerCase()}`);
 }
