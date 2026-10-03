@@ -415,10 +415,14 @@ function registerAndroid(): void {
       if (!wv) return reject(err('NATIVE_ERROR', 'webview.eval: not open'));
       wv.evaluateJavascript(code, new android.webkit.ValueCallback({ onReceiveValue: (v: string) => resolve(parsed(v) as string) }));
     }));
+    const end = Date.now() + EVAL_TIMEOUT;
+    // Each native call races the deadline: a torn-down overlay never answers its callback.
+    const timed = (code: string) => Promise.race([run(code), new Promise<string>((_, rej) => setTimeout(() => rej(err('NATIVE_ERROR', 'webview.eval: timed out (or the page navigated)')), Math.max(0, end - Date.now())))]);
     return (async () => {
-      await run(start);
-      for (const end = Date.now() + EVAL_TIMEOUT; Date.now() < end; await new Promise((r) => setTimeout(r, 50))) {
-        const r = await run(poll);
+      // The start script answers 1 once it runs; anything else = it didn't parse (a syntax error never settles a slot).
+      if (String(await timed(start)) !== '1') throw err('NATIVE_ERROR', 'webview.eval: syntax error');
+      for (; Date.now() < end; await new Promise((r) => setTimeout(r, 50))) {
+        const r = await timed(poll);
         if (!r) continue;
         const o = JSON.parse(r);
         if ('e' in o) throw err('NATIVE_ERROR', `webview.eval: ${o.e}`);
