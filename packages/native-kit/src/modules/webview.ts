@@ -73,6 +73,13 @@ export class WebViewModule {
     return this.kit.invoke('webview.snapshot', { ...opts });
   }
 
+  /** Run `js` — an async function body (may `await`; its `return` is the result) — in the overlay's page; resolves the
+   *  returned value (JSON round-tripped). `world`: a named isolated JS world (iOS; ignored on Android). The app's own
+   *  origin only: a foreign page in the app WebView can't call it. */
+  async eval<T = unknown>(js: string, opts: { world?: string } = {}): Promise<T> {
+    return (await this.kit.invoke<{ result: T }>('webview.eval', { js, ...opts }, { timeoutMs: 35_000 })).result; // (native gives up at 30s)
+  }
+
   /** Tear the overlay down (fires {@link onClosed}). */
   close(): Promise<void> {
     return this.kit.invoke('webview.close', {});
