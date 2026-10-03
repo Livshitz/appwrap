@@ -2,6 +2,7 @@ import { Utils, isIOS, isAndroid, Application } from '@nativescript/core';
 import { bridge } from './bridge';
 import { createUiDelegate } from './ios-ui-delegate';
 import { handleWebPermissionRequest } from './android-helpers';
+import { SHELL_CONFIG } from './config';
 
 const err = (code: string, message: string) => Object.assign(new Error(message), { code });
 
@@ -274,7 +275,7 @@ function registerAndroid(): void {
     (view as any)._appwrapClients = [client, chrome]; // keep JS peers alive (NS GC doesn't see the native hold)
     const bg = host?.getBackground?.();
     if (bg instanceof android.graphics.drawable.ColorDrawable) view.setBackgroundColor(bg.getColor());
-    android.webkit.WebView.setWebContentsDebuggingEnabled(true);
+    if (SHELL_CONFIG.debug) android.webkit.WebView.setWebContentsDebuggingEnabled(true); // remote DevTools only in debug builds, never store builds
     wv = view;
     frame.addView(view);
     layout();
