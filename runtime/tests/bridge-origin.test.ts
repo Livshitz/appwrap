@@ -60,6 +60,17 @@ describe('Bridge origin gate — a foreign page must not reach the app’s store
     } finally { Object.assign(SHELL_CONFIG, prev); }
   });
 
+  test('Android bundle origin (https://appwrap.local) is trusted for a bundled loader, not for server', () => {
+    const prev = { loader: SHELL_CONFIG.loader, serverUrl: SHELL_CONFIG.serverUrl };
+    try {
+      Object.assign(SHELL_CONFIG, { loader: 'app' });
+      expect(bridgeAllows('https://appwrap.local/index.html', 'webview.eval')).toBe(true);
+      expect(bridgeAllows('https://appwrap.local.evil.io', 'webview.eval')).toBe(false);
+      Object.assign(SHELL_CONFIG, { loader: 'server', serverUrl: 'https://app.example.com' });
+      expect(bridgeAllows('https://appwrap.local', 'webview.eval')).toBe(false);
+    } finally { Object.assign(SHELL_CONFIG, prev); }
+  });
+
   test('originOf normalises', () => {
     expect(originOf('HTTP://U:p@Host:80/a?b#c')).toBe('http://host');
     expect(originOf('app://localhost/index.html')).toBe('app://localhost');
