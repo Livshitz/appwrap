@@ -49,14 +49,15 @@ function getChromeClientClass(): any {
   chromeClientClass = (android.webkit.WebChromeClient as any).extend({
     onJsPrompt(
       view: android.webkit.WebView,
-      _url: string,
+      url: string,
       message: string,
       _defaultValue: string,
       result: android.webkit.JsPromptResult
     ): boolean {
       if (typeof message === 'string' && message.startsWith(PROMPT_PREFIX)) {
         result.confirm('');
-        CustomWebView.forNative(view)?.onAppwrapMessage?.(message.slice(PROMPT_PREFIX.length));
+        // `url` = the page that called prompt() (the bridge gates on its origin).
+        CustomWebView.forNative(view)?.onAppwrapMessage?.(message.slice(PROMPT_PREFIX.length), url);
         return true;
       }
       return false; // genuine page prompt — default handling
@@ -91,7 +92,7 @@ function getChromeClientClass(): any {
  */
 export class CustomWebView extends WebView {
   /** Set by the bridge before load; receives raw envelope JSON. */
-  onAppwrapMessage: ((json: string) => void) | null = null;
+  onAppwrapMessage: ((json: string, origin: string) => void) | null = null;
 
   /**
    * A TLS handshake this view REFUSED (onReceivedSslError → handler.cancel()), pending attribution to the
