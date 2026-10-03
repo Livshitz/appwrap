@@ -148,6 +148,10 @@ export class CustomWebView extends WebView {
     settings.setDomStorageEnabled(true);
     settings.setAllowFileAccess(true);
     settings.setMediaPlaybackRequiresUserGesture(false); // speaker: autoplay allowed
+    // The bundle runs at https://appwrap.local, so Chromium blocks its fetch/XHR/ws to plain-http hosts as mixed
+    // content — iOS's app:// origin is not https and never hits this. Parity: a bundled app may talk to http LAN
+    // hosts (cleartext is already allowed in the manifest); a server-loaded page keeps the default block.
+    if (SHELL_CONFIG.loader !== 'server' && SHELL_CONFIG.loader !== 'file') settings.setMixedContentMode(android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
     // Native feel: no pinch-zoom controls.
     settings.setSupportZoom(false);
     settings.setBuiltInZoomControls(false);
