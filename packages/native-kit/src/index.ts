@@ -43,7 +43,7 @@ export { isScanResult } from './modules/scanner';
 export type { SpeechVoice, SpeakOptions, ListenOptions, SpeechPartial } from './modules/speech';
 export type { CalendarEventOptions } from './modules/calendar';
 export type { BrowserOptions } from './modules/browser';
-export type { WebViewState, WebViewOpenOptions, WebViewNavOp } from './modules/webview';
+export type { WebViewState, WebViewOpenOptions, WebViewNavOp, WebViewFabOptions } from './modules/webview';
 export type { OAuthAuthorizeParams, OAuthResult } from './modules/oauth';
 export type { TrackingStatus } from './modules/tracking';
 export type {

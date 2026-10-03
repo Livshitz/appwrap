@@ -17,6 +17,19 @@ export interface WebViewOpenOptions {
   bottom?: number;
 }
 
+export interface WebViewFabOptions {
+  show: boolean;
+  bottom?: number;
+  right?: number;
+  size?: number;
+  /** Corner radius (px); default = round. */
+  radius?: number;
+  color?: string;
+  symbol?: string;
+  text?: string;
+  label?: string;
+}
+
 /** A cookie as data; `expires` = unix seconds, absent/null = session cookie. A leading-dot `domain` = domain cookie. */
 export interface WebViewCookie {
   name: string;
@@ -78,6 +91,18 @@ export class WebViewModule {
    *  origin only: a foreign page in the app WebView can't call it. */
   async eval<T = unknown>(js: string, opts: { world?: string } = {}): Promise<T> {
     return (await this.kit.invoke<{ result: T }>('webview.eval', { js, ...opts }, { timeoutMs: 35_000 })).result; // (native gives up at 30s)
+  }
+
+  /** A round floating button over the app and the overlay (stays tappable while a page is shown) — e.g. an assistant
+   *  button. `bottom`/`right`: CSS px from the app WebView's bottom-right; `color` #rrggbb; `symbol`: an SF Symbol (iOS,
+   *  default 'sparkles'); `text`: its glyph on Android ('✦'); `label`: accessibility. `show:false` hides it. Taps →
+   *  {@link onFab}. Works with or without an open overlay. */
+  fab(opts: WebViewFabOptions): Promise<{ shown: boolean }> {
+    return this.kit.invoke('webview.fab', { ...opts });
+  }
+
+  onFab(cb: () => void): Unsubscribe {
+    return this.kit.on('webview.fab', () => cb());
   }
 
   /** Tear the overlay down (fires {@link onClosed}). */
