@@ -93,7 +93,7 @@ function registerIos(): void {
   let ObserverClass: any; // KVO sink, built once (ObjC class names are global)
   let fab: UIButton | null = null;
   let fabTarget: any = null, FabTargetClass: any; // its tap target (an exposedMethods NSObject, built once)
-  let fabBottom: NSLayoutConstraint | null = null, fabRight: NSLayoutConstraint | null = null;
+  let fabBottom: NSLayoutConstraint | null = null, fabRight: NSLayoutConstraint | null = null, fabW: NSLayoutConstraint | null = null, fabH: NSLayoutConstraint | null = null;
   /** The button stays above the overlay (which comes to the front on open/show). */
   const fabFront = () => { if (fab && !fab.hidden) fab.superview?.bringSubviewToFront(fab); };
 
@@ -234,7 +234,8 @@ function registerIos(): void {
         const ref: any = host ?? container;
         fabBottom = b.bottomAnchor.constraintEqualToAnchorConstant(ref.bottomAnchor, -o.bottom);
         fabRight = b.trailingAnchor.constraintEqualToAnchorConstant(ref.trailingAnchor, -o.right);
-        NSLayoutConstraint.activateConstraints([fabBottom, fabRight, b.widthAnchor.constraintEqualToConstant(o.size), b.heightAnchor.constraintEqualToConstant(o.size)] as any);
+        fabW = b.widthAnchor.constraintEqualToConstant(o.size); fabH = b.heightAnchor.constraintEqualToConstant(o.size);
+        NSLayoutConstraint.activateConstraints([fabBottom, fabRight, fabW, fabH] as any);
         fab = b;
       }
       const n = parseInt(o.rgb, 16);
@@ -247,6 +248,8 @@ function registerIos(): void {
       fab.accessibilityLabel = o.label;
       if (fabBottom) fabBottom.constant = -o.bottom;
       if (fabRight) fabRight.constant = -o.right;
+      if (fabW) fabW.constant = o.size;
+      if (fabH) fabH.constant = o.size; // (a later call may resize it)
       fab.hidden = !o.show;
       fabFront();
       return { shown: o.show };
