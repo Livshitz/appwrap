@@ -24,6 +24,10 @@ const KVO_KEYS = ['URL', 'title', 'canGoBack', 'canGoForward', 'loading'];
  *   webview.snapshot {width?, quality?}         — what the overlay shows now as a JPEG ~`width` px wide (default 360,
  *                                                 quality 0.6); resolves {jpeg: base64, width, height}. Must run while
  *                                                 it is still shown (take it before hide/close).
+ *   webview.eval {js, world?}                   — run `js` (an ASYNC function body: may `await`, `return`s the result) in the
+ *                                                 overlay's page; resolves {result} (the returned value, JSON round-tripped).
+ *                                                 `world` = a named isolated JS world (iOS; Android has one world). The
+ *                                                 hub's own (trusted) origin only — never in bridge-origin's FOREIGN_ALLOWED.
  * Events: `webview.state` {url,title,canGoBack,canGoForward,loading} on every navigation change.
  *
  * Swipe back/forward on, target=_blank/window.open loads in place (shared ios-ui-delegate), keyboard +
@@ -39,6 +43,16 @@ const cookieList = (p: { cookies?: Cookie[] } | null): Cookie[] => {
   if (!Array.isArray(l)) throw err('NATIVE_ERROR', 'webview.cookies: cookies[] required');
   return l.filter((c) => c && c.name && c.domain);
 };
+
+/** webview.eval: the page side wraps the body so any value crosses as JSON (undefined → null). */
+const evalBody = (js: string) => `const __v = await (async () => { ${js}\n })(); return JSON.stringify(__v === undefined ? null : __v);`;
+const evalJs = (p?: { js?: string } | null) => {
+  const js = String(p?.js ?? '');
+  if (!js) throw err('NATIVE_ERROR', 'webview.eval: empty js');
+  return js;
+};
+const parsed = (s: unknown) => { try { return JSON.parse(String(s)); } catch { return s ?? null; } };
+const EVAL_TIMEOUT = 30000;
 
 /** webview.snapshot params → target pixel width (clamped) + JPEG quality 0..1. */
 const snapOpts = (p?: { width?: number; quality?: number } | null) => ({
@@ -191,6 +205,18 @@ function registerIos(): void {
         const data = img && UIImageJPEGRepresentation(img, o.quality);
         if (!data) return reject(err('NATIVE_ERROR', `webview.snapshot: ${e?.localizedDescription || 'no image'}`));
         resolve({ jpeg: data.base64EncodedStringWithOptions(0 as any), width: Math.round(img.size.width * img.scale), height: Math.round(img.size.height * img.scale) });
+      });
+    }));
+  });
+
+  bridge.register('webview.eval', (p?: { js?: string; world?: string } | null) => {
+    const js = evalJs(p);
+    return onMain(() => new Promise<{ result: unknown }>((resolve, reject) => {
+      if (!wv) return reject(err('NATIVE_ERROR', 'webview.eval: not open'));
+      const world = p?.world ? WKContentWorld.worldWithName(String(p.world)) : WKContentWorld.pageWorld;
+      wv.callAsyncJavaScriptArgumentsInFrameInContentWorldCompletionHandler(evalBody(js), null, null, world, (v: any, e: NSError) => {
+        if (e) return reject(err('NATIVE_ERROR', `webview.eval: ${e.userInfo?.objectForKey('WKJavaScriptExceptionMessage') || e.localizedDescription}`));
+        resolve({ result: parsed(v) });
       });
     }));
   });
@@ -377,6 +403,29 @@ function registerAndroid(): void {
       bmp.recycle();
       return { jpeg: android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP), width: o.width, height: h };
     });
+  });
+
+  // evaluateJavascript can't await: start the async body under an id, then poll its slot until it settles.
+  let evalSeq = 0;
+  bridge.register('webview.eval', (p?: { js?: string } | null) => {
+    const js = evalJs(p), id = ++evalSeq, slot = `(window.__awEval||(window.__awEval={}))`;
+    const start = `(function(){var s=${slot};(async()=>{ ${evalBody(js)}\n })().then(function(v){s[${id}]={v:v}},function(e){s[${id}]={e:String(e&&e.message||e)}});return 1})()`;
+    const poll = `(function(){var s=window.__awEval,r=s&&s[${id}];if(r)delete s[${id}];return r?JSON.stringify(r):''})()`;
+    const run = (code: string) => onMain(() => new Promise<string>((resolve, reject) => {
+      if (!wv) return reject(err('NATIVE_ERROR', 'webview.eval: not open'));
+      wv.evaluateJavascript(code, new android.webkit.ValueCallback({ onReceiveValue: (v: string) => resolve(parsed(v) as string) }));
+    }));
+    return (async () => {
+      await run(start);
+      for (const end = Date.now() + EVAL_TIMEOUT; Date.now() < end; await new Promise((r) => setTimeout(r, 50))) {
+        const r = await run(poll);
+        if (!r) continue;
+        const o = JSON.parse(r);
+        if ('e' in o) throw err('NATIVE_ERROR', `webview.eval: ${o.e}`);
+        return { result: parsed(o.v) };
+      }
+      throw err('NATIVE_ERROR', 'webview.eval: timed out (or the page navigated)');
+    })();
   });
 
   bridge.register('webview.cookies', (p: { cookies?: Cookie[] } | null) => {

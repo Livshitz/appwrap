@@ -34,7 +34,7 @@ describe('Bridge origin gate — a foreign page must not reach the app’s store
   });
 
   test('a foreign page (a LAN/Tailscale server) is FORBIDDEN storage.secure, fs, webview cookies', async () => {
-    for (const m of ['storage.secure.get', 'storage.get', 'fs.read', 'webview.getCookies', 'clipboard.read', 'share.files']) {
+    for (const m of ['storage.secure.get', 'storage.get', 'fs.read', 'webview.getCookies', 'webview.eval', 'webview.snapshot', 'clipboard.read', 'share.files']) {
       const r = await call(m, 'http://192.168.1.5:7707');
       expect(r.result).toBeUndefined();
       expect(r.error.code).toBe('FORBIDDEN');
