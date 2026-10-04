@@ -35,6 +35,11 @@ const KVO_KEYS = ['URL', 'title', 'canGoBack', 'canGoForward', 'loading'];
  *                                                 SF Symbol (iOS, default 'sparkles'), `text` its glyph on Android ('✦'),
  *                                                 `label` = accessibility, `radius` (default round), symbol/text '' = a
  *                                                 plain shape. show:false hides it. Taps emit `webview.fab`.
+ *   webview.float {on, hit?: [{x,y,w,h}]}      — the app's WebView draws OVER the overlay (transparent wherever its own page
+ *                                                 is), e.g. chat bubbles floating over a shown page without resizing it.
+ *                                                 Touches inside `hit` (app CSS px) go to the app; everywhere else to the
+ *                                                 overlay. Call again to move the rects; on:false restores. iOS; Android
+ *                                                 resolves {floating:false} (not supported — keep a fallback).
  * Events: `webview.state` {url,title,canGoBack,canGoForward,loading} on every navigation change; `webview.fab` on a tap.
  *
  * Swipe back/forward on, target=_blank/window.open loads in place (shared ios-ui-delegate), keyboard +
@@ -66,6 +71,9 @@ const fabOpts = (p?: Fab | null) => ({
   symbol: p?.symbol === '' ? '' : String(p?.symbol || 'sparkles'), text: p?.text === '' ? '' : String(p?.text || '✦'),
   radius: p?.radius === undefined ? null : Math.max(0, Number(p.radius) || 0), label: String(p?.label || 'Assistant'),
 });
+/** webview.float hit rects (app CSS px); junk entries dropped. */
+const floatRects = (l: unknown) => (Array.isArray(l) ? l : []).map((r: any) => ({ x: +r?.x, y: +r?.y, w: +r?.w, h: +r?.h }))
+  .filter((r) => [r.x, r.y, r.w, r.h].every(Number.isFinite) && r.w > 0 && r.h > 0);
 const parsed = (s: unknown) => { try { return JSON.parse(String(s)); } catch { return s ?? null; } };
 const EVAL_TIMEOUT = 30000;
 
@@ -74,6 +82,9 @@ const snapOpts = (p?: { width?: number; quality?: number } | null) => ({
   width: Math.round(Math.min(1024, Math.max(64, Number(p?.width) || 360))),
   quality: Math.min(1, Math.max(0.1, Number(p?.quality) || 0.6)),
 });
+
+/** webview.float is on: the app WebView must stay see-through (keyboard.ts's backdrop paint skips it). */
+export let appFloating = false;
 
 export function registerWebViewHandlers(): void {
   if (isIOS) registerIos();
@@ -94,6 +105,17 @@ function registerIos(): void {
   let fab: UIButton | null = null;
   let fabTarget: any = null, FabTargetClass: any; // its tap target (an exposedMethods NSObject, built once)
   let fabBottom: NSLayoutConstraint | null = null, fabRight: NSLayoutConstraint | null = null, fabW: NSLayoutConstraint | null = null, fabH: NSLayoutConstraint | null = null;
+  // webview.float: the app WebView renders above the overlay (layer zPosition — draw order only) while the overlay stays
+  // first in hit-testing (subview order): it sits in a pass-through wrapper that declines the touches inside `floatHit`
+  // (app CSS px), which fall to the app. (A wrapper, not a WKWebView subclass: its super hitTest recursed in NativeScript.)
+  let floating = false, floatHit: { x: number; y: number; w: number; h: number }[] = [], hostBg: UIColor | null = null, hostOpaque = true;
+  let wrap: UIView | null = null, WrapClass: any;
+  const appHit = (view: UIView, pt: CGPoint) => {
+    const host = bridge.getWebView()?.ios as UIView | undefined;
+    if (!floating || !host) return false;
+    const p = view.convertPointToView(pt, host);
+    return floatHit.some((r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h);
+  };
   /** The button stays above the overlay (which comes to the front on open/show). */
   const fabFront = () => { if (fab && !fab.hidden) fab.superview?.bringSubviewToFront(fab); };
 
@@ -134,7 +156,16 @@ function registerIos(): void {
     if ((view as any).inspectable !== undefined) (view as any).inspectable = true; // iOS 16.4+ Safari inspector
 
     view.translatesAutoresizingMaskIntoConstraints = false;
-    container.addSubview(view);
+    WrapClass ??= (UIView as any).extend({
+      hitTestWithEvent(pt: CGPoint, ev: _UIEvent) {
+        if (!wv || appHit(this, pt)) return null;
+        return wv.hitTestWithEvent(this.convertPointToView(pt, wv), ev);
+      },
+    }, { name: 'AppwrapOverlayWrap' });
+    wrap = WrapClass.alloc().initWithFrame(CGRectZero);
+    wrap!.translatesAutoresizingMaskIntoConstraints = false;
+    container.addSubview(wrap!);
+    wrap!.addSubview(view);
     // Anchor to the app WebView's box so `top`/`bottom` are in the page's own CSS px (== points).
     const ref: any = host ?? container;
     topConstraint = view.topAnchor.constraintEqualToAnchorConstant(ref.topAnchor, top);
@@ -144,6 +175,8 @@ function registerIos(): void {
       bottomConstraint,
       view.leadingAnchor.constraintEqualToAnchor(ref.leadingAnchor),
       view.trailingAnchor.constraintEqualToAnchor(ref.trailingAnchor),
+      wrap!.topAnchor.constraintEqualToAnchor(ref.topAnchor), wrap!.bottomAnchor.constraintEqualToAnchor(ref.bottomAnchor),
+      wrap!.leadingAnchor.constraintEqualToAnchor(ref.leadingAnchor), wrap!.trailingAnchor.constraintEqualToAnchor(ref.trailingAnchor),
     ] as any);
 
     ObserverClass ??= (NSObject as any).extend(
@@ -166,7 +199,7 @@ function registerIos(): void {
     if (!wv) return;
     for (const k of KVO_KEYS) { try { wv.removeObserverForKeyPath(observer!, k); } catch { /* not observed */ } }
     wv.stopLoading();
-    wv.removeFromSuperview();
+    wv.removeFromSuperview(); wrap?.removeFromSuperview(); wrap = null;
     wv = null; observer = null; uiDelegate = null; topConstraint = null; bottomConstraint = null;
     bridge.emit('webview.closed', {});
   };
@@ -190,7 +223,7 @@ function registerIos(): void {
       if (!wv) create(inset(top), inset(bottom));
       else setInsets(top, bottom);
       wv!.hidden = false;
-      wv!.superview?.bringSubviewToFront(wv!);
+      wrap?.superview?.bringSubviewToFront(wrap);
       fabFront();
       load(target);
       return state();
@@ -211,7 +244,7 @@ function registerIos(): void {
 
   bridge.register('webview.hide', () => onMain(() => { if (wv) wv.hidden = true; return { open: !!wv }; }));
   bridge.register('webview.show', (p?: { top?: number; bottom?: number } | null) => onMain(() => {
-    if (wv) { setInsets(p?.top, p?.bottom); wv.hidden = false; wv.superview?.bringSubviewToFront(wv); fabFront(); }
+    if (wv) { setInsets(p?.top, p?.bottom); wv.hidden = false; wrap?.superview?.bringSubviewToFront(wrap); fabFront(); }
     return { open: !!wv };
   }));
   bridge.register('webview.close', () => onMain(() => { destroy(); }));
@@ -255,6 +288,21 @@ function registerIos(): void {
       return { shown: o.show };
     });
   });
+
+  bridge.register('webview.float', (p?: { on?: boolean; hit?: unknown } | null) => onMain(() => {
+    const host = bridge.getWebView()?.ios as WKWebView | undefined;
+    if (!host) throw err('NATIVE_ERROR', 'webview.float: no host view');
+    floatHit = floatRects(p?.hit);
+    const on = !!p?.on;
+    if (on !== floating) {
+      floating = appFloating = on;
+      if (on) { hostBg = host.backgroundColor; hostOpaque = host.opaque; host.opaque = false; host.backgroundColor = UIColor.clearColor; host.scrollView.backgroundColor = UIColor.clearColor; }
+      else { host.opaque = hostOpaque; host.backgroundColor = hostBg; host.scrollView.backgroundColor = hostBg; }
+      host.layer.zPosition = on ? 1 : 0;
+      if (fab) fab.layer.zPosition = on ? 2 : 0;
+    }
+    return { floating };
+  }));
 
   bridge.register('webview.snapshot', (p?: { width?: number; quality?: number } | null) => {
     const o = snapOpts(p);
@@ -536,6 +584,8 @@ function registerAndroid(): void {
       throw err('NATIVE_ERROR', 'webview.eval: timed out (or the page navigated)');
     })();
   });
+
+  bridge.register('webview.float', () => ({ floating: false })); // (not supported here: callers keep their fallback)
 
   bridge.register('webview.cookies', (p: { cookies?: Cookie[] } | null) => {
     const list = cookieList(p);
