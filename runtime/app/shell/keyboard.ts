@@ -3,6 +3,7 @@ import { bridge } from './bridge';
 import { SHELL_CONFIG } from './config';
 import { createKeyboardShowCycle, type KeyboardEventTag } from './keyboard-frame';
 import { appwrapNativeLog } from './native-log';
+import { appFloating } from './handlers-webview';
 
 declare const android: any;
 // iOS keyboard-notification globals (marshalled from UIKit at runtime).
@@ -231,7 +232,8 @@ function syncBackdropColor(): void {
         const color = UIColor.colorWithRedGreenBlueAlpha(+m[1] / 255, +m[2] / 255, +m[3] / 255, 1);
         // The keyboard's rounded corners (iOS 26) show whatever native view is behind the webview — paint
         // the whole chain up to the window, not only the webview + window (a dark host view showed through).
-        for (let v: UIView | null = w; v; v = v.superview) v.backgroundColor = color;
+        // (floating over a page — webview.float — the webview itself stays clear, or it covers the page)
+        for (let v: UIView | null = appFloating ? w.superview : w; v; v = v.superview) v.backgroundColor = color;
         if (w.window) w.window.backgroundColor = color;
         if (SHELL_CONFIG.debug) appwrapNativeLog(`[native:keyboard] backdrop ← rgb(${m[1]},${m[2]},${m[3]})`);
       });

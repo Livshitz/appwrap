@@ -30,6 +30,12 @@ export interface WebViewFabOptions {
   label?: string;
 }
 
+export interface WebViewFloatOptions {
+  on: boolean;
+  /** The app's touchable boxes over the page (CSS px from the app WebView's top-left). */
+  hit?: { x: number; y: number; w: number; h: number }[];
+}
+
 /** A cookie as data; `expires` = unix seconds, absent/null = session cookie. A leading-dot `domain` = domain cookie. */
 export interface WebViewCookie {
   name: string;
@@ -99,6 +105,14 @@ export class WebViewModule {
    *  {@link onFab}. Works with or without an open overlay. */
   fab(opts: WebViewFabOptions): Promise<{ shown: boolean }> {
     return this.kit.invoke('webview.fab', { ...opts });
+  }
+
+  /** Float the app's WebView OVER the overlay: it draws on top (transparent wherever the app's own page is — give the
+   *  area over the overlay no background), so e.g. chat bubbles float over a shown page without resizing it. Touches
+   *  inside `hit` (app CSS px, viewport coords) go to the app; everywhere else to the page. Call again to move the rects;
+   *  `on:false` restores. iOS; elsewhere resolves `{floating:false}` — keep a fallback (e.g. inset the page). */
+  float(opts: WebViewFloatOptions): Promise<{ floating: boolean }> {
+    return this.kit.invoke('webview.float', { ...opts });
   }
 
   onFab(cb: () => void): Unsubscribe {

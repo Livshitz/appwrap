@@ -391,11 +391,13 @@ describe('WebView overlay', () => {
     await kit.webview.hide();
     await kit.webview.show();
     await kit.webview.close();
+    await kit.webview.float({ on: true, hit: [{ x: 1, y: 2, w: 3, h: 4 }] });
     expect(calls).toEqual([
       ['webview.open', { url: 'https://a.test', top: 44 }],
       ['webview.nav', { op: 'back', url: undefined }],
       ['webview.nav', { op: 'go', url: 'https://b.test' }],
       ['webview.hide', {}], ['webview.show', {}], ['webview.close', {}],
+      ['webview.float', { on: true, hit: [{ x: 1, y: 2, w: 3, h: 4 }] }],
     ]);
   });
 });
