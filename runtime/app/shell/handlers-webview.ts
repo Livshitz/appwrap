@@ -86,6 +86,35 @@ const snapOpts = (p?: { width?: number; quality?: number } | null) => ({
 /** webview.float is on: the app WebView must stay see-through (keyboard.ts's backdrop paint skips it). */
 export let appFloating = false;
 
+/**
+ * Hooks for module packs on the overlay (e.g. a content blocker) — generic, no policy here:
+ *   onCreated(cb)      cb(view) for each new overlay BEFORE its first load (+ at once for a live one); returns unsubscribe.
+ *                      iOS: the WKWebView (attach WKContentRuleLists to its configuration.userContentController).
+ *   current()          the live overlay view, or null.
+ *   setRequestFilter   Android: fn(req) → true = answer the sub-resource request with an empty response; null = none.
+ *                      The intercepting client is installed only while a filter is set (shouldInterceptRequest runs
+ *                      on the JS thread, a hop per request); retired ones are parked (an in-flight call can't hit a
+ *                      collected peer). `page` = the overlay's main document URL.
+ */
+export type WebViewRequest = { url: string; page: string; mainFrame: boolean; accept: string };
+const createdHooks = new Set<(view: any) => void>();
+let overlayView: any = null;
+let requestFilter: ((r: WebViewRequest) => boolean) | null = null;
+let onFilterChange = () => {};
+export const webviewHooks = {
+  onCreated(cb: (view: any) => void): () => void {
+    createdHooks.add(cb);
+    if (overlayView) cb(overlayView);
+    return () => createdHooks.delete(cb);
+  },
+  current: (): any => overlayView,
+  setRequestFilter(fn: ((r: WebViewRequest) => boolean) | null): void { requestFilter = fn; Utils.dispatchToMainThread(() => onFilterChange()); },
+};
+const created = (view: any) => {
+  overlayView = view;
+  for (const cb of createdHooks) { try { cb(view); } catch (e) { console.warn('[webview] onCreated hook failed', e); } }
+};
+
 export function registerWebViewHandlers(): void {
   if (isIOS) registerIos();
   else if (isAndroid) registerAndroid();
@@ -193,10 +222,12 @@ function registerIos(): void {
     observer = ObserverClass.new();
     for (const k of KVO_KEYS) view.addObserverForKeyPathOptionsContext(observer!, k, NSKeyValueObservingOptions.New, null);
     wv = view;
+    created(view);
   };
 
   const destroy = () => {
     if (!wv) return;
+    overlayView = null;
     for (const k of KVO_KEYS) { try { wv.removeObserverForKeyPath(observer!, k); } catch { /* not observed */ } }
     wv.stopLoading();
     wv.removeFromSuperview(); wrap?.removeFromSuperview(); wrap = null;
@@ -363,7 +394,28 @@ function registerAndroid(): void {
   let host: any = null;
   let emitQueued = false;
   // NS caches extend() proxies by shape — build each client class ONCE; route to the single live overlay.
-  let ViewClient: any, ChromeClient: any;
+  let ViewClient: any, FilterClient: any, ChromeClient: any;
+  let pageUrl = ''; // the overlay's main document (a request filter's `page`)
+  const retired = new Set<any>(); // swapped-out filter clients (see webviewHooks)
+  const intercept = (req: any): any => {
+    const f = requestFilter;
+    if (!f || !(req instanceof android.webkit.WebResourceRequest)) return null;
+    const url = String(req.getUrl().toString()), mainFrame = !!req.isForMainFrame();
+    if (mainFrame) pageUrl = url;
+    if (!f({ url, page: pageUrl, mainFrame, accept: String(req.getRequestHeaders()?.get('Accept') ?? '') })) return null;
+    return new android.webkit.WebResourceResponse('text/plain', 'utf-8', new java.io.ByteArrayInputStream(Array.create('byte', 0)));
+  };
+  /** The view's client: the intercepting one only while a request filter is set. */
+  const setClient = (view: any) => {
+    const filtering = !!requestFilter, cur = view._appwrapClients[0];
+    if (cur && !!view._appwrapFiltering === filtering) return;
+    const next = filtering ? new FilterClient() : new ViewClient();
+    view.setWebViewClient(next);
+    if (cur && view._appwrapFiltering) retired.add(cur);
+    view._appwrapClients[0] = next;
+    view._appwrapFiltering = filtering;
+  };
+  onFilterChange = () => { if (wv) setClient(wv); };
 
   const state = () => ({
     url: wv?.getUrl() ?? '',
@@ -410,10 +462,17 @@ function registerAndroid(): void {
     const frame = content();
     if (!frame) throw err('NATIVE_ERROR', 'webview.open: no host view');
     host = bridge.getWebView()?.android ?? null;
+    // (no spread in an .extend literal: Android's binding generator drops the file's remaining bindings on one)
     ViewClient ??= (android.webkit.WebViewClient as any).extend({
-      onPageStarted() { emitState(); },
+      onPageStarted(_v: any, url: string) { if (url) pageUrl = String(url); emitState(); },
       onPageFinished() { emitState(); },
       doUpdateVisitedHistory() { emitState(); },
+    });
+    FilterClient ??= (android.webkit.WebViewClient as any).extend({
+      onPageStarted(_v: any, url: string) { if (url) pageUrl = String(url); emitState(); },
+      onPageFinished() { emitState(); },
+      doUpdateVisitedHistory() { emitState(); },
+      shouldInterceptRequest(_v: any, req: any) { try { return intercept(req); } catch (e) { console.warn('[webview] request filter failed', e); return null; } },
     });
     ChromeClient ??= (android.webkit.WebChromeClient as any).extend({
       onReceivedTitle() { emitState(); },
@@ -427,14 +486,15 @@ function registerAndroid(): void {
     st.setMediaPlaybackRequiresUserGesture(false);
     st.setSupportMultipleWindows(false); // target=_blank / window.open load in place
     android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(view, true);
-    const client = new ViewClient(), chrome = new ChromeClient();
-    view.setWebViewClient(client);
+    const chrome = new ChromeClient();
     view.setWebChromeClient(chrome);
-    (view as any)._appwrapClients = [client, chrome]; // keep JS peers alive (NS GC doesn't see the native hold)
+    (view as any)._appwrapClients = [null, chrome]; // keep JS peers alive (NS GC doesn't see the native hold)
+    setClient(view);
     const bg = host?.getBackground?.();
     if (bg instanceof android.graphics.drawable.ColorDrawable) view.setBackgroundColor(bg.getColor());
     if (SHELL_CONFIG.debug) android.webkit.WebView.setWebContentsDebuggingEnabled(true); // remote DevTools only in debug builds, never store builds
     wv = view;
+    created(view);
     frame.addView(view);
     layout();
     if (host) {
@@ -445,6 +505,8 @@ function registerAndroid(): void {
 
   const destroy = () => {
     if (!wv) return;
+    overlayView = null;
+    if ((wv as any)._appwrapFiltering) retired.add((wv as any)._appwrapClients[0]);
     if (host && layoutListener) host.removeOnLayoutChangeListener(layoutListener);
     wv.stopLoading();
     wv.getParent()?.removeView(wv);
