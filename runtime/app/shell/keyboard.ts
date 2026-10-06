@@ -9,6 +9,7 @@ declare const android: any;
 // iOS keyboard-notification globals (marshalled from UIKit at runtime).
 declare const NSNotificationCenter: any;
 declare const UIKeyboardWillShowNotification: string;
+declare const UIApplicationDidBecomeActiveNotification: string;
 declare const UIKeyboardDidShowNotification: string;
 declare const UIKeyboardWillHideNotification: string;
 declare const UIKeyboardDidHideNotification: string;
@@ -204,6 +205,10 @@ function armIosKeyboardObservers(): void {
   });
 
   armScrollClamp();
+  // The backdrop is sampled when the keyboard shows; a page caught mid-load or mid theme flip (iOS renders the other
+  // appearance for its app-switcher snapshot) leaves a wrong colour in the corners until the next show: re-sample
+  // when the app comes back (ui.setBackgroundColor re-samples on the page's own theme changes).
+  center.addObserverForNameObjectQueueUsingBlock(UIApplicationDidBecomeActiveNotification, null, null, () => resyncKeyboardBackdrop());
 }
 
 /** The page's colour where the keyboard meets it: the first opaque background up from the element at the
@@ -214,6 +219,12 @@ const BOTTOM_BG_JS = `(() => {
   for (const e of [document.body, document.documentElement]) { const c = e && getComputedStyle(e).backgroundColor; if (op(c)) return c; }
   return '';
 })()`;
+
+let backdropPainted = false;
+/** Re-sample the keyboard backdrop (iOS) once one has been painted — its colour can go stale between shows. */
+export function resyncKeyboardBackdrop(): void {
+  if (isIOS && backdropPainted) syncBackdropColor();
+}
 
 /**
  * Sample the page's bottom background color once per keyboard-show and paint the webview + its window with
@@ -235,6 +246,7 @@ function syncBackdropColor(): void {
         // (floating over a page — webview.float — the webview itself stays clear, or it covers the page)
         for (let v: UIView | null = appFloating ? w.superview : w; v; v = v.superview) v.backgroundColor = color;
         if (w.window) w.window.backgroundColor = color;
+        backdropPainted = true;
         if (SHELL_CONFIG.debug) appwrapNativeLog(`[native:keyboard] backdrop ← rgb(${m[1]},${m[2]},${m[3]})`);
       });
     });

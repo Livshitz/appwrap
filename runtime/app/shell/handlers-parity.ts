@@ -1,6 +1,7 @@
 import { Application, ApplicationSettings, Color, Dialogs, Utils, isIOS } from '@nativescript/core';
 import { bridge } from './bridge';
 import { uiImageToDataUrl } from './ios-image';
+import { resyncKeyboardBackdrop } from './keyboard';
 
 const err = (code: string, message: string) => Object.assign(new Error(message), { code });
 const iosOnly = () => err('UNSUPPORTED', 'iOS only for now');
@@ -171,6 +172,7 @@ export function registerParityHandlers(): void {
     Utils.dispatchToMainThread(() => {
       const root = Application.getRootView();
       if (root) root.backgroundColor = new Color(String(color));
+      resyncKeyboardBackdrop(); // (the keyboard backdrop over the root follows a theme change too)
     });
   });
 
