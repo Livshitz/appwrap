@@ -1,5 +1,6 @@
 import { Application, ApplicationSettings, Color, Dialogs, Utils, isIOS } from '@nativescript/core';
 import { bridge } from './bridge';
+import { pauseInBackground } from './background-pause';
 import { uiImageToDataUrl } from './ios-image';
 import { resyncKeyboardBackdrop } from './keyboard';
 
@@ -210,15 +211,11 @@ export function registerParityHandlers(): void {
   // `mm.deviceMotion` is a plain property read on the main thread — reliable.
   let motionManager: CMMotionManager | null = null;
   let motionTimer: ReturnType<typeof setInterval> | null = null;
+  let motionHz = 0; // > 0 while the PWA holds the stream (survives a background pause)
 
-  bridge.register('motion.start', (p: { hz?: number } = {}) => {
-    if (!isIOS) throw iosOnly();
-    if (motionManager) return;
-    // Emit rate is configurable (default 10 Hz; games can ask up to 60 for crisp tilt). Both the JS
-    // poll cadence AND the CoreMotion sample interval are set — the poll is the actual emit rate, so
-    // bumping deviceMotionUpdateInterval alone wouldn't help. Higher Hz = more bridge traffic/battery.
-    const hz = Math.max(5, Math.min(60, p.hz || 10));
-    const ms = 1000 / hz;
+  const startMotion = () => {
+    if (motionManager) return; // iOS resumeEvent also fires on inactive→active (Control Center, alerts) with no prior suspend
+    const ms = 1000 / motionHz;
     const mm = CMMotionManager.new();
     if (!mm.deviceMotionAvailable) throw err('UNSUPPORTED', 'No motion sensors (simulator?)');
     motionManager = mm;
@@ -237,13 +234,34 @@ export function registerParityHandlers(): void {
         rz: m.rotationRate.z,
       });
     }, ms);
-  });
-
-  bridge.register('motion.stop', () => {
+  };
+  const haltMotion = () => {
     if (motionTimer) clearInterval(motionTimer);
     motionTimer = null;
     motionManager?.stopDeviceMotionUpdates();
     motionManager = null;
+  };
+  // Backgrounded → sensors off (no evaluateJavaScript ticks into a hidden WebView); foreground → back on.
+  pauseInBackground(() => motionHz > 0, haltMotion, startMotion, () => (motionHz = 0));
+
+  bridge.register('motion.start', (p: { hz?: number } = {}) => {
+    if (!isIOS) throw iosOnly();
+    if (motionHz) return;
+    // Emit rate is configurable (default 10 Hz; games can ask up to 60 for crisp tilt). Both the JS
+    // poll cadence AND the CoreMotion sample interval are set — the poll is the actual emit rate, so
+    // bumping deviceMotionUpdateInterval alone wouldn't help. Higher Hz = more bridge traffic/battery.
+    motionHz = Math.max(5, Math.min(60, p.hz || 10));
+    try {
+      startMotion();
+    } catch (e) {
+      motionHz = 0;
+      throw e;
+    }
+  });
+
+  bridge.register('motion.stop', () => {
+    motionHz = 0;
+    haltMotion();
   });
 
   // ── heading (CLLocationManager compass) ────────────────────────────
