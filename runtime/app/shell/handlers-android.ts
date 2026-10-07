@@ -1,5 +1,6 @@
 import { Application, Utils } from '@nativescript/core';
 import { bridge } from './bridge';
+import { pauseInBackground } from './background-pause';
 import { requestPermissions, startActivityForResult, uriToDataUrl, bitmapToDataUrl } from './android-helpers';
 import { notifIdentity, notifActions } from './notif-identity';
 import { photoAssetKind } from './share-outcome';
@@ -349,11 +350,11 @@ export function registerAndroidHandlers(): void {
   let motionListener: android.hardware.SensorEventListener | null = null;
   const lastMotion = { ax: 0, ay: 0, az: 0, rx: 0, ry: 0, rz: 0 };
 
-  bridge.register('motion.start', (p: { hz?: number } = {}) => {
-    if (motionListener) return; // already streaming
-    // Emit rate configurable (default 10 Hz; up to 60 for crisp tilt). SENSOR_DELAY_GAME feeds ~50 Hz;
-    // we throttle the EMIT to the requested rate. Higher Hz = more bridge traffic/battery.
-    const hz = Math.max(5, Math.min(60, p.hz || 10));
+  let motionHz = 0; // > 0 while the PWA holds the stream (survives a background pause)
+
+  const startMotion = () => {
+    if (motionListener) return;
+    const hz = motionHz;
     const minMs = 1000 / hz;
     const sm = sensorManager();
     const accel = sm.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER);
@@ -387,11 +388,30 @@ export function registerAndroidHandlers(): void {
     const periodUs = Math.max(5000, Math.round(1_000_000 / hz));
     sm.registerListener(motionListener, accel, periodUs);
     if (gyro) sm.registerListener(motionListener, gyro, periodUs);
+  };
+  const haltMotion = () => {
+    if (motionListener) sensorManager().unregisterListener(motionListener);
+    motionListener = null;
+  };
+  // Backgrounded → sensors off (no evaluateJavascript ticks into a paused WebView); foreground → back on.
+  pauseInBackground(() => motionHz > 0, haltMotion, startMotion, () => (motionHz = 0));
+
+  bridge.register('motion.start', (p: { hz?: number } = {}) => {
+    if (motionHz) return; // already streaming
+    // Emit rate configurable (default 10 Hz; up to 60 for crisp tilt). SENSOR_DELAY_GAME feeds ~50 Hz;
+    // we throttle the EMIT to the requested rate. Higher Hz = more bridge traffic/battery.
+    motionHz = Math.max(5, Math.min(60, p.hz || 10));
+    try {
+      startMotion();
+    } catch (e) {
+      motionHz = 0;
+      throw e;
+    }
   });
 
   bridge.register('motion.stop', () => {
-    if (motionListener) sensorManager().unregisterListener(motionListener);
-    motionListener = null;
+    motionHz = 0;
+    haltMotion();
   });
 
   // ── heading (SensorManager: rotation vector → compass azimuth) ─────
