@@ -258,6 +258,9 @@ export class WebAdapter implements NativeKitAdapter {
         } as T;
       }
 
+      case 'device.thermal':
+        return 'nominal' as T; // no thermal API in browsers — honest steady state
+
       case 'clipboard.copy':
         if (!navigator.clipboard) throw new KitError('UNSUPPORTED', 'Clipboard API unavailable');
         await navigator.clipboard.writeText(String(p.text ?? ''));
