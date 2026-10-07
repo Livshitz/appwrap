@@ -8,6 +8,7 @@ import { notifIdentity, notifActions, bestEffort, bestEffortAsync, type NotifIde
 import { resolveSoundName } from './notif-sound';
 import { resolveAttachment } from './notif-attachment';
 import { sha256Hex } from './sha256';
+import { thermalState } from './thermal';
 import { maskForLock, setIosOrientationMask } from './orientation';
 
 interface GeoResult { lat: number; lng: number; accuracy: number; }
@@ -189,6 +190,8 @@ export function registerExtendedHandlers(): void {
       battery,
     };
   });
+
+  bridge.register('device.thermal', () => thermalState());
 
   // ── clipboard ──────────────────────────────────────────────────────
   bridge.register('clipboard.copy', ({ text }: { text: string }) => {

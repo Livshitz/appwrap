@@ -2,6 +2,7 @@ import { Application, Connectivity, isAndroid } from '@nativescript/core';
 import type { AndroidActivityNewIntentEventData, OrientationChangedEventData } from '@nativescript/core';
 import { bridge } from './bridge';
 import { connectivityStatus } from './handlers-extended';
+import { startThermalForwarding } from './thermal';
 import { isEnvDeepLink, handleEnvDeepLink } from './env-switcher';
 
 /** A notification-tap payload as the PWA receives it (`parseApnsPayload` / the FCM intent extras). */
@@ -134,6 +135,7 @@ export function startEventForwarding(): void {
   );
 
   Connectivity.startMonitoring(() => bridge.emit('network.change', connectivityStatus()));
+  startThermalForwarding();
 
   if (isAndroid) wireAndroidDeepLinks();
 }

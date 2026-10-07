@@ -180,6 +180,7 @@ await kit.storage.secure.set('token', 's3cret');   // Keychain / Keystore
 await kit.toast.show('hi');
 await kit.ui.setStatusBarStyle('light');
 await kit.device.info();
+kit.device.onThermalChange((s) => {}); // current state, then transitions: nominal|fair|serious|critical
 await kit.clipboard.copy('text');
 await kit.notifications.schedule({ title: 'Hi', delaySec: 5 });
 await kit.biometrics.authenticate('Prove it');
