@@ -17,7 +17,7 @@ const KVO_KEYS = ['URL', 'title', 'canGoBack', 'canGoForward', 'loading'];
  *
  *   webview.open  {url, top?, bottom?}          — show (or, if open, navigate + show / re-inset)
  *   webview.nav   {op:'back'|'forward'|'reload'|'go', url?}
- *   webview.hide / webview.show {top?,bottom?}  — keep state, reveal/cover the page beneath (show re-insets)
+ *   webview.hide / webview.show {top?,bottom?,contentTop?}  — keep state, reveal/cover the page beneath (show re-insets)
  *   webview.close                               — tear down; emits `webview.closed`
  *   webview.cookies {cookies: Cookie[]}         — write cookies into the overlay's (persistent) jar; resolves {set}
  *                                                 once all are stored (Bare Remote's opt-in "sign in like the Mac")
@@ -213,7 +213,8 @@ function registerIos(): void {
 
     ObserverClass ??= (NSObject as any).extend(
       {
-        observeValueForKeyPathOfObjectChangeContext() {
+        observeValueForKeyPathOfObjectChangeContext(keyPath: string) {
+          if (keyPath === 'contentOffset') return emitScroll();
           // Shell-coloured + non-opaque only to avoid a white flash before the first load; after it, WebKit
           // must paint the page's own canvas, or a page with no background shows the (dark) shell through.
           if (wv && !wv.opaque && !wv.loading && wv.URL) wv.opaque = true;
@@ -224,6 +225,7 @@ function registerIos(): void {
     );
     observer = ObserverClass.new();
     for (const k of KVO_KEYS) view.addObserverForKeyPathOptionsContext(observer!, k, NSKeyValueObservingOptions.New, null);
+    view.scrollView.addObserverForKeyPathOptionsContext(observer!, 'contentOffset', NSKeyValueObservingOptions.New, null);
     wv = view;
     created(view);
   };
@@ -232,6 +234,7 @@ function registerIos(): void {
     if (!wv) return;
     overlayView = null;
     for (const k of KVO_KEYS) { try { wv.removeObserverForKeyPath(observer!, k); } catch { /* not observed */ } }
+    try { wv.scrollView.removeObserverForKeyPath(observer!, 'contentOffset'); } catch { /* not observed */ }
     wv.stopLoading();
     wv.removeFromSuperview(); wrap?.removeFromSuperview(); wrap = null;
     wv = null; observer = null; uiDelegate = null; topConstraint = null; bottomConstraint = null;
@@ -244,18 +247,40 @@ function registerIos(): void {
     }));
 
   const inset = (v?: number) => Math.max(0, Number(v) || 0);
-  /** Re-apply insets on a live overlay; an omitted side keeps its current value. */
-  const setInsets = (top?: number, bottom?: number) => {
+  /** Re-apply insets on a live overlay; an omitted side keeps its current value. `contentTop`: the page's content (and
+   *  its fixed elements) start this far below the overlay's top — the area above scrolls under e.g. a collapsing bar. */
+  const setInsets = (top?: number, bottom?: number, contentTop?: number) => {
     if (top !== undefined && topConstraint) topConstraint.constant = inset(top);
     if (bottom !== undefined && bottomConstraint) bottomConstraint.constant = -inset(bottom);
+    if (contentTop !== undefined && wv) {
+      const sc = wv.scrollView, c = sc.contentInset, t = inset(contentTop);
+      if (c.top === t) return;
+      const atTop = sc.contentOffset.y <= -c.top + 1;
+      sc.contentInset = { top: t, left: c.left, bottom: c.bottom, right: c.right };
+      sc.scrollIndicatorInsets = { top: t, left: 0, bottom: 0, right: 0 };
+      if (atTop) sc.contentOffset = { x: sc.contentOffset.x, y: -t }; // (a page at its top stays flush under the bar)
+    }
+  };
+  /** `webview.scroll` {y, user}: the page's scroll position (0 = its top) at most once per frame; `user` while a finger
+   *  drags it or it coasts from a flick (false for a load's or a script's scroll). */
+  let scrollQueued = false;
+  const emitScroll = () => {
+    if (scrollQueued || !wv) return;
+    scrollQueued = true;
+    setTimeout(() => {
+      scrollQueued = false;
+      if (!wv) return;
+      const sc = wv.scrollView;
+      bridge.emit('webview.scroll', { y: Math.round(sc.contentOffset.y + sc.contentInset.top), user: !!(sc.dragging || sc.decelerating || sc.tracking), dragging: !!sc.dragging });
+    }, 0);
   };
 
-  bridge.register('webview.open', ({ url, top, bottom }: { url: string; top?: number; bottom?: number }) => {
+  bridge.register('webview.open', ({ url, top, bottom, contentTop }: { url: string; top?: number; bottom?: number; contentTop?: number }) => {
     const target = String(url ?? '');
     if (!target) throw err('NATIVE_ERROR', 'webview.open: empty url');
     return onMain(() => {
       if (!wv) create(inset(top), inset(bottom));
-      else setInsets(top, bottom);
+      setInsets(top, bottom, contentTop);
       wv!.hidden = false;
       wrap?.superview?.bringSubviewToFront(wrap);
       fabFront();
@@ -277,8 +302,8 @@ function registerIos(): void {
   );
 
   bridge.register('webview.hide', () => onMain(() => { if (wv) wv.hidden = true; return { open: !!wv }; }));
-  bridge.register('webview.show', (p?: { top?: number; bottom?: number } | null) => onMain(() => {
-    if (wv) { setInsets(p?.top, p?.bottom); wv.hidden = false; wrap?.superview?.bringSubviewToFront(wrap); fabFront(); }
+  bridge.register('webview.show', (p?: { top?: number; bottom?: number; contentTop?: number } | null) => onMain(() => {
+    if (wv) { setInsets(p?.top, p?.bottom, p?.contentTop); wv.hidden = false; wrap?.superview?.bringSubviewToFront(wrap); fabFront(); }
     return { open: !!wv };
   }));
   bridge.register('webview.close', () => onMain(() => { destroy(); }));

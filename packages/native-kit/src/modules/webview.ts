@@ -15,7 +15,14 @@ export interface WebViewOpenOptions {
   top?: number;
   /** Inset from the bottom of the app's WebView (CSS px) — keep a bottom dock tappable below it. Default 0. */
   bottom?: number;
+  /** iOS: the page's content (and its fixed elements) start this far below the overlay's top (CSS px); the area above
+   *  scrolls under e.g. a bar that collapses with {@link WebViewModule.onScroll}. Default 0. */
+  contentTop?: number;
 }
+
+/** The page's scroll position: `y` CSS px from its top; `user` while a finger drags it or it coasts from a flick;
+ *  `dragging` while the finger is down. */
+export interface WebViewScroll { y: number; user: boolean; dragging: boolean }
 
 export interface WebViewFabOptions {
   show: boolean;
@@ -122,6 +129,11 @@ export class WebViewModule {
   /** Tear the overlay down (fires {@link onClosed}). */
   close(): Promise<void> {
     return this.kit.invoke('webview.close', {});
+  }
+
+  /** The page scrolled (iOS, at most once per frame) — e.g. to collapse a top bar along with it. */
+  onScroll(cb: (s: WebViewScroll) => void): Unsubscribe {
+    return this.kit.on('webview.scroll', (p) => cb(p as WebViewScroll));
   }
 
   onState(cb: (s: WebViewState) => void): Unsubscribe {
