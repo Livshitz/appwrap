@@ -7,7 +7,7 @@ import { SHELL_CONFIG } from './config';
 const err = (code: string, message: string) => Object.assign(new Error(message), { code });
 
 /** WKWebView properties whose change is a navigation-state change (KVO-observable). */
-const KVO_KEYS = ['URL', 'title', 'canGoBack', 'canGoForward', 'loading'];
+const KVO_KEYS = ['URL', 'title', 'canGoBack', 'canGoForward', 'loading', 'underPageBackgroundColor'];
 
 /**
  * In-app WebView OVERLAY (iOS) — a second, full WKWebView layered over the app's own WebView, below
@@ -214,6 +214,8 @@ function registerIos(): void {
           // Shell-coloured + non-opaque only to avoid a white flash before the first load; after it, WebKit
           // must paint the page's own canvas, or a page with no background shows the (dark) shell through.
           if (wv && !wv.opaque && !wv.loading && wv.URL) wv.opaque = true;
+          // The safe-area insets (home-indicator strip) show the view's own colour: paint it the page's (iOS 15+).
+          if (wv?.opaque && (wv as any).underPageBackgroundColor) wv.backgroundColor = (wv as any).underPageBackgroundColor;
           emitState();
         },
       },
