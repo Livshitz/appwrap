@@ -136,10 +136,10 @@ export class WebViewModule {
     return this.kit.on('webview.scroll', (p) => cb(p as WebViewScroll));
   }
 
-  /** iOS: a left-edge swipe while the page has no back stack of its own (WebKit's swipe handles that) — e.g. go back
-   *  through a history the app restored after a relaunch. */
-  onEdgeBack(cb: () => void): Unsubscribe {
-    return this.kit.on('webview.edgeBack', () => cb());
+  /** iOS: an edge swipe the page has no stack of its own for (WebKit's swipe handles that) — the left edge `back`, the
+   *  right `forward` — e.g. to walk a history the app restored after a relaunch. */
+  onEdgeSwipe(cb: (dir: 'back' | 'forward') => void): Unsubscribe {
+    return this.kit.on('webview.edgeSwipe', (p) => cb((p as { dir: 'back' | 'forward' }).dir));
   }
 
   onState(cb: (s: WebViewState) => void): Unsubscribe {
