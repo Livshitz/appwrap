@@ -40,7 +40,7 @@ const KVO_KEYS = ['URL', 'title', 'canGoBack', 'canGoForward', 'loading'];
  *                                                 Touches inside `hit` (app CSS px) go to the app; everywhere else to the
  *                                                 overlay. Call again to move the rects; on:false restores. iOS; Android
  *                                                 resolves {floating:false} (not supported — keep a fallback).
- * Events: `webview.state` {url,title,canGoBack,canGoForward,loading} on every navigation change; `webview.fab` on a tap.
+ * Events: `webview.state` {url,title,canGoBack,canGoForward,loading} on every navigation change; `webview.scroll`; `webview.edgeBack` (iOS: a left-edge swipe with no WebKit back stack); `webview.fab` on a tap.
  *
  * Swipe back/forward on, target=_blank/window.open loads in place (shared ios-ui-delegate), keyboard +
  * safe areas left to the page (contentInsetAdjustment never: edge to edge, env(safe-area-inset-*) set).
@@ -129,6 +129,7 @@ function registerIos(): void {
   let uiDelegate: WKUIDelegate | null = null;
   let topConstraint: NSLayoutConstraint | null = null;
   let bottomConstraint: NSLayoutConstraint | null = null;
+  let EdgeTarget: any = null, edgeTarget: any = null, edgeBack: UIScreenEdgePanGestureRecognizer | null = null;
   let emitQueued = false;
   let ObserverClass: any; // KVO sink, built once (ObjC class names are global)
   let fab: UIButton | null = null;
@@ -218,6 +219,7 @@ function registerIos(): void {
           // Shell-coloured + non-opaque only to avoid a white flash before the first load; after it, WebKit
           // must paint the page's own canvas, or a page with no background shows the (dark) shell through.
           if (wv && !wv.opaque && !wv.loading && wv.URL) wv.opaque = true;
+          if (edgeBack && wv) edgeBack.enabled = !wv.canGoBack; // (WebKit's own swipe has its stack; ours = the app's)
           emitState();
         },
       },
@@ -226,6 +228,19 @@ function registerIos(): void {
     observer = ObserverClass.new();
     for (const k of KVO_KEYS) view.addObserverForKeyPathOptionsContext(observer!, k, NSKeyValueObservingOptions.New, null);
     view.scrollView.addObserverForKeyPathOptionsContext(observer!, 'contentOffset', NSKeyValueObservingOptions.New, null);
+    // A left-edge swipe with no WebKit back stack (e.g. a history the app restored after a relaunch) → `webview.edgeBack`.
+    EdgeTarget ??= (NSObject as any).extend(
+      { edgeBack(g: UIScreenEdgePanGestureRecognizer) {
+        if (g.state !== UIGestureRecognizerState.Ended || !wv) return;
+        const t = g.translationInView(wv), v = g.velocityInView(wv);
+        if (t.x > 80 || v.x > 500) bridge.emit('webview.edgeBack', {});
+      } },
+      { exposedMethods: { edgeBack: { returns: interop.types.void, params: [UIScreenEdgePanGestureRecognizer] } } }
+    );
+    edgeTarget = EdgeTarget.new();
+    edgeBack = UIScreenEdgePanGestureRecognizer.alloc().initWithTargetAction(edgeTarget, 'edgeBack:');
+    edgeBack!.edges = 2; // UIRectEdgeLeft
+    view.addGestureRecognizer(edgeBack!);
     wv = view;
     created(view);
   };
@@ -237,7 +252,7 @@ function registerIos(): void {
     try { wv.scrollView.removeObserverForKeyPath(observer!, 'contentOffset'); } catch { /* not observed */ }
     wv.stopLoading();
     wv.removeFromSuperview(); wrap?.removeFromSuperview(); wrap = null;
-    wv = null; observer = null; uiDelegate = null; topConstraint = null; bottomConstraint = null;
+    wv = null; observer = null; uiDelegate = null; edgeBack = null; edgeTarget = null; topConstraint = null; bottomConstraint = null;
     bridge.emit('webview.closed', {});
   };
 
