@@ -7,7 +7,7 @@ import { SHELL_CONFIG } from './config';
 const err = (code: string, message: string) => Object.assign(new Error(message), { code });
 
 /** WKWebView properties whose change is a navigation-state change (KVO-observable). */
-const KVO_KEYS = ['URL', 'title', 'canGoBack', 'canGoForward', 'loading', 'underPageBackgroundColor'];
+const KVO_KEYS = ['URL', 'title', 'canGoBack', 'canGoForward', 'loading'];
 
 /**
  * In-app WebView OVERLAY (iOS) — a second, full WKWebView layered over the app's own WebView, below
@@ -43,7 +43,7 @@ const KVO_KEYS = ['URL', 'title', 'canGoBack', 'canGoForward', 'loading', 'under
  * Events: `webview.state` {url,title,canGoBack,canGoForward,loading} on every navigation change; `webview.fab` on a tap.
  *
  * Swipe back/forward on, target=_blank/window.open loads in place (shared ios-ui-delegate), keyboard +
- * safe areas handled by WKWebView's own scroll-view insets (contentInsetAdjustment automatic).
+ * safe areas left to the page (contentInsetAdjustment never: edge to edge, env(safe-area-inset-*) set).
  * Android: an android.webkit.WebView added to the activity's content frame, margins derived from the app
  * WebView's box (re-applied when it re-lays out), cookies via the process-wide CookieManager (persistent),
  * getUserMedia via the shared permission handler, _blank in place (no multiple-window support).
@@ -179,6 +179,9 @@ function registerIos(): void {
     config.allowsInlineMediaPlayback = true;
     const view = WKWebView.alloc().initWithFrameConfiguration(CGRectZero, config);
     view.allowsBackForwardNavigationGestures = true;
+    // Edge to edge: the page runs under the home indicator (as the app WebView does) — the automatic inset left
+    // the strip painted in the shell's colour. Pages still get env(safe-area-inset-*) from the view's safe area.
+    view.scrollView.contentInsetAdjustmentBehavior = 2; // .never
     uiDelegate = createUiDelegate();
     view.UIDelegate = uiDelegate;
     if (host?.backgroundColor) { view.backgroundColor = host.backgroundColor; view.opaque = false; }
@@ -214,8 +217,6 @@ function registerIos(): void {
           // Shell-coloured + non-opaque only to avoid a white flash before the first load; after it, WebKit
           // must paint the page's own canvas, or a page with no background shows the (dark) shell through.
           if (wv && !wv.opaque && !wv.loading && wv.URL) wv.opaque = true;
-          // The safe-area insets (home-indicator strip) show the view's own colour: paint it the page's (iOS 15+).
-          if (wv?.opaque && (wv as any).underPageBackgroundColor) wv.backgroundColor = (wv as any).underPageBackgroundColor;
           emitState();
         },
       },
