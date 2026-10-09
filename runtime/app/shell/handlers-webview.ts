@@ -1,4 +1,4 @@
-import { Utils, isIOS, isAndroid, Application } from '@nativescript/core';
+import { Utils, isIOS, isAndroid, Application, knownFolders, path as nsPath, File } from '@nativescript/core';
 import { bridge } from './bridge';
 import { createUiDelegate } from './ios-ui-delegate';
 import { handleWebPermissionRequest } from './android-helpers';
@@ -219,6 +219,7 @@ function registerIos(): void {
           // Shell-coloured + non-opaque only to avoid a white flash before the first load; after it, WebKit
           // must paint the page's own canvas, or a page with no background shows the (dark) shell through.
           if (wv && !wv.opaque && !wv.loading && wv.URL) wv.opaque = true;
+          if (wv && !wv.loading) saveHistory();
           // WebKit's own swipe walks its stack; with none to go back to, ours (the app's restored history) takes the edge.
           if (edgeBack && edgeFwd && wv) { edgeBack.enabled = !wv.canGoBack; edgeFwd.enabled = !wv.canGoForward; wv.allowsBackForwardNavigationGestures = wv.canGoBack || wv.canGoForward; }
           emitState();
@@ -256,11 +257,12 @@ function registerIos(): void {
   const destroy = () => {
     if (!wv) return;
     overlayView = null;
+    try { writeHistory(); } catch (e) { console.warn('[webview] history not saved on close', e); }
     for (const k of KVO_KEYS) { try { wv.removeObserverForKeyPath(observer!, k); } catch { /* not observed */ } }
     try { wv.scrollView.removeObserverForKeyPath(observer!, 'contentOffset'); } catch { /* not observed */ }
     wv.stopLoading();
     wv.removeFromSuperview(); wrap?.removeFromSuperview(); wrap = null;
-    wv = null; observer = null; uiDelegate = null; edgeBack = null; edgeFwd = null; edgeTarget = null; topConstraint = null; bottomConstraint = null;
+    wv = null; observer = null; uiDelegate = null; edgeBack = null; edgeFwd = null; edgeTarget = null; historyKey = ''; topConstraint = null; bottomConstraint = null;
     bridge.emit('webview.closed', {});
   };
 
@@ -268,6 +270,37 @@ function registerIos(): void {
     new Promise((resolve, reject) => Utils.dispatchToMainThread(() => {
       try { resolve(fn()); } catch (e) { reject(e); }
     }));
+
+  /** `historyKey` (open): the page's real back-forward list (WKWebView.interactionState, iOS 15+) is kept in a file per key
+   *  and restored when that key opens again — after a relaunch or a switch between the app's tabs, WebKit's own edge
+   *  swipe (its stacked-page slide) still walks it. The list's page snapshots aren't kept: those slides show a blank page. */
+  let historyKey = '', historyT: any = 0;
+  const historyFile = (key: string) => nsPath.join(knownFolders.documents().path, 'webview-history', key.replace(/[^\w.-]/g, '_') + '.bin');
+  const writeHistory = () => {
+    clearTimeout(historyT);
+    const st = wv && historyKey && (wv as any).interactionState as NSData | undefined;
+    if (!st) return;
+    const f = historyFile(historyKey);
+    File.fromPath(f); // (creates the folder)
+    if (!st.writeToFileAtomically(f, true)) console.warn(`[webview] history not saved for ${historyKey}`);
+  };
+  const saveHistory = () => { clearTimeout(historyT); historyT = setTimeout(writeHistory, 400); };
+  /** Point the overlay at `key`'s list (restored from its file, if any); true = restored (the page loads from it). */
+  const restoreHistory = (key: string): boolean => {
+    if (key === historyKey) return false;
+    writeHistory(); historyKey = key;
+    if (!key || !wv || !('interactionState' in wv)) return false;
+    const f = historyFile(key);
+    const data = File.exists(f) ? NSData.dataWithContentsOfFile(f) : null;
+    if (!data) return false;
+    try { (wv as any).interactionState = data; return true; } catch (e) { console.warn(`[webview] history restore failed for ${key}`, e); return false; }
+  };
+  bridge.register('webview.forget', ({ key }: { key: string }) => onMain(() => {
+    if (key === historyKey) historyKey = '';
+    const f = historyFile(String(key ?? ''));
+    if (File.exists(f)) File.fromPath(f).removeSync();
+    return { ok: true };
+  }));
 
   const inset = (v?: number) => Math.max(0, Number(v) || 0);
   /** Re-apply insets on a live overlay; an omitted side keeps its current value. `contentTop`: the page's content (and
@@ -298,7 +331,7 @@ function registerIos(): void {
     }, 0);
   };
 
-  bridge.register('webview.open', ({ url, top, bottom, contentTop }: { url: string; top?: number; bottom?: number; contentTop?: number }) => {
+  bridge.register('webview.open', ({ url, top, bottom, contentTop, historyKey: key }: { url: string; top?: number; bottom?: number; contentTop?: number; historyKey?: string }) => {
     const target = String(url ?? '');
     if (!target) throw err('NATIVE_ERROR', 'webview.open: empty url');
     return onMain(() => {
@@ -307,7 +340,9 @@ function registerIos(): void {
       wv!.hidden = false;
       wrap?.superview?.bringSubviewToFront(wrap);
       fabFront();
-      load(target);
+      // (a restored list loads its current page; another url goes on top of it, keeping it to go back to)
+      const restored = key !== undefined && restoreHistory(String(key));
+      if (!restored || wv!.backForwardList.currentItem?.URL?.absoluteString !== target) load(target);
       return state();
     });
   });
