@@ -219,7 +219,8 @@ function registerIos(): void {
           // Shell-coloured + non-opaque only to avoid a white flash before the first load; after it, WebKit
           // must paint the page's own canvas, or a page with no background shows the (dark) shell through.
           if (wv && !wv.opaque && !wv.loading && wv.URL) wv.opaque = true;
-          if (edgeBack && wv) edgeBack.enabled = !wv.canGoBack; // (WebKit's own swipe has its stack; ours = the app's)
+          // WebKit's own swipe walks its stack; with none to go back to, ours (the app's restored history) takes the edge.
+          if (edgeBack && wv) { edgeBack.enabled = !wv.canGoBack; wv.allowsBackForwardNavigationGestures = wv.canGoBack || wv.canGoForward; }
           emitState();
         },
       },
@@ -229,17 +230,20 @@ function registerIos(): void {
     for (const k of KVO_KEYS) view.addObserverForKeyPathOptionsContext(observer!, k, NSKeyValueObservingOptions.New, null);
     view.scrollView.addObserverForKeyPathOptionsContext(observer!, 'contentOffset', NSKeyValueObservingOptions.New, null);
     // A left-edge swipe with no WebKit back stack (e.g. a history the app restored after a relaunch) → `webview.edgeBack`.
+    // (no-arg exposed selector, as banner.ts: a typed recognizer param crashed the app on the swipe)
     EdgeTarget ??= (NSObject as any).extend(
-      { edgeBack(g: UIScreenEdgePanGestureRecognizer) {
-        if (g.state !== UIGestureRecognizerState.Ended || !wv) return;
+      { edgeBack() {
+        const g = edgeBack;
+        if (!g || !wv || g.state !== 3 /* Ended */) return;
         const t = g.translationInView(wv), v = g.velocityInView(wv);
         if (t.x > 80 || v.x > 500) bridge.emit('webview.edgeBack', {});
       } },
-      { exposedMethods: { edgeBack: { returns: interop.types.void, params: [UIScreenEdgePanGestureRecognizer] } } }
+      { exposedMethods: { edgeBack: { returns: interop.types.void } } }
     );
-    edgeTarget = EdgeTarget.new();
-    edgeBack = UIScreenEdgePanGestureRecognizer.alloc().initWithTargetAction(edgeTarget, 'edgeBack:');
+    edgeTarget = EdgeTarget.alloc().init();
+    edgeBack = UIScreenEdgePanGestureRecognizer.alloc().initWithTargetAction(edgeTarget, 'edgeBack');
     edgeBack!.edges = 2; // UIRectEdgeLeft
+    edgeBack!.enabled = false; // (until a state says WebKit has no back stack)
     view.addGestureRecognizer(edgeBack!);
     wv = view;
     created(view);
