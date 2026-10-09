@@ -70,9 +70,16 @@ export class WebViewModule {
     return this.kit.capability('webview');
   }
 
-  /** Show the overlay at `url` (navigates it if already open; re-applies top/bottom insets). */
-  open(url: string, opts: WebViewOpenOptions = {}): Promise<WebViewState> {
+  /** Show the overlay at `url` (navigates it if already open; re-applies top/bottom insets). `historyKey` (iOS 15+): keep
+   *  the page's real back-forward list under this key (e.g. your tab's id) and restore it when the key opens again —
+   *  WebKit's own edge swipe then walks it after a relaunch or a tab switch. {@link forget} drops it. */
+  open(url: string, opts: WebViewOpenOptions & { historyKey?: string } = {}): Promise<WebViewState> {
     return this.kit.invoke('webview.open', { url, ...opts });
+  }
+
+  /** Drop the back-forward list kept under `key` (e.g. its tab closed). */
+  forget(key: string): Promise<{ ok: boolean }> {
+    return this.kit.invoke('webview.forget', { key });
   }
 
   nav(op: WebViewNavOp, url?: string): Promise<WebViewState> {
