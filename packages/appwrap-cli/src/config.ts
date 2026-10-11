@@ -166,6 +166,11 @@ export interface AppwrapConfig {
   desktop?: Record<string, unknown>;
   /** Custom URL scheme for deep links (e.g. "hellowrap" → hellowrap://...). */
   urlScheme?: string;
+  /** Lets the user pick this app as the system default browser. iOS: http/https join CFBundleURLSchemes +
+   * the `com.apple.developer.web-browser` entitlement (Apple grants it on request — a profile without it
+   * fails signing). Android: a VIEW/BROWSABLE http(s) filter + APP_BROWSER on the main activity. The app
+   * receives tapped links via `kit.lifecycle` deep links and must load any URL. */
+  defaultBrowser?: boolean;
   /** Android App Links: https hosts whose `https://<host>/...` links open the app directly (the
    * Android equivalent of iOS Universal Links / associated-domains `applinks:`). Each host gets an
    * `android:autoVerify="true"` VIEW intent-filter in the manifest. Verification ALSO requires the host
@@ -434,7 +439,7 @@ export function defineConfig(config: AppwrapConfig): AppwrapConfig {
  */
 export const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
   'androidAppLinks', 'appBoundDomains', 'backendOrigin', 'backgroundAudio', 'backgroundColor', 'backgroundTasks', 'buildNumber', 'ci', 'debug',
-  'debugLog', 'desktop', 'devMenu', 'edgeToEdge', 'entry', 'icon', 'id', 'iosHideKeyboardAccessory', 'iosKeyboardExtraLift', 'iosKeyboardWithoutUserAction', 'insecureHosts', 'loader', 'modules', 'modulePacks', 'name',
+  'debugLog', 'defaultBrowser', 'desktop', 'devMenu', 'edgeToEdge', 'entry', 'icon', 'id', 'iosHideKeyboardAccessory', 'iosKeyboardExtraLift', 'iosKeyboardWithoutUserAction', 'insecureHosts', 'loader', 'modules', 'modulePacks', 'name',
   'androidLockTextZoom', 'envSwitcher', 'iosEntitlements', 'iosInfoPlist', 'neutralizeServiceWorker', 'oauthRedirectSchemes', 'openNewWindowsInBrowser', 'orientation', 'overrides', 'permissions',
   'plugins', 'push', 'pwaDist', 'queryPackages', 'queryUrlSchemes', 'serverUrl', 'shareTarget', 'signing', 'signingProfiles', 'statusBarStyle', 'store',
   'splashHold', 'splashIcon', 'storekitConfig', 'targetedDevices', 'teamId', 'themeColor', 'trackingDomains', 'urlScheme',

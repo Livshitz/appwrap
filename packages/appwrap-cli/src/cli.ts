@@ -700,6 +700,14 @@ function stampAndroidGradleDeps(outDir: string, deps: string[]): void {
 const MODULES_NATIVE_DIR = resolve(TEMPLATE_DIR, 'modules-native');
 const MODULE_KOTLIN_VERSION = '2.1.0';
 
+/** Main-activity filter that lists the app as a browser (config.defaultBrowser): http(s) VIEW + APP_BROWSER. */
+const ANDROID_BROWSER_FILTER =
+  `<intent-filter>\n\t\t\t<action android:name="android.intent.action.VIEW" />\n` +
+  `\t\t\t<category android:name="android.intent.category.DEFAULT" />\n` +
+  `\t\t\t<category android:name="android.intent.category.BROWSABLE" />\n` +
+  `\t\t\t<category android:name="android.intent.category.APP_BROWSER" />\n` +
+  `\t\t\t<data android:scheme="http" />\n\t\t\t<data android:scheme="https" />\n\t\t</intent-filter>`;
+
 /** Merge iOS entitlements from active modules + remote push into ONE app.entitlements (NS auto-detects
  * + signs it). Removes the file when empty so a no-entitlement build (personal team, push off) signs. */
 function stampEntitlements(outDir: string, cfg: AppwrapConfig, req: NativeReqs): void {
@@ -707,6 +715,7 @@ function stampEntitlements(outDir: string, cfg: AppwrapConfig, req: NativeReqs):
   if (!existsSync(iosDir)) return;
   const file = join(iosDir, 'app.entitlements');
   const ent: Record<string, boolean | string | string[]> = { ...req.iosEntitlements, ...cfg.iosEntitlements };
+  if (cfg.defaultBrowser) ent['com.apple.developer.web-browser'] = true;
   if (!!cfg.push?.enabled && cfg.push?.ios !== false) ent['aps-environment'] = cfg.push.apsEnvironment ?? 'development';
   // Resolve build tokens in entitlement values (e.g. a module's `__APP_GROUP__` → group.<appId>) so a
   // module declaring an app-derived entitlement (widget's App Group) needs no hardcoded stamper case.
@@ -1092,9 +1101,11 @@ function stampIOSDisplayName(outDir: string, cfg: AppwrapConfig, req: NativeReqs
   // Read by the native AppwrapKeyboardAccessory +load (runtime App_Resources/iOS/src) — no JS involved.
   if (cfg.iosHideKeyboardAccessory) extras.push(`  <key>AppwrapHideKeyboardAccessory</key>\n  <true/>`);
   if (cfg.iosKeyboardWithoutUserAction) extras.push(`  <key>AppwrapKeyboardWithoutUserAction</key>\n  <true/>`);
-  if (cfg.urlScheme) {
+  // URL schemes the app answers: its own deep-link scheme + http/https when it can be the default browser.
+  const schemes = [cfg.urlScheme, ...(cfg.defaultBrowser ? ['http', 'https'] : [])].filter(Boolean);
+  if (schemes.length) {
     extras.push(
-      `  <key>CFBundleURLTypes</key>\n  <array>\n    <dict>\n      <key>CFBundleTypeRole</key>\n      <string>Editor</string>\n      <key>CFBundleURLName</key>\n      <string>${cfg.id}</string>\n      <key>CFBundleURLSchemes</key>\n      <array>\n        <string>${cfg.urlScheme}</string>\n      </array>\n    </dict>\n  </array>`
+      `  <key>CFBundleURLTypes</key>\n  <array>\n    <dict>\n      <key>CFBundleTypeRole</key>\n      <string>Editor</string>\n      <key>CFBundleURLName</key>\n      <string>${cfg.id}</string>\n      <key>CFBundleURLSchemes</key>\n      <array>\n${schemes.map((x) => `        <string>${x}</string>`).join('\n')}\n      </array>\n    </dict>\n  </array>`
     );
   }
   // Schemes kit.app.canOpenUrl() may probe → LSApplicationQueriesSchemes (iOS 9+ requires declaration
@@ -1763,7 +1774,7 @@ function stampAndroidAppName(outDir: string, cfg: AppwrapConfig, req: NativeReqs
     // Main-<activity> XML from active modules (e.g. shareTarget's ACTION_SEND filter) — idempotent marker.
     src = src.replace(
       /<!-- appwrap:activity -->[\s\S]*?<!-- \/appwrap:activity -->/,
-      `<!-- appwrap:activity -->\n\t\t${req.androidManifestActivity.join('\n\t\t')}\n\t\t<!-- /appwrap:activity -->`
+      `<!-- appwrap:activity -->\n\t\t${[...req.androidManifestActivity, ...(cfg.defaultBrowser ? [ANDROID_BROWSER_FILTER] : [])].join('\n\t\t')}\n\t\t<!-- /appwrap:activity -->`
     );
     // <queries> for kit.app.canOpenUrl() visibility probes (API 30+) — idempotent marker. queryPackages
     // → explicit <package>; queryUrlSchemes → a VIEW <intent> per scheme (symmetric with iOS's
