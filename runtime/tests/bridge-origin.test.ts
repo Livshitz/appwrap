@@ -13,7 +13,7 @@ mock.module('@nativescript/core', () => ({
 
 const { SHELL_CONFIG } = await import('../app/shell/config');
 const { Bridge } = await import('../app/shell/bridge');
-const { bridgeAllows, originOf } = await import('../app/shell/bridge-origin');
+const { bridgeAllows, originOf, grantOrigin, originGrants } = await import('../app/shell/bridge-origin');
 
 /** A request from a page of `origin`; resolves with the response envelope the bridge delivers. */
 async function call(method: string, origin: string) {
@@ -39,6 +39,17 @@ describe('Bridge origin gate — a foreign page must not reach the app’s store
       expect(r.result).toBeUndefined();
       expect(r.error.code).toBe('FORBIDDEN');
     }
+  });
+
+  test('an origin grant lets ONE paired origin call the named methods only; [] revokes', () => {
+    grantOrigin('http://100.64.0.7:7707/remote.html', ['clipboard.read', '*', 'storage.', 'bridge.grant']);
+    expect(originGrants()).toEqual({ 'http://100.64.0.7:7707': ['clipboard.read'] });
+    expect(bridgeAllows('http://100.64.0.7:7707', 'clipboard.read')).toBe(true);
+    expect(bridgeAllows('http://100.64.0.7:7707', 'storage.secure.get')).toBe(false);
+    expect(bridgeAllows('http://100.64.0.8:7707', 'clipboard.read')).toBe(false);
+    expect(() => grantOrigin('app://x', ['clipboard.read'])).toThrow();
+    grantOrigin('http://100.64.0.7:7707', []);
+    expect(bridgeAllows('http://100.64.0.7:7707', 'clipboard.read')).toBe(false);
   });
 
   test('an unknown origin fails closed', async () => {
