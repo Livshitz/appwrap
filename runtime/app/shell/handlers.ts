@@ -10,6 +10,7 @@ import { ACTIVE_MODULE_NAMES, PACK_MODULES } from './active-modules.generated';
 import { consumePendingBackgroundTaskId } from './background-context';
 import { settleShare, photoAssetKind, type ShareOutcome, type SaveToPhotosOutcome } from './share-outcome';
 import { appwrapNativeLog } from './native-log';
+import { grantOrigin, originGrants } from './bridge-origin';
 
 /** Debug-only native diagnostic line → Documents/appwrap-web.log (`appwrap logs ios`). */
 const dlog = (line: string) => { if (SHELL_CONFIG.debug) appwrapNativeLog(line); };
@@ -61,6 +62,10 @@ function presentShareSheet(items: NSMutableArray<any>): Promise<ShareOutcome> {
 
 /** Register all protocol-v1 handlers. */
 export function registerHandlers(): void {
+  // Origin grants (bridge-origin.ts): trusted origins only — `bridge.` is never foreign-allowed nor grantable.
+  bridge.register('bridge.grant', ({ origin, methods }: { origin: string; methods: string[] }) => { grantOrigin(origin, methods); return originGrants(); });
+  bridge.register('bridge.grants', () => originGrants());
+
   bridge.register('app.handshake', () => {
     // The PWA's JS is now live → flush any deep link buffered during launch.
     onPwaHandshake();

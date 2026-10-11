@@ -1,3 +1,4 @@
+import { ApplicationSettings } from '@nativescript/core';
 import { SHELL_CONFIG } from './config';
 import { effectiveServerUrl } from './server-url';
 
@@ -35,7 +36,27 @@ export function isTrustedOrigin(origin: string | null | undefined): boolean {
   return (SHELL_CONFIG.appBoundDomains ?? []).some((h) => o === `https://${String(h).toLowerCase()}`);
 }
 
+/**
+ * Origin grants: the app (a trusted origin, via `bridge.grant`) lets ONE foreign origin call a few named methods — e.g.
+ * a server the user paired may read the clipboard. Persisted; `methods: []` revokes. Never a wildcard.
+ */
+const GRANTS_KEY = 'appwrap.originGrants';
+let grants: Record<string, string[]> | undefined;
+const loadGrants = (): Record<string, string[]> => {
+  if (!grants) { try { grants = JSON.parse(ApplicationSettings.getString(GRANTS_KEY, '{}')) || {}; } catch { grants = {}; } }
+  return grants!;
+};
+export function originGrants(): Record<string, string[]> { return { ...loadGrants() }; }
+export function grantOrigin(origin: string, methods: string[]): void {
+  const o = originOf(origin);
+  if (!o || !/^https?:\/\//.test(o)) throw Object.assign(new Error(`not a web origin: ${origin}`), { code: 'INVALID' });
+  const g = loadGrants(), list = [...new Set((methods || []).map(String).filter((m) => m && !m.endsWith('.') && m !== '*' && !m.startsWith('bridge.')))];
+  if (list.length) g[o] = list; else delete g[o];
+  ApplicationSettings.setString(GRANTS_KEY, JSON.stringify(g));
+}
+
 /** May a page of `origin` call `method`? */
 export function bridgeAllows(origin: string | null | undefined, method: string): boolean {
-  return isTrustedOrigin(origin) || FOREIGN_ALLOWED.some((a) => (a.endsWith('.') ? method.startsWith(a) : method === a));
+  return isTrustedOrigin(origin) || FOREIGN_ALLOWED.some((a) => (a.endsWith('.') ? method.startsWith(a) : method === a))
+    || !!loadGrants()[originOf(origin)]?.includes(method);
 }
