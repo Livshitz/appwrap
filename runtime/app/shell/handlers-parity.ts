@@ -3,6 +3,7 @@ import { bridge } from './bridge';
 import { pauseInBackground } from './background-pause';
 import { uiImageToDataUrl } from './ios-image';
 import { resyncKeyboardBackdrop } from './keyboard';
+import { paintFloatBackdrop } from './handlers-webview';
 
 const err = (code: string, message: string) => Object.assign(new Error(message), { code });
 const iosOnly = () => err('UNSUPPORTED', 'iOS only for now');
@@ -172,7 +173,7 @@ export function registerParityHandlers(): void {
   bridge.register('ui.setBackgroundColor', ({ color }: { color: string }) => {
     Utils.dispatchToMainThread(() => {
       const root = Application.getRootView();
-      if (root) root.backgroundColor = new Color(String(color));
+      if (root && !paintFloatBackdrop(String(color))) root.backgroundColor = new Color(String(color));
       resyncKeyboardBackdrop(); // (the keyboard backdrop over the root follows a theme change too)
     });
   });
