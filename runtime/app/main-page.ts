@@ -1,5 +1,6 @@
 import { Application, AndroidApplication, Button, EventData, LoadEventData, Page, StackLayout, WebView, isAndroid, isIOS, knownFolders, path } from '@nativescript/core';
 import { bridge } from './shell/bridge';
+import { backgroundRunHeld, onBackgroundRunReleased } from './shell/background-hold';
 import { effectiveServerUrl } from './shell/server-url';
 import { registerHandlers } from './shell/handlers';
 import { registerExtendedHandlers } from './shell/handlers-extended';
@@ -139,8 +140,13 @@ export function onPageLoaded(args: EventData): void {
 
   // Halt the WebView render + JS-timer pipeline while backgrounded so a page running a continuous
   // animation (Android doesn't auto-pause rAF off-screen) stops burning CPU/battery. No-op on iOS.
-  Application.on(Application.suspendEvent, () => webView.setRenderingActive(false));
+  // Unless a module holds it running (background-hold.ts: e.g. a live call's page STT/TTS through a locked screen).
+  // (Application.inBackground stays false on an Android screen lock — track suspend ourselves.)
+  let suspended = false;
+  Application.on(Application.suspendEvent, () => { suspended = true; if (!backgroundRunHeld()) webView.setRenderingActive(false); });
+  onBackgroundRunReleased(() => { if (suspended) webView.setRenderingActive(false); });
   Application.on(Application.resumeEvent, () => {
+    suspended = false;
     webView.setRenderingActive(true);
     // iOS: wake the WebContent renderer NOW (it stays THROTTLED for ~30-45s after a full-window system
     // surface — StoreKit manage-subscriptions sheet, itms-apps deep link, backgrounding — froze it).
