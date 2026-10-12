@@ -26,8 +26,21 @@ function isRecordCategory(session: AVAudioSession): boolean {
   return String(session.category) === String(AVAudioSessionCategoryPlayAndRecord);
 }
 
+/** Modules that own the call's output route right now (e.g. a call with a Speaker/earpiece choice). */
+const autoSpeakerHolds = new Set<string>();
+
+/**
+ * A module that owns the output route (a call with its own Speaker/earpiece switch) holds the auto loudspeaker
+ * off while it does; without this, every route change to the earpiece is pushed back to the loudspeaker.
+ */
+export function holdAutoSpeaker(owner: string, on: boolean): void {
+  if (on) autoSpeakerHolds.add(owner);
+  else autoSpeakerHolds.delete(owner);
+}
+
 /** Push output to the loudspeaker while a call route (PlayAndRecord) is on the built-in receiver. */
 function forceSpeakerIfReceiverDuringCall(): void {
+  if (autoSpeakerHolds.size) return; // a module owns the route (it chose the earpiece)
   const session = AVAudioSession.sharedInstance();
   if (!isRecordCategory(session) || !isOnBuiltInReceiver(session)) return; // not a call, or already speaker/headset/BT
   try {
