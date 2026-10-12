@@ -2,11 +2,16 @@ import type { NativeKit } from '../core/NativeKit';
 import type { Unsubscribe } from '../core/types';
 
 /** A home-screen long-press quick action. `id` is echoed back to {@link AppModule.onShortcut} when
- *  the user activates it; keep it stable so your router can map it. Custom icons are v1-omitted. */
+ *  the user activates it; keep it stable so your router can map it. */
 export interface AppShortcut {
   id: string;
   title: string;
   subtitle?: string;
+  /** Open this deep link (e.g. `myapp://call`) instead of firing {@link AppModule.onShortcut}: it arrives like any
+   *  deep link — `lifecycle.launchDeepLink` on a cold launch, `onDeepLink` while running. */
+  url?: string;
+  /** iOS: an SF Symbol name (e.g. `phone.fill`). Android shows the app icon. */
+  icon?: string;
 }
 
 /** A standalone home-screen icon to pin via {@link AppModule.pinShortcut}. Unlike {@link AppShortcut}
@@ -117,7 +122,7 @@ export class AppModule {
   /**
    * Set the app's home-screen long-press quick actions (replaces any previously set). Pass `[]` to
    * clear. iOS assigns `UIApplication.shortcutItems`; Android sets dynamic shortcuts (API 25+, no-op
-   * below); web is a no-op. Activation is delivered via {@link onShortcut}. Custom icons are v1-omitted.
+   * below); web is a no-op. Activation is delivered via {@link onShortcut} (or as a deep link, for an item with a `url`).
    */
   setShortcuts(items: AppShortcut[]): Promise<void> {
     return this.kit.invoke('app.setShortcuts', { items });
