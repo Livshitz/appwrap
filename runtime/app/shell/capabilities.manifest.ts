@@ -45,6 +45,8 @@ export interface ModuleManifest {
      * these (across active modules + push) into one App_Resources/iOS/app.entitlements. Values may be
      * boolean, string, or string[]. */
     entitlements?: Record<string, boolean | string | string[]>;
+    /** Info.plist UIBackgroundModes the module needs (e.g. `voip` for CallKit), merged into the shared array. */
+    backgroundModes?: string[];
   };
   android?: {
     /** AndroidManifest <uses-permission> names. */
