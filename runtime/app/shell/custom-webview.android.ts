@@ -1,4 +1,4 @@
-import { WebView, Utils, knownFolders, path as nsPath, File } from '@nativescript/core';
+import { Application, WebView, Utils, knownFolders, path as nsPath, File } from '@nativescript/core';
 import { SHELL_CONFIG } from './config';
 import { mimeFor } from './mime';
 import { APPWRAP_GLOBALS_JS, NATIVE_FEEL_JS, serviceWorkerGuardJs, externalNavGuardJs } from './web-quirks';
@@ -254,6 +254,20 @@ export class CustomWebView extends WebView {
  * process-constant, but generating the class per webview would silently pin the FIRST call's
  * closure anyway — build it once and reuse. */
 let assetClientClass: any;
+/**
+ * The WebView's renderer died (OOM kill, crash). Unhandled, Android kills the WHOLE app; a view whose
+ * renderer is gone can never paint again. Recreate the Activity instead: main-page wires the new Page's
+ * fresh WebView and reloads it (wiredPage), so the user lands back on the app, not a crash or a white page.
+ */
+function renderProcessGone(view: android.webkit.WebView, detail: android.webkit.RenderProcessGoneDetail): boolean {
+  console.error(`AppWrap: WebView renderer gone (crashed=${detail?.didCrash?.()}) — recreating the activity`);
+  try { (view.getParent() as android.view.ViewGroup | null)?.removeView(view); view.destroy(); } catch (e) { console.error('AppWrap: dead WebView teardown failed', e); }
+  const act = (Application.android.foregroundActivity || Application.android.startActivity) as android.app.Activity | null;
+  if (act) act.recreate();
+  else console.error('AppWrap: no activity to recreate — the next launch reloads');
+  return true;
+}
+
 function createAssetServingClient(): android.webkit.WebViewClient {
   if (assetClientClass) return new assetClientClass();
   const wwwPath = nsPath.join(knownFolders.currentApp().path, 'www');
@@ -577,6 +591,9 @@ function createAssetServingClient(): android.webkit.WebViewClient {
       onReceivedError(view: android.webkit.WebView, request: android.webkit.WebResourceRequest, error: android.webkit.WebResourceError): void {
         receivedError(view, request, error);
       },
+      onRenderProcessGone(view: android.webkit.WebView, detail: android.webkit.RenderProcessGoneDetail): boolean {
+        return renderProcessGone(view, detail);
+      },
     })
     : (android.webkit.WebViewClient as any).extend({
       shouldInterceptRequest(_view: android.webkit.WebView, request: android.webkit.WebResourceRequest | string): android.webkit.WebResourceResponse | null {
@@ -596,6 +613,9 @@ function createAssetServingClient(): android.webkit.WebViewClient {
       },
       onReceivedError(view: android.webkit.WebView, request: android.webkit.WebResourceRequest, error: android.webkit.WebResourceError): void {
         receivedError(view, request, error);
+      },
+      onRenderProcessGone(view: android.webkit.WebView, detail: android.webkit.RenderProcessGoneDetail): boolean {
+        return renderProcessGone(view, detail);
       },
     });
   return new assetClientClass();

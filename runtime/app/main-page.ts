@@ -24,6 +24,11 @@ import { CustomWebView } from './shell/custom-webview';
 import { appwrapNativeLog } from './shell/native-log';
 
 let initialized = false;
+/** The Page whose WebView is wired. Android can destroy the Activity while the process (and this module)
+ * lives on — Back at the root, a "don't keep activities" trim, or a renderer crash recreate (see
+ * custom-webview.android.ts onRenderProcessGone). The NEW Activity builds a NEW Page + WebView; it must be
+ * attached and loaded too, or the bridge keeps driving the dead view ("webview not ready") behind a white page. */
+let wiredPage: Page | null = null;
 
 /** DEBUG iOS lifecycle tracer — logs NS suspend/resume/displayed AND the raw UIApplication
  * activation notifications (willResignActive/didBecomeActive/didEnterBackground/willEnterForeground)
@@ -93,10 +98,26 @@ export function onPageLoaded(args: EventData): void {
   applyThemeColor(SHELL_CONFIG.themeColor); // manifest/config theme_color → native chrome at boot
   setStatusBarStyle(SHELL_CONFIG.statusBarStyle);
 
-  if (initialized) return;
-  initialized = true;
+  if (wiredPage === page) return; // the same page re-loaded (e.g. back from a modal) — already wired
+  wiredPage = page;
   const hideSplash = wireSplashHold(page); // first: the overlay must be up before the first frame
+  if (!initialized) {
+    initialized = true;
+    initProcessOnce();
+  } else {
+    appwrapNativeLog('[native:lifecycle] page recreated in a live process — attaching + loading its new WebView');
+  }
+  const webView = page.getViewById<CustomWebView>('webview');
+  bridge.attach(webView);
+  if (isAndroid) wireAndroidSafeArea(webView); // experimental edge-to-edge (no-op unless config on)
+  wireLoadFallback(page, webView, hideSplash); // loader:'server' failure → branded retry view (no white screen)
+  loadBundle(webView);
+}
 
+/** Process-wide wiring — runs ONCE per process. Anything touching the WebView goes through
+ * bridge.getWebView() so it always drives the current page's view, not the first one. */
+function initProcessOnce(): void {
+  const currentWebView = (): CustomWebView | null => bridge.getWebView();
   registerHandlers();
   registerExtendedHandlers();
   registerParityHandlers();
@@ -115,8 +136,6 @@ export function onPageLoaded(args: EventData): void {
   // Shake-to-open developer menu (App Info / Reload). On by default, incl. prod.
   if (SHELL_CONFIG.devMenu) startDevMenu();
 
-  const webView = page.getViewById<CustomWebView>('webview');
-  bridge.attach(webView);
   // NOTE: the GLOBAL UIWindowDidBecomeHidden freeze-recovery observer is intentionally NOT armed.
   // It over-fired: the iOS edit menu / text-selection callout / AutoFill bar present in their own
   // floating UIWindows, and their normal appear/disappear churn hides a transient window → the observer
@@ -127,10 +146,7 @@ export function onPageLoaded(args: EventData): void {
   // which are the proven baseline and only fire for actual native surfaces. Re-add a scoped observer only
   // if a future surface orphans a window with no dismiss callback — gate it on a "surface presented" flag.
   void armNativeSurfaceRecovery; // referenced to keep the helper (still callable if a scoped need arises)
-  if (isAndroid) wireAndroidSafeArea(webView); // experimental edge-to-edge (no-op unless config on)
-  wireLoadFallback(page, webView, hideSplash); // loader:'server' failure → branded retry view (no white screen)
   startEventForwarding();
-  loadBundle(webView);
   // Env indicator banner: shown in the bottom safe area on relaunch when a non-default env override is
   // active (env-switcher only). Bottom-safe-area, auto-shrinks to a pill after 3s. No-op otherwise.
   showEnvBannerIfActive();
@@ -143,14 +159,14 @@ export function onPageLoaded(args: EventData): void {
   // Unless a module holds it running (background-hold.ts: e.g. a live call's page STT/TTS through a locked screen).
   // (Application.inBackground stays false on an Android screen lock — track suspend ourselves.)
   let suspended = false;
-  Application.on(Application.suspendEvent, () => { suspended = true; if (!backgroundRunHeld()) webView.setRenderingActive(false); });
-  onBackgroundRunReleased(() => { if (suspended) webView.setRenderingActive(false); });
+  Application.on(Application.suspendEvent, () => { suspended = true; if (!backgroundRunHeld()) currentWebView()?.setRenderingActive(false); });
+  onBackgroundRunReleased(() => { if (suspended) currentWebView()?.setRenderingActive(false); });
   Application.on(Application.resumeEvent, () => {
     suspended = false;
-    webView.setRenderingActive(true);
+    currentWebView()?.setRenderingActive(true);
     // iOS: wake the WebContent renderer NOW (it stays THROTTLED for ~30-45s after a full-window system
     // surface — StoreKit manage-subscriptions sheet, itms-apps deep link, backgrounding — froze it).
-    webView.wakeWebContent();
+    currentWebView()?.wakeWebContent();
     // Neither platform guarantees the wake lock survives a background trip (Android drops the window flag
     // outright if the Activity was recreated). Assert-only: never write `false`, so an app driving the
     // public `ui.keepAwake` bridge API itself (e.g. during video) isn't clobbered on resume.
@@ -166,7 +182,7 @@ export function onPageLoaded(args: EventData): void {
   // the OS default through so the app can still be backgrounded/exited.
   if (isAndroid) {
     Application.android.on(AndroidApplication.activityBackPressedEvent, (data: any) => {
-      const wk = webView.android as android.webkit.WebView;
+      const wk = currentWebView()?.android as android.webkit.WebView | undefined;
       if (wk?.canGoBack()) {
         data.cancel = true;
         wk.goBack();

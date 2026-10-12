@@ -1,4 +1,4 @@
-import { Utils, isIOS, isAndroid, Application, knownFolders, path as nsPath, File } from '@nativescript/core';
+import { Utils, isIOS, isAndroid, Application, AndroidApplication, knownFolders, path as nsPath, File } from '@nativescript/core';
 import { bridge } from './bridge';
 import { createUiDelegate } from './ios-ui-delegate';
 import { handleWebPermissionRequest } from './android-helpers';
@@ -553,11 +553,13 @@ function registerAndroid(): void {
       onPageStarted(_v: any, url: string) { if (url) pageUrl = String(url); emitState(); },
       onPageFinished() { emitState(); },
       doUpdateVisitedHistory() { emitState(); },
+      onRenderProcessGone() { return renderGone(); },
     });
     FilterClient ??= (android.webkit.WebViewClient as any).extend({
       onPageStarted(_v: any, url: string) { if (url) pageUrl = String(url); emitState(); },
       onPageFinished() { emitState(); },
       doUpdateVisitedHistory() { emitState(); },
+      onRenderProcessGone() { return renderGone(); },
       shouldInterceptRequest(_v: any, req: any) { try { return intercept(req); } catch (e) { console.warn('[webview] request filter failed', e); return null; } },
     });
     ChromeClient ??= (android.webkit.WebChromeClient as any).extend({
@@ -601,6 +603,19 @@ function registerAndroid(): void {
     android.webkit.CookieManager.getInstance().flush();
     bridge.emit('webview.closed', {});
   };
+
+  // The app's WebViews share ONE renderer: when it dies, EVERY view must handle it or Chromium kills the
+  // whole app. Drop this view (the page sees webview.closed and can reopen); the shell recreates the hub.
+  const renderGone = (): boolean => {
+    console.error('[webview] renderer gone — closing the native tab view');
+    try { destroy(); } catch (e) { console.error('[webview] teardown after renderer loss failed', e); wv = null; }
+    return true;
+  };
+  // An Activity recreated in a live process (Back at the root, renderer recovery) orphans this view on the
+  // dead window; close it so the reloaded page opens a fresh one instead of driving a detached view.
+  Application.android.on(AndroidApplication.activityDestroyedEvent, (e: any) => {
+    if (wv && wv.getContext() === e.activity) { try { destroy(); } catch (err) { console.error('[webview] teardown on activity destroy failed', err); wv = null; } }
+  });
 
   const onMain = <T>(fn: () => T): Promise<T> =>
     new Promise((resolve, reject) => Utils.dispatchToMainThread(() => {
