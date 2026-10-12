@@ -253,6 +253,7 @@ interface NativeReqs {
    * everything the OS can kill us for REACHING, the guard must expose only what the app ASKED for. */
   webCaps: { camera: boolean; microphone: boolean; geolocation: boolean };
   iosEntitlements: Record<string, boolean | string | string[]>;
+  iosBackgroundModes: string[];  // UIBackgroundModes active modules declare (ios.backgroundModes)
   androidPerms: string[];
   androidGradleDeps: string[];
   androidKotlin: boolean;        // any active module ships Kotlin native source
@@ -263,6 +264,9 @@ interface NativeReqs {
   packHandlers: Array<{ name: string; source: string; packDir: string; file: string; fn: string }>; // active pack modules with a register handler (for the generated barrel + staging)
   packModules: Array<Pick<CapManifest.ModuleManifest, 'name' | 'core' | 'capabilities' | 'group'>>; // active pack modules' handshake-relevant subset (their capabilities aren't in the runtime's static MODULES)
 }
+
+/** UIBackgroundModes only modules stamp — stripped from a build whose modules no longer ask (no stale `voip`). */
+const MODULE_BG_MODES = ['voip'];
 
 function nativeReqs(cfg: AppwrapConfig): NativeReqs {
   const modules = moduleList();
@@ -283,6 +287,7 @@ function nativeReqs(cfg: AppwrapConfig): NativeReqs {
   const androidPerms = new Set<string>();
   const gradle = new Set<string>();
   const iosEntitlements: Record<string, boolean | string | string[]> = {};
+  const iosBackgroundModes = new Set<string>();
   const nativeSrc: string[] = [];
   const packNativeSrc: NativeReqs['packNativeSrc'] = [];
   const packHandlers: NativeReqs['packHandlers'] = [];
@@ -306,6 +311,7 @@ function nativeReqs(cfg: AppwrapConfig): NativeReqs {
       for (const ap of m.android?.permissions ?? []) androidPerms.add(ap);
       for (const g of m.android?.gradleDeps ?? []) gradle.add(g);
       Object.assign(iosEntitlements, m.ios?.entitlements ?? {});
+      for (const b of m.ios?.backgroundModes ?? []) iosBackgroundModes.add(b);
       if (m.android?.kotlin) androidKotlin = true;
       if (m.android?.manifestApplication) androidManifestApp.push(m.android.manifestApplication);
       if (m.android?.manifestActivity) androidManifestActivity.push(m.android.manifestActivity);
@@ -380,6 +386,7 @@ function nativeReqs(cfg: AppwrapConfig): NativeReqs {
     iosPlist,
     webCaps,
     iosEntitlements,
+    iosBackgroundModes: [...iosBackgroundModes],
     androidPerms: [...androidPerms],
     androidGradleDeps: [...gradle],
     androidKotlin,
@@ -1164,6 +1171,13 @@ function stampIOSDisplayName(outDir: string, cfg: AppwrapConfig, req: NativeReqs
   // via `backgroundAudio: true` (Apple 2.5.4 rejects `audio` without a real background-audio feature).
   src = toggleBgMode(src, 'remote-notification', !!cfg.push?.enabled && cfg.push?.ios !== false);
   src = toggleBgMode(src, 'audio', !!cfg.backgroundAudio);
+  // Module-declared modes (ModuleManifest.ios.backgroundModes, e.g. a CallKit pack's `voip`): on while such a module is
+  // active, stripped when none is. The config/push-owned modes above are never module-toggled.
+  const moduleModes = new Set(req.iosBackgroundModes ?? []);
+  for (const mode of new Set([...moduleModes, ...MODULE_BG_MODES])) {
+    if (mode === 'audio' || mode === 'remote-notification') continue;
+    src = toggleBgMode(src, mode, moduleModes.has(mode));
+  }
   src = stripEmptyBackgroundModes(src);
 
   writeFileSync(plist, src);
