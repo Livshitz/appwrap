@@ -16,6 +16,12 @@ function apnsTokenToHex(deviceToken: NSData): string {
 if (isIOS) {
   // Custom delegate for URL-scheme opens. NativeScript tracks lifecycle via
   // UIApplication notifications, so adding a delegate only extends behavior.
+  /** A quick action set with a `url` (app.setShortcuts) opens that deep link; else it is the `app.shortcut` id. */
+  const shortcutFired = (item: UIApplicationShortcutItem) => {
+    const url = item.userInfo?.objectForKey('url');
+    if (url) onDeepLink(String(url));
+    else onShortcut(String(item.type));
+  };
   @NativeClass()
   class AppWrapAppDelegate extends UIResponder implements UIApplicationDelegate {
     static ObjCProtocols = [UIApplicationDelegate];
@@ -31,7 +37,7 @@ if (isIOS) {
       // Cold-launch from a home-screen quick action — Apple delivers it ONLY here in launchOptions
       // (performActionForShortcutItem is NOT called for the launch action). Buffered until handshake.
       const shortcut = launchOptions?.objectForKey(UIApplicationLaunchOptionsShortcutItemKey) as UIApplicationShortcutItem | null;
-      if (shortcut) onShortcut(String(shortcut.type));
+      if (shortcut) shortcutFired(shortcut);
       return true;
     }
     // Warm activation of a quick action (app already running/backgrounded).
@@ -40,7 +46,7 @@ if (isIOS) {
       shortcutItem: UIApplicationShortcutItem,
       completionHandler: (done: boolean) => void
     ): void {
-      onShortcut(String(shortcutItem.type));
+      shortcutFired(shortcutItem);
       completionHandler(true);
     }
     applicationOpenURLOptions(_app: UIApplication, url: NSURL, _options: NSDictionary<string, any>): boolean {

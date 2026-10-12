@@ -166,14 +166,18 @@ export function registerSystemHandlers(): void {
 
   // Home-screen long-press quick actions. iOS: UIApplication.shortcutItems. Android: dynamic
   // ShortcutManager shortcuts (API 25+; no-op below) whose launch intent carries appwrap_shortcut=<id>.
-  bridge.register('app.setShortcuts', ({ items }: { items: Array<{ id: string; title: string; subtitle?: string }> }) => {
+  // An item with a `url` opens that deep link instead (iOS: userInfo.url → onDeepLink in the app delegate;
+  // Android: a VIEW intent with that data) — so a cold launch gets it IN the handshake like any deep link.
+  bridge.register('app.setShortcuts', ({ items }: { items: Array<{ id: string; title: string; subtitle?: string; url?: string; icon?: string }> }) => {
     const list = (items ?? []).filter((i) => i && i.id && i.title);
     if (isIOS) {
       Utils.dispatchToMainThread(() => {
         const arr = NSMutableArray.alloc().init();
         for (const i of list) {
           const item = UIApplicationShortcutItem.alloc().initWithTypeLocalizedTitleLocalizedSubtitleIconUserInfo(
-            String(i.id), String(i.title), i.subtitle ? String(i.subtitle) : null, null, null
+            String(i.id), String(i.title), i.subtitle ? String(i.subtitle) : null,
+            i.icon ? UIApplicationShortcutIcon.iconWithSystemImageName(String(i.icon)) : null,
+            i.url ? NSDictionary.dictionaryWithObjectForKey(String(i.url), 'url') as any : null
           );
           arr.addObject(item);
         }
@@ -189,11 +193,13 @@ export function registerSystemHandlers(): void {
       for (const i of list) {
         const intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
         if (launchClass) intent.setClassName(ctx, launchClass.getName());
-        intent.putExtra('appwrap_shortcut', String(i.id));
+        if (i.url) intent.setData(android.net.Uri.parse(String(i.url)));
+        else intent.putExtra('appwrap_shortcut', String(i.id));
         intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK | android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP);
         const b = new android.content.pm.ShortcutInfo.Builder(ctx, String(i.id))
           .setShortLabel(String(i.title))
           .setLongLabel(String(i.subtitle ?? i.title))
+          .setIcon(android.graphics.drawable.Icon.createWithResource(ctx, ctx.getApplicationInfo().icon)) // (no icon = a blank tile on some launchers)
           .setIntent(intent);
         shortcuts.add(b.build());
       }
