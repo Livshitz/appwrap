@@ -1,4 +1,4 @@
-import { Utils, isIOS, isAndroid, Application, AndroidApplication, knownFolders, path as nsPath, File } from '@nativescript/core';
+import { Color, Utils, isIOS, isAndroid, Application, AndroidApplication, knownFolders, path as nsPath, File } from '@nativescript/core';
 import { bridge } from './bridge';
 import { createUiDelegate } from './ios-ui-delegate';
 import { handleWebPermissionRequest } from './android-helpers';
@@ -38,8 +38,8 @@ const KVO_KEYS = ['URL', 'title', 'canGoBack', 'canGoForward', 'loading'];
  *   webview.float {on, hit?: [{x,y,w,h}]}      — the app's WebView draws OVER the overlay (transparent wherever its own page
  *                                                 is), e.g. chat bubbles floating over a shown page without resizing it.
  *                                                 Touches inside `hit` (app CSS px) go to the app; everywhere else to the
- *                                                 overlay. Call again to move the rects; on:false restores. iOS; Android
- *                                                 resolves {floating:false} (not supported — keep a fallback).
+ *                                                 overlay. Call again to move the rects; on:false restores. iOS + Android (there
+ *                                                 the app's root goes over the overlay; its backdrop colour moves beneath).
  * Events: `webview.state` {url,title,canGoBack,canGoForward,loading} on every navigation change; `webview.scroll`; `webview.edgeSwipe` {dir} (iOS: an edge swipe WebKit has no stack for); `webview.fab` on a tap.
  *
  * Swipe back/forward on, target=_blank/window.open loads in place (shared ios-ui-delegate), keyboard +
@@ -85,6 +85,9 @@ const snapOpts = (p?: { width?: number; quality?: number } | null) => ({
 
 /** webview.float is on: the app WebView must stay see-through (keyboard.ts's backdrop paint skips it). */
 export let appFloating = false;
+/** Android: while floating, the app's backdrop colour (ui.setBackgroundColor) is painted UNDER the overlay — the NS root
+ *  above it must stay clear. Returns false when not floating (the caller paints the root as usual). */
+export let paintFloatBackdrop: (color: string) => boolean = () => false;
 
 /**
  * Hooks for module packs on the overlay (e.g. a content blocker) — generic, no policy here:
@@ -475,7 +478,7 @@ function registerIos(): void {
 
 function registerAndroid(): void {
   let wv: any = null; // android.webkit.WebView
-  let insets = { top: 0, bottom: 0 };
+  let insets = { top: 0, bottom: 0, contentTop: 0 };
   let layoutListener: any = null;
   let host: any = null;
   let emitQueued = false;
@@ -519,13 +522,15 @@ function registerAndroid(): void {
   const activity = () => Application.android.foregroundActivity ?? Application.android.startActivity;
   const density = () => Utils.android.getApplicationContext().getResources().getDisplayMetrics().density || 1;
   const content = (): any => activity()?.findViewById(android.R.id.content); // FrameLayout
+  /** An int[2] out-param for getLocationInWindow (a JS array is marshalled as a COPY: it would stay [0,0]). */
+  const xy = (): any => Array.create('int', 2);
 
   /** Place the overlay over the app WebView's box, `top`/`bottom` CSS px inside it. */
   const layout = () => {
     const frame = content();
     if (!wv || !frame) return;
     const d = density();
-    const fl = [0, 0], hl = [0, 0];
+    const fl = xy(), hl = xy();
     frame.getLocationInWindow(fl);
     let boxTop = 0, boxBottom = 0;
     if (host) {
@@ -534,7 +539,7 @@ function registerAndroid(): void {
       boxBottom = frame.getHeight() - (boxTop + host.getHeight());
     }
     const lp = new android.widget.FrameLayout.LayoutParams(-1, -1);
-    lp.topMargin = Math.max(0, Math.round(boxTop + insets.top * d));
+    lp.topMargin = Math.max(0, Math.round(boxTop + (insets.top + insets.contentTop) * d)); // (no content inset on Android: contentTop moves the view)
     lp.bottomMargin = Math.max(0, Math.round(boxBottom + insets.bottom * d));
     wv.setLayoutParams(lp);
   };
@@ -584,6 +589,7 @@ function registerAndroid(): void {
     wv = view;
     created(view);
     frame.addView(view);
+    order();
     layout();
     if (host) {
       layoutListener = new android.view.View.OnLayoutChangeListener({ onLayoutChange() { layout(); } });
@@ -622,8 +628,9 @@ function registerAndroid(): void {
       try { resolve(fn()); } catch (e) { reject(e); }
     }));
   const inset = (v?: number) => Math.max(0, Number(v) || 0);
-  const setInsets = (top?: number, bottom?: number) => {
+  const setInsets = (top?: number, bottom?: number, contentTop?: number) => {
     if (top !== undefined) insets.top = inset(top);
+    if (contentTop !== undefined) insets.contentTop = inset(contentTop);
     if (bottom !== undefined) insets.bottom = inset(bottom);
     layout();
   };
@@ -632,7 +639,7 @@ function registerAndroid(): void {
   const fabLayout = () => {
     const frame = content();
     if (!fab || !frame) return;
-    const d = density(), px = Math.round(fabO.size * d), fl = [0, 0], hl = [0, 0];
+    const d = density(), px = Math.round(fabO.size * d), fl = xy(), hl = xy();
     const h = host ?? bridge.getWebView()?.android;
     let boxBottom = 0, boxRight = 0;
     if (h) { frame.getLocationInWindow(fl); h.getLocationInWindow(hl); boxBottom = frame.getHeight() - (hl[1] - fl[1] + h.getHeight()); boxRight = frame.getWidth() - (hl[0] - fl[0] + h.getWidth()); }
@@ -642,14 +649,82 @@ function registerAndroid(): void {
     fab.setLayoutParams(lp);
     if (fab.getVisibility() === android.view.View.VISIBLE) fab.bringToFront();
   };
-  const reveal = () => { wv.setVisibility(android.view.View.VISIBLE); wv.bringToFront(); if (fab?.getVisibility() === android.view.View.VISIBLE) fab.bringToFront(); };
+  const reveal = () => { wv.setVisibility(android.view.View.VISIBLE); order(); if (fab?.getVisibility() === android.view.View.VISIBLE) fab.bringToFront(); };
 
-  bridge.register('webview.open', ({ url, top, bottom }: { url: string; top?: number; bottom?: number }) => {
+  // webview.float: the overlay sits UNDER the NS root (the content frame's child holding the app WebView), whose chain
+  // up from the app WebView is made see-through (the backdrop colour moves to the content frame, below the overlay).
+  // A touch's target is decided at ACTION_DOWN by the hit rects (app CSS px) and the whole gesture goes to it: the app
+  // WebView's touch listener forwards the others to the overlay (re-based to its coordinates).
+  let floating = false, floatHit: { x: number; y: number; w: number; h: number }[] = [], toPage = false;
+  let cleared: [any, any][] = [], frameBg: any = null, floatHost: any = null, rootColor = '';
+  const appView = () => host ?? bridge.getWebView()?.android ?? null;
+  const rootChild = (frame: any, v: any) => { while (v && v.getParent() !== frame) v = v.getParent(); return v; };
+  /** The overlay's place in the content frame: under the app's root while floating, else on top. */
+  const order = () => {
+    const frame = content(), rc = floating && frame && rootChild(frame, appView());
+    if (!wv || !frame) return;
+    if (!rc) return wv.bringToFront();
+    if (frame.indexOfChild(wv) < frame.indexOfChild(rc)) return;
+    frame.removeView(wv); frame.addView(wv, frame.indexOfChild(rc)); layout();
+  };
+  const forward = (ev: any) => {
+    if (!wv || !floatHost) return;
+    const a = xy(), b = xy(), e = android.view.MotionEvent.obtain(ev);
+    floatHost.getLocationInWindow(a); wv.getLocationInWindow(b);
+    e.offsetLocation(a[0] - b[0], a[1] - b[1]);
+    wv.dispatchTouchEvent(e); e.recycle();
+  };
+  const TouchRouter = new android.view.View.OnTouchListener({
+    onTouch(_v: any, ev: any) {
+      const act = ev.getActionMasked();
+      if (act === android.view.MotionEvent.ACTION_DOWN) {
+        const d = density(), x = ev.getX() / d, y = ev.getY() / d;
+        toPage = floating && !!wv && wv.getVisibility() === android.view.View.VISIBLE && !floatHit.some((r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);
+      }
+      const page = toPage;
+      if (page) forward(ev);
+      if (act === android.view.MotionEvent.ACTION_UP || act === android.view.MotionEvent.ACTION_CANCEL) toPage = false;
+      return page;
+    },
+  });
+  const setFloat = (on: boolean) => {
+    const frame = content(), h = appView();
+    if (on === floating) return;
+    if (on && (!frame || !h)) throw err('NATIVE_ERROR', 'webview.float: no host view');
+    floating = appFloating = on;
+    if (on) {
+      floatHost = h; frameBg = frame.getBackground(); cleared = [];
+      let color: number | null = null;
+      for (let v = h; v && v !== frame; v = v.getParent()) {
+        const bg = v.getBackground?.();
+        if (color === null && v !== h && bg instanceof android.graphics.drawable.ColorDrawable) color = bg.getColor();
+        cleared.push([v, bg]);
+        if (v === h) v.setBackgroundColor(android.graphics.Color.TRANSPARENT); else v.setBackground(null);
+      }
+      if (color !== null) frame.setBackgroundColor(color);
+      h.setOnTouchListener(TouchRouter);
+    } else {
+      floatHost?.setOnTouchListener(null);
+      if (android.os.Build.VERSION.SDK_INT >= 29) floatHost?.setSystemGestureExclusionRects(new java.util.ArrayList());
+      for (const [v, bg] of cleared) v.setBackground(bg);
+      cleared = []; frame?.setBackground(frameBg); frameBg = null; floatHost = null; toPage = false;
+      if (rootColor) { const root = Application.getRootView(); if (root) root.backgroundColor = new Color(rootColor); rootColor = ''; }
+    }
+    order();
+  };
+  paintFloatBackdrop = (color: string) => {
+    if (!floating) return false;
+    rootColor = color;
+    content()?.setBackgroundColor(new Color(color).android);
+    return true;
+  };
+
+  bridge.register('webview.open', ({ url, top, bottom, contentTop }: { url: string; top?: number; bottom?: number; contentTop?: number }) => {
     const target = String(url ?? '');
     if (!target) throw err('NATIVE_ERROR', 'webview.open: empty url');
     return onMain(() => {
-      if (!wv) { insets = { top: inset(top), bottom: inset(bottom) }; create(); }
-      else setInsets(top, bottom);
+      if (!wv) { insets = { top: inset(top), bottom: inset(bottom), contentTop: inset(contentTop) }; create(); }
+      else setInsets(top, bottom, contentTop);
       reveal();
       load(target);
       return state();
@@ -669,8 +744,8 @@ function registerAndroid(): void {
   );
 
   bridge.register('webview.hide', () => onMain(() => { wv?.setVisibility(android.view.View.GONE); return { open: !!wv }; }));
-  bridge.register('webview.show', (p?: { top?: number; bottom?: number } | null) => onMain(() => {
-    if (wv) { setInsets(p?.top, p?.bottom); reveal(); }
+  bridge.register('webview.show', (p?: { top?: number; bottom?: number; contentTop?: number } | null) => onMain(() => {
+    if (wv) { setInsets(p?.top, p?.bottom, p?.contentTop); reveal(); }
     return { open: !!wv };
   }));
   bridge.register('webview.close', () => onMain(() => { destroy(); }));
@@ -748,7 +823,21 @@ function registerAndroid(): void {
     })();
   });
 
-  bridge.register('webview.float', () => ({ floating: false })); // (not supported here: callers keep their fallback)
+  /** Android's back gesture takes a drag from the screen's side edges: exclude the hit boxes on an edge (e.g. a button
+   *  tucked against it), not the full-width ones (a top bar keeps Back; the system caps the exclusion per edge). */
+  const excludeEdges = () => {
+    const h = floatHost;
+    if (!h || android.os.Build.VERSION.SDK_INT < 29) return;
+    const d = density(), w = h.getWidth() / d, list = new java.util.ArrayList();
+    if (floating) for (const r of floatHit) if (r.w < w / 2 && (r.x <= 1 || r.x + r.w >= w - 1)) list.add(new android.graphics.Rect(Math.round(r.x * d), Math.round(r.y * d), Math.round((r.x + r.w) * d), Math.round((r.y + r.h) * d)));
+    h.setSystemGestureExclusionRects(list);
+  };
+  bridge.register('webview.float', (p?: { on?: boolean; hit?: unknown } | null) => onMain(() => {
+    floatHit = floatRects(p?.hit);
+    setFloat(p?.on !== false);
+    excludeEdges();
+    return { floating };
+  }));
 
   bridge.register('webview.cookies', (p: { cookies?: Cookie[] } | null) => {
     const list = cookieList(p);

@@ -124,7 +124,7 @@ export class WebViewModule {
   /** Float the app's WebView OVER the overlay: it draws on top (transparent wherever the app's own page is — give the
    *  area over the overlay no background), so e.g. chat bubbles float over a shown page without resizing it. Touches
    *  inside `hit` (app CSS px, viewport coords) go to the app; everywhere else to the page. Call again to move the rects;
-   *  `on:false` restores. iOS; elsewhere resolves `{floating:false}` — keep a fallback (e.g. inset the page). */
+   *  `on:false` restores. iOS + Android; elsewhere resolves `{floating:false}` — keep a fallback (e.g. inset the page). */
   float(opts: WebViewFloatOptions): Promise<{ floating: boolean }> {
     return this.kit.invoke('webview.float', { ...opts });
   }
