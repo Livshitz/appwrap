@@ -18,11 +18,18 @@ export interface WebViewOpenOptions {
   /** iOS: the page's content (and its fixed elements) start this far below the overlay's top (CSS px); the area above
    *  scrolls under e.g. a bar that collapses with {@link WebViewModule.onScroll}. Default 0. */
   contentTop?: number;
+  /** Android: the overlay slides up to this far (CSS px) with the user's drag before the page scrolls (Chrome-style),
+   *  reported as {@link WebViewScroll.bar} — the app moves its bar along. iOS ignores it (contentTop does the job). */
+  collapse?: number;
 }
 
 /** The page's scroll position: `y` CSS px from its top; `user` while a finger drags it or it coasts from a flick;
  *  `dragging` while the finger is down. */
-export interface WebViewScroll { y: number; user: boolean; dragging: boolean }
+export interface WebViewScroll {
+  y: number; user: boolean; dragging: boolean;
+  /** Android with `collapse`: how far the overlay slid up (0..collapse); `settled` once it eases to rest. */
+  bar?: number; settled?: boolean;
+}
 
 export interface WebViewFabOptions {
   show: boolean;
@@ -138,7 +145,7 @@ export class WebViewModule {
     return this.kit.invoke('webview.close', {});
   }
 
-  /** The page scrolled (iOS, at most once per frame) — e.g. to collapse a top bar along with it. */
+  /** The page scrolled (at most once per frame) — e.g. to collapse a top bar along with it. */
   onScroll(cb: (s: WebViewScroll) => void): Unsubscribe {
     return this.kit.on('webview.scroll', (p) => cb(p as WebViewScroll));
   }
