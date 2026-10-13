@@ -193,7 +193,7 @@ export function registerAndroidHandlers(): void {
     return biometricCallbackClass;
   };
 
-  bridge.register('biometrics.authenticate', ({ reason }: { reason?: string }) => {
+  bridge.register('biometrics.authenticate', ({ reason, passcode }: { reason?: string; passcode?: boolean }) => {
     return new Promise((resolve, reject) => {
       Utils.dispatchToMainThread(() => {
         try {
@@ -203,11 +203,11 @@ export function registerAndroidHandlers(): void {
           biometricPending = { resolve, reject };
           const Callback = getBiometricCallbackClass();
           const prompt = new androidx.biometric.BiometricPrompt(act, executor, new Callback());
-          const info = new androidx.biometric.BiometricPrompt.PromptInfo.Builder()
-            .setTitle(String(reason ?? 'Authenticate'))
-            .setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK)
-            .setNegativeButtonText('Cancel')
-            .build();
+          const A = androidx.biometric.BiometricManager.Authenticators;
+          const b = new androidx.biometric.BiometricPrompt.PromptInfo.Builder().setTitle(String(reason ?? 'Authenticate'));
+          // (with the device credential allowed, the system draws its own fallback button: a negative button throws)
+          const info = (passcode ? b.setAllowedAuthenticators(A.BIOMETRIC_WEAK | A.DEVICE_CREDENTIAL)
+            : b.setAllowedAuthenticators(A.BIOMETRIC_WEAK).setNegativeButtonText('Cancel')).build();
           prompt.authenticate(info);
         } catch (e: any) {
           if (biometricPending?.reject === reject) biometricPending = null;
