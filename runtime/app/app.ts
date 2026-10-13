@@ -1,5 +1,5 @@
 import { Application, isIOS } from '@nativescript/core';
-import { onDeepLink, onShortcut } from './shell/events';
+import { onDeepLink, onShortcut, onUserActivity } from './shell/events';
 import { iosOrientationMask } from './shell/orientation';
 import { installForegroundNotificationDelegate } from './shell/handlers-extended';
 import { onApnsToken, onApnsError, onRemoteMessage } from './shell/handlers-push';
@@ -67,7 +67,9 @@ if (isIOS) {
         onDeepLink(userActivity.webpageURL.absoluteString);
         return true;
       }
-      return false;
+      // Any other activity (a CallKit Recents redial: INStartCallIntent) goes to a module pack (setUserActivityHandler).
+      console.log('AppWrap: userActivity', userActivity.activityType);
+      return onUserActivity(userActivity);
     }
     // Drives `kit.screen.orientation.lock` — UIKit reads this on every rotation.
     applicationSupportedInterfaceOrientationsForWindow(_app: UIApplication, _window: UIWindow): UIInterfaceOrientationMask {

@@ -85,6 +85,21 @@ export function onShortcut(id: string): void {
   else pendingShortcut = id;
 }
 
+/** iOS: a non-web NSUserActivity handed to the app (e.g. a CallKit Recents tap → INStartCallIntent). A module pack
+ * claims it with setUserActivityHandler (returns true if handled). One that arrives before a handler is set (cold
+ * launch: continueUserActivity runs before main-page registers module handlers) is kept and replayed on registration. */
+let userActivityHandler: ((activity: any) => boolean) | null = null;
+let pendingUserActivity: any = null;
+export function setUserActivityHandler(fn: ((activity: any) => boolean) | null): void {
+  userActivityHandler = fn;
+  if (fn && pendingUserActivity) { const a = pendingUserActivity; pendingUserActivity = null; fn(a); }
+}
+export function onUserActivity(activity: any): boolean {
+  if (userActivityHandler) return userActivityHandler(activity);
+  pendingUserActivity = activity;
+  return true;
+}
+
 /** A tray notification was tapped → the app was re-launched (or foregrounded) with the payload.
  * Buffered until the handshake like deep links, because a cold start from a notification fires this
  * before the WebView is running our bundle — emit it raw and the route is lost, the PWA boots at `/`
