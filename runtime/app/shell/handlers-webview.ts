@@ -17,7 +17,7 @@ const KVO_KEYS = ['URL', 'title', 'canGoBack', 'canGoForward', 'loading'];
  *
  *   webview.open  {url, top?, bottom?}          — show (or, if open, navigate + show / re-inset)
  *   webview.nav   {op:'back'|'forward'|'reload'|'go', url?}
- *   webview.hide / webview.show {top?,bottom?,contentTop?}  — keep state, reveal/cover the page beneath (show re-insets)
+ *   webview.hide / webview.show {top?,bottom?,contentTop?,collapse?}  — keep state, reveal/cover the page beneath (show re-insets)
  *   webview.close                               — tear down; emits `webview.closed`
  *   webview.cookies {cookies: Cookie[]}         — write cookies into the overlay's (persistent) jar; resolves {set}
  *                                                 once all are stored (Bare Remote's opt-in "sign in like the Mac")
@@ -40,7 +40,8 @@ const KVO_KEYS = ['URL', 'title', 'canGoBack', 'canGoForward', 'loading'];
  *                                                 Touches inside `hit` (app CSS px) go to the app; everywhere else to the
  *                                                 overlay. Call again to move the rects; on:false restores. iOS + Android (there
  *                                                 the app's root goes over the overlay; its backdrop colour moves beneath).
- * Events: `webview.state` {url,title,canGoBack,canGoForward,loading} on every navigation change; `webview.scroll`; `webview.edgeSwipe` {dir} (iOS: an edge swipe WebKit has no stack for); `webview.fab` on a tap.
+ * Events: `webview.state` {url,title,canGoBack,canGoForward,loading} on every navigation change; `webview.scroll`
+ * {y,user,dragging} (Android with `collapse` px: also `bar`, the overlay slid up that far under a collapsing bar, by the drag itself); `webview.edgeSwipe` {dir} (iOS: an edge swipe WebKit has no stack for); `webview.fab` on a tap.
  *
  * Swipe back/forward on, target=_blank/window.open loads in place (shared ios-ui-delegate), keyboard +
  * safe areas left to the page (contentInsetAdjustment never: edge to edge, env(safe-area-inset-*) set).
@@ -478,7 +479,7 @@ function registerIos(): void {
 
 function registerAndroid(): void {
   let wv: any = null; // android.webkit.WebView
-  let insets = { top: 0, bottom: 0, contentTop: 0 };
+  let insets = { top: 0, bottom: 0, contentTop: 0, collapse: 0 };
   let layoutListener: any = null;
   let host: any = null;
   let emitQueued = false;
@@ -540,9 +541,66 @@ function registerAndroid(): void {
     }
     const lp = new android.widget.FrameLayout.LayoutParams(-1, -1);
     lp.topMargin = Math.max(0, Math.round(boxTop + (insets.top + insets.contentTop) * d)); // (no content inset on Android: contentTop moves the view)
-    lp.bottomMargin = Math.max(0, Math.round(boxBottom + insets.bottom * d));
+    // (while the bar slides, the view moves up by `bar` and is that much taller, so its bottom stays put)
+    lp.bottomMargin = Math.round(boxBottom + insets.bottom * d - (touching || bar > 0 ? insets.collapse * d : 0));
     wv.setLayoutParams(lp);
+    wv.setTranslationY(-bar * d);
   };
+
+  /** `webview.scroll` {y, user, dragging} at most once per frame (iOS parity); with `collapse` set, also `bar`: how far
+   *  (CSS px, 0..collapse) the overlay slid up under the app's collapsing bar, `settled` once it is easing to rest.
+   *  The bar takes the drag first (Chrome-style): the view moves with the finger, so the page scrolls only once the
+   *  bar is fully in or out — the overlay moves in the same frame as the touch, no bridge round-trip. */
+  let bar = 0, touching = false, coasting = false, settled = false, scrollQueued = false;
+  let downX = 0, downY = 0, lastY = 0, barDir = 0, vertical = false, coastT: any = 0;
+  const emitScroll = () => {
+    if (scrollQueued || !wv) return;
+    scrollQueued = true;
+    setTimeout(() => {
+      scrollQueued = false;
+      if (!wv) return;
+      const p: any = { y: Math.round(wv.getScrollY() / density()), user: touching || coasting, dragging: touching };
+      if (insets.collapse) { p.bar = bar; if (settled) p.settled = true; }
+      settled = false;
+      bridge.emit('webview.scroll', p);
+    }, 0);
+  };
+  /** A flick's coast counts as the user's until the page stops moving. */
+  const coast = () => { coasting = true; clearTimeout(coastT); coastT = setTimeout(() => { coasting = false; }, 150); };
+  /** Ease the bar to `to` (0 = shown, `collapse` = slid away). */
+  const settleBar = (to: number) => {
+    if (!wv) return;
+    wv.animate().cancel();
+    if (to === bar && Math.abs(wv.getTranslationY() + bar * density()) < 1) { if (!touching) layout(); return; }
+    bar = to; settled = true;
+    wv.animate().translationY(-bar * density()).setDuration(300).setInterpolator(new android.view.animation.PathInterpolator(0.2, 0.8, 0.2, 1))
+      .withEndAction(new java.lang.Runnable({ run() { if (!touching) layout(); } }));
+    emitScroll();
+  };
+  const BarTouch = new android.view.View.OnTouchListener({
+    onTouch(_v: any, ev: any) {
+      const M = android.view.MotionEvent, act = ev.getActionMasked(), d = density();
+      if (act === M.ACTION_DOWN) {
+        touching = true; vertical = false; barDir = 0; coasting = false;
+        downX = ev.getRawX(); downY = lastY = ev.getRawY();
+        if (insets.collapse) { wv.animate().cancel(); bar = Math.min(insets.collapse, Math.max(0, -wv.getTranslationY() / d)); layout(); }
+      } else if (act === M.ACTION_MOVE && touching) {
+        const y = ev.getRawY(), dy = (lastY - y) / d; // > 0: the finger went up (the page scrolls down)
+        if (!vertical && Math.abs(y - downY) > android.view.ViewConfiguration.get(wv.getContext()).getScaledTouchSlop()) vertical = Math.abs(y - downY) > Math.abs(ev.getRawX() - downX);
+        lastY = y;
+        if (insets.collapse && vertical && ev.getPointerCount() === 1) {
+          const next = Math.min(insets.collapse, Math.max(0, bar + dy)), used = next - bar;
+          if (used) { bar = next; barDir = used; wv.setTranslationY(-bar * d); ev.offsetLocation(0, used * d); emitScroll(); } // (re-based: the page sees only the rest)
+        }
+      } else if (act === M.ACTION_UP || act === M.ACTION_CANCEL) {
+        touching = false; coast();
+        const H = insets.collapse;
+        if (H) settleBar(bar > 0 && (barDir > 0 ? bar > H * 0.3 : bar > H * 0.7) ? H : 0);
+        emitScroll();
+      }
+      return false;
+    },
+  });
 
   const load = (url: string) => {
     if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) throw err('NATIVE_ERROR', `webview: invalid url ${url}`);
@@ -555,13 +613,13 @@ function registerAndroid(): void {
     host = bridge.getWebView()?.android ?? null;
     // (no spread in an .extend literal: Android's binding generator drops the file's remaining bindings on one)
     ViewClient ??= (android.webkit.WebViewClient as any).extend({
-      onPageStarted(_v: any, url: string) { if (url) pageUrl = String(url); emitState(); },
+      onPageStarted(_v: any, url: string) { if (url) pageUrl = String(url); emitState(); settleBar(0); },
       onPageFinished() { emitState(); },
       doUpdateVisitedHistory() { emitState(); saveHistory(); },
       onRenderProcessGone() { return renderGone(); },
     });
     FilterClient ??= (android.webkit.WebViewClient as any).extend({
-      onPageStarted(_v: any, url: string) { if (url) pageUrl = String(url); emitState(); },
+      onPageStarted(_v: any, url: string) { if (url) pageUrl = String(url); emitState(); settleBar(0); },
       onPageFinished() { emitState(); },
       doUpdateVisitedHistory() { emitState(); saveHistory(); },
       onRenderProcessGone() { return renderGone(); },
@@ -583,6 +641,8 @@ function registerAndroid(): void {
     view.setWebChromeClient(chrome);
     (view as any)._appwrapClients = [null, chrome]; // keep JS peers alive (NS GC doesn't see the native hold)
     setClient(view);
+    view.setOnTouchListener(BarTouch);
+    view.setOnScrollChangeListener(new android.view.View.OnScrollChangeListener({ onScrollChange() { if (coasting) coast(); emitScroll(); } }));
     const bg = host?.getBackground?.();
     if (bg instanceof android.graphics.drawable.ColorDrawable) view.setBackgroundColor(bg.getColor());
     if (SHELL_CONFIG.debug) android.webkit.WebView.setWebContentsDebuggingEnabled(true); // remote DevTools only in debug builds, never store builds
@@ -607,7 +667,7 @@ function registerAndroid(): void {
     wv.stopLoading();
     wv.getParent()?.removeView(wv);
     wv.destroy();
-    wv = null; host = null; layoutListener = null;
+    wv = null; host = null; layoutListener = null; bar = 0; touching = coasting = false;
     android.webkit.CookieManager.getInstance().flush();
     if (!quiet) bridge.emit('webview.closed', {});
   };
@@ -681,10 +741,11 @@ function registerAndroid(): void {
     return { ok: true };
   }));
   const inset = (v?: number) => Math.max(0, Number(v) || 0);
-  const setInsets = (top?: number, bottom?: number, contentTop?: number) => {
+  const setInsets = (top?: number, bottom?: number, contentTop?: number, collapse?: number) => {
     if (top !== undefined) insets.top = inset(top);
     if (contentTop !== undefined) insets.contentTop = inset(contentTop);
     if (bottom !== undefined) insets.bottom = inset(bottom);
+    if (collapse !== undefined && inset(collapse) !== insets.collapse) { insets.collapse = inset(collapse); settleBar(0); }
     layout();
   };
   let fab: any = null, fabO = fabOpts(null);
@@ -772,12 +833,12 @@ function registerAndroid(): void {
     return true;
   };
 
-  bridge.register('webview.open', ({ url, top, bottom, contentTop, historyKey: key }: { url: string; top?: number; bottom?: number; contentTop?: number; historyKey?: string }) => {
+  bridge.register('webview.open', ({ url, top, bottom, contentTop, collapse, historyKey: key }: { url: string; top?: number; bottom?: number; contentTop?: number; collapse?: number; historyKey?: string }) => {
     const target = String(url ?? '');
     if (!target) throw err('NATIVE_ERROR', 'webview.open: empty url');
     return onMain(() => {
-      if (!wv) { insets = { top: inset(top), bottom: inset(bottom), contentTop: inset(contentTop) }; create(); }
-      else setInsets(top, bottom, contentTop);
+      if (!wv) { insets = { top: inset(top), bottom: inset(bottom), contentTop: inset(contentTop), collapse: inset(collapse) }; create(); }
+      else setInsets(top, bottom, contentTop, collapse);
       // (a restored list loads its current page; another url goes on top of it, keeping it to go back to)
       const restored = key !== undefined && restoreHistory(String(key));
       reveal();
@@ -799,8 +860,8 @@ function registerAndroid(): void {
   );
 
   bridge.register('webview.hide', () => onMain(() => { wv?.setVisibility(android.view.View.GONE); return { open: !!wv }; }));
-  bridge.register('webview.show', (p?: { top?: number; bottom?: number; contentTop?: number } | null) => onMain(() => {
-    if (wv) { setInsets(p?.top, p?.bottom, p?.contentTop); reveal(); }
+  bridge.register('webview.show', (p?: { top?: number; bottom?: number; contentTop?: number; collapse?: number } | null) => onMain(() => {
+    if (wv) { setInsets(p?.top, p?.bottom, p?.contentTop, p?.collapse); reveal(); }
     return { open: !!wv };
   }));
   bridge.register('webview.close', () => onMain(() => { destroy(); }));
