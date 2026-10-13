@@ -12,8 +12,8 @@ export class BiometricsModule {
     return this.kit.invoke('biometrics.available');
   }
 
-  /** Resolves { success } — rejects with DENIED on user cancel/failure. */
-  authenticate(reason: string): Promise<{ success: boolean }> {
-    return this.kit.invoke('biometrics.authenticate', { reason }, { timeoutMs: 60_000 });
+  /** Resolves { success } — rejects with DENIED on user cancel/failure. `passcode`: the device passcode is a fallback. */
+  authenticate(reason: string, opts: { passcode?: boolean } = {}): Promise<{ success: boolean }> {
+    return this.kit.invoke('biometrics.authenticate', { reason, ...opts }, { timeoutMs: 60_000 });
   }
 }

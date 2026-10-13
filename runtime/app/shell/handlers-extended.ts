@@ -383,12 +383,13 @@ export function registerExtendedHandlers(): void {
     return { available, type };
   });
 
-  bridge.register('biometrics.authenticate', ({ reason }: { reason?: string }) => {
+  // passcode: the device passcode is offered when biometrics fail or aren't enrolled (DeviceOwnerAuthentication).
+  bridge.register('biometrics.authenticate', ({ reason, passcode }: { reason?: string; passcode?: boolean }) => {
     if (!isIOS) throw Object.assign(new Error('iOS only for now'), { code: 'UNSUPPORTED' });
     return new Promise((resolve, reject) => {
       const ctx = LAContext.new();
       ctx.evaluatePolicyLocalizedReasonReply(
-        LAPolicy.DeviceOwnerAuthenticationWithBiometrics,
+        passcode ? LAPolicy.DeviceOwnerAuthentication : LAPolicy.DeviceOwnerAuthenticationWithBiometrics,
         String(reason ?? 'Authenticate'),
         (success, error) => {
           if (success) resolve({ success: true });
