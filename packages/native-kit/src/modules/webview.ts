@@ -70,9 +70,9 @@ export class WebViewModule {
     return this.kit.capability('webview');
   }
 
-  /** Show the overlay at `url` (navigates it if already open; re-applies top/bottom insets). `historyKey` (iOS 15+): keep
+  /** Show the overlay at `url` (navigates it if already open; re-applies top/bottom insets). `historyKey` (iOS 15+, Android): keep
    *  the page's real back-forward list under this key (e.g. your tab's id) and restore it when the key opens again —
-   *  WebKit's own edge swipe then walks it after a relaunch or a tab switch. {@link forget} drops it. */
+   *  the platform's back (WebKit's edge swipe, Android's Back) then walks it after a relaunch or a tab switch. {@link forget} drops it. */
   open(url: string, opts: WebViewOpenOptions & { historyKey?: string } = {}): Promise<WebViewState> {
     return this.kit.invoke('webview.open', { url, ...opts });
   }
