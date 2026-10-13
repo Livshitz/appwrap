@@ -557,13 +557,13 @@ function registerAndroid(): void {
     ViewClient ??= (android.webkit.WebViewClient as any).extend({
       onPageStarted(_v: any, url: string) { if (url) pageUrl = String(url); emitState(); },
       onPageFinished() { emitState(); },
-      doUpdateVisitedHistory() { emitState(); },
+      doUpdateVisitedHistory() { emitState(); saveHistory(); },
       onRenderProcessGone() { return renderGone(); },
     });
     FilterClient ??= (android.webkit.WebViewClient as any).extend({
       onPageStarted(_v: any, url: string) { if (url) pageUrl = String(url); emitState(); },
       onPageFinished() { emitState(); },
-      doUpdateVisitedHistory() { emitState(); },
+      doUpdateVisitedHistory() { emitState(); saveHistory(); },
       onRenderProcessGone() { return renderGone(); },
       shouldInterceptRequest(_v: any, req: any) { try { return intercept(req); } catch (e) { console.warn('[webview] request filter failed', e); return null; } },
     });
@@ -597,9 +597,11 @@ function registerAndroid(): void {
     }
   };
 
-  const destroy = () => {
+  /** `quiet`: swap the view (a history restore needs a fresh one) — no history save, no `webview.closed`. */
+  const destroy = (quiet = false) => {
     if (!wv) return;
     overlayView = null;
+    if (!quiet) { try { writeHistory(); } catch (e) { console.warn('[webview] history not saved on close', e); } historyKey = ''; }
     if ((wv as any)._appwrapFiltering) retired.add((wv as any)._appwrapClients[0]);
     if (host && layoutListener) host.removeOnLayoutChangeListener(layoutListener);
     wv.stopLoading();
@@ -607,7 +609,7 @@ function registerAndroid(): void {
     wv.destroy();
     wv = null; host = null; layoutListener = null;
     android.webkit.CookieManager.getInstance().flush();
-    bridge.emit('webview.closed', {});
+    if (!quiet) bridge.emit('webview.closed', {});
   };
 
   // The app's WebViews share ONE renderer: when it dies, EVERY view must handle it or Chromium kills the
@@ -627,6 +629,57 @@ function registerAndroid(): void {
     new Promise((resolve, reject) => Utils.dispatchToMainThread(() => {
       try { resolve(fn()); } catch (e) { reject(e); }
     }));
+
+  /** `historyKey` (open): the page's back-forward list (WebView.saveState, a Bundle) is kept in a file per key and
+   *  restored when that key opens again — after a relaunch or a switch between the app's tabs (iOS parity). */
+  let historyKey = '', historyT: any = 0;
+  const historyFile = (key: string) => nsPath.join(knownFolders.documents().path, 'webview-history', key.replace(/[^\w.-]/g, '_') + '.bundle');
+  const writeHistory = () => {
+    clearTimeout(historyT);
+    if (!wv || !historyKey) return;
+    const b = new android.os.Bundle();
+    if (!wv.saveState(b)) return; // (nothing to keep yet)
+    const p = android.os.Parcel.obtain();
+    try {
+      p.writeBundle(b);
+      const f = historyFile(historyKey);
+      File.fromPath(f); // (creates the folder)
+      const tmp = new java.io.File(f + '.tmp'), out = new java.io.FileOutputStream(tmp);
+      try { out.write(p.marshall()); } finally { out.close(); }
+      if (!tmp.renameTo(new java.io.File(f))) console.warn(`[webview] history not saved for ${historyKey}`);
+    } finally { p.recycle(); }
+  };
+  const saveHistory = () => { clearTimeout(historyT); historyT = setTimeout(() => { try { writeHistory(); } catch (e) { console.warn('[webview] history not saved', e); } }, 400); };
+  const readHistory = (key: string): any => {
+    const f = new java.io.File(historyFile(key));
+    if (!f.exists()) return null;
+    const p = android.os.Parcel.obtain();
+    try {
+      const bytes = Array.create('byte', f.length()), inp = new java.io.FileInputStream(f);
+      try { for (let n = 0; n < bytes.length;) { const r = inp.read(bytes, n, bytes.length - n); if (r < 0) break; n += r; } } finally { inp.close(); }
+      p.unmarshall(bytes, 0, bytes.length);
+      p.setDataPosition(0);
+      return p.readBundle(android.webkit.WebView.class.getClassLoader());
+    } finally { p.recycle(); }
+  };
+  /** Point the overlay at `key`'s list (restored from its file, if any, into a fresh view); true = restored. */
+  const restoreHistory = (key: string): boolean => {
+    if (key === historyKey) return false;
+    writeHistory(); historyKey = key;
+    if (!key || !wv) return false;
+    try {
+      const b = readHistory(key);
+      if (!b) return false;
+      if (wv.copyBackForwardList().getSize() > 0) { destroy(true); create(); }
+      return !!wv.restoreState(b);
+    } catch (e) { console.warn(`[webview] history restore failed for ${key}`, e); return false; }
+  };
+  bridge.register('webview.forget', ({ key }: { key: string }) => onMain(() => {
+    if (key === historyKey) historyKey = '';
+    const f = new java.io.File(historyFile(String(key ?? '')));
+    if (f.exists()) f.delete();
+    return { ok: true };
+  }));
   const inset = (v?: number) => Math.max(0, Number(v) || 0);
   const setInsets = (top?: number, bottom?: number, contentTop?: number) => {
     if (top !== undefined) insets.top = inset(top);
@@ -719,14 +772,16 @@ function registerAndroid(): void {
     return true;
   };
 
-  bridge.register('webview.open', ({ url, top, bottom, contentTop }: { url: string; top?: number; bottom?: number; contentTop?: number }) => {
+  bridge.register('webview.open', ({ url, top, bottom, contentTop, historyKey: key }: { url: string; top?: number; bottom?: number; contentTop?: number; historyKey?: string }) => {
     const target = String(url ?? '');
     if (!target) throw err('NATIVE_ERROR', 'webview.open: empty url');
     return onMain(() => {
       if (!wv) { insets = { top: inset(top), bottom: inset(bottom), contentTop: inset(contentTop) }; create(); }
       else setInsets(top, bottom, contentTop);
+      // (a restored list loads its current page; another url goes on top of it, keeping it to go back to)
+      const restored = key !== undefined && restoreHistory(String(key));
       reveal();
-      load(target);
+      if (!restored || wv.getUrl() !== target) load(target);
       return state();
     });
   });
