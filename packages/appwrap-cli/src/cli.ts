@@ -1105,6 +1105,11 @@ function stampIOSDisplayName(outDir: string, cfg: AppwrapConfig, req: NativeReqs
   for (const { key, usage } of req.iosPlist) {
     extras.push(`  <key>${key}</key>\n  <string>${usage}</string>`);
   }
+  // UIScene lifecycle — iOS 27 traps (EXC_BREAKPOINT at launch) apps that don't adopt it. The manifest
+  // alone opts in; the scene config comes from AppWrapAppDelegate (runtime app.ts), so no configurations here.
+  if (!/<key>UIApplicationSceneManifest<\/key>/.test(src) && !cfg.iosInfoPlist?.UIApplicationSceneManifest) {
+    extras.push(`  <key>UIApplicationSceneManifest</key>\n  <dict>\n    <key>UIApplicationSupportsMultipleScenes</key>\n    <false/>\n  </dict>`);
+  }
   // Read by the native AppwrapKeyboardAccessory +load (runtime App_Resources/iOS/src) — no JS involved.
   if (cfg.iosHideKeyboardAccessory) extras.push(`  <key>AppwrapHideKeyboardAccessory</key>\n  <true/>`);
   if (cfg.iosKeyboardWithoutUserAction) extras.push(`  <key>AppwrapKeyboardWithoutUserAction</key>\n  <true/>`);

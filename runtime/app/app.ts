@@ -22,10 +22,88 @@ if (isIOS) {
     if (url) onDeepLink(String(url));
     else onShortcut(String(item.type));
   };
+  /** Universal links (https://<associated-domain>/...) arrive as a browsing user activity, NOT a URL open.
+   * Any other activity (a CallKit Recents redial: INStartCallIntent) goes to a module pack (setUserActivityHandler). */
+  const activityFired = (userActivity: NSUserActivity): boolean => {
+    if (userActivity.activityType === NSUserActivityTypeBrowsingWeb && userActivity.webpageURL) {
+      console.log('AppWrap: universalLink', userActivity.webpageURL.absoluteString);
+      onDeepLink(userActivity.webpageURL.absoluteString);
+      return true;
+    }
+    console.log('AppWrap: userActivity', userActivity.activityType);
+    return onUserActivity(userActivity);
+  };
+  const urlContextsFired = (contexts: NSSet<UIOpenURLContext> | null) => {
+    const all = contexts?.allObjects;
+    for (let i = 0; i < (all?.count ?? 0); i++) {
+      const url = (all.objectAtIndex(i) as UIOpenURLContext).URL;
+      console.log('AppWrap: openURL', url.absoluteString);
+      onDeepLink(url.absoluteString);
+    }
+  };
+
+  // UIScene lifecycle (iOS 27 traps apps that don't adopt it). The CLI stamps UIApplicationSceneManifest,
+  // so UIKit asks the app delegate for a scene config and then sends URL opens / user activities / quick
+  // actions to the SCENE delegate instead of the app delegate. @nativescript/core's SceneDelegate creates
+  // the window and boots the app, but it can't be subclassed ("already extended native object"), so this
+  // delegate WRAPS one: lifecycle calls are forwarded, the scene-routed events go to the shell paths.
+  @NativeClass()
+  class AppWrapSceneDelegate extends UIResponder implements UIWindowSceneDelegate {
+    static ObjCProtocols = [UIWindowSceneDelegate];
+    private _ns: any;
+    private get ns(): any {
+      return (this._ns ??= (global as any).SceneDelegate.new());
+    }
+    get window(): UIWindow {
+      return this.ns.window;
+    }
+    set window(w: UIWindow) {
+      this.ns.window = w;
+    }
+
+    // Cold launch: the URL / activity / quick action that launched the app rides in connectionOptions.
+    sceneWillConnectToSessionOptions(scene: UIScene, session: UISceneSession, options: UISceneConnectionOptions): void {
+      this.ns.sceneWillConnectToSessionOptions(scene, session, options);
+      urlContextsFired(options?.URLContexts);
+      const acts = options?.userActivities?.allObjects;
+      for (let i = 0; i < (acts?.count ?? 0); i++) activityFired(acts.objectAtIndex(i));
+      if (options?.shortcutItem) shortcutFired(options.shortcutItem);
+    }
+    sceneDidBecomeActive(scene: UIScene): void { this.ns.sceneDidBecomeActive(scene); }
+    sceneWillResignActive(scene: UIScene): void { this.ns.sceneWillResignActive(scene); }
+    sceneWillEnterForeground(scene: UIScene): void { this.ns.sceneWillEnterForeground(scene); }
+    sceneDidEnterBackground(scene: UIScene): void { this.ns.sceneDidEnterBackground(scene); }
+    sceneDidDisconnect(scene: UIScene): void { this.ns.sceneDidDisconnect(scene); }
+    sceneOpenURLContexts(_scene: UIScene, contexts: NSSet<UIOpenURLContext>): void {
+      urlContextsFired(contexts);
+    }
+    sceneContinueUserActivity(_scene: UIScene, userActivity: NSUserActivity): void {
+      activityFired(userActivity);
+    }
+    windowScenePerformActionForShortcutItemCompletionHandler(
+      _scene: UIWindowScene,
+      shortcutItem: UIApplicationShortcutItem,
+      completionHandler: (done: boolean) => void
+    ): void {
+      shortcutFired(shortcutItem);
+      completionHandler(true);
+    }
+  }
   @NativeClass()
   class AppWrapAppDelegate extends UIResponder implements UIApplicationDelegate {
     static ObjCProtocols = [UIApplicationDelegate];
 
+    // Scene lifecycle: every scene gets AppWrapSceneDelegate (the window + scene-routed URL/activity/shortcut events).
+    applicationConfigurationForConnectingSceneSessionOptions(
+      _app: UIApplication,
+      session: UISceneSession,
+      _options: UISceneConnectionOptions
+    ): UISceneConfiguration {
+      const config = UISceneConfiguration.configurationWithNameSessionRole('Default Configuration', session.role);
+      config.sceneClass = UIWindowScene as any;
+      config.delegateClass = AppWrapSceneDelegate as any;
+      return config;
+    }
     applicationDidFinishLaunchingWithOptions(_app: UIApplication, launchOptions: NSDictionary<string, any>): boolean {
       // Set the notification delegate NOW so a cold-launch tap's deep link is delivered.
       installForegroundNotificationDelegate();
@@ -40,7 +118,7 @@ if (isIOS) {
       if (shortcut) shortcutFired(shortcut);
       return true;
     }
-    // Warm activation of a quick action (app already running/backgrounded).
+    // Pre-scene fallbacks below (scene apps get these via AppWrapSceneDelegate). Warm quick action.
     applicationPerformActionForShortcutItemCompletionHandler(
       _app: UIApplication,
       shortcutItem: UIApplicationShortcutItem,
@@ -50,26 +128,16 @@ if (isIOS) {
       completionHandler(true);
     }
     applicationOpenURLOptions(_app: UIApplication, url: NSURL, _options: NSDictionary<string, any>): boolean {
-      console.log('AppWrap: openURL', url.absoluteString);
       onDeepLink(url.absoluteString);
       return true;
     }
-    // Universal links (https://<associated-domain>/...) arrive as a browsing user
-    // activity, NOT via openURL. Without this, tapping an https app link opens Safari
-    // instead of the app. Requires the associated-domains entitlement (iosEntitlements).
+    // Pre-scene fallback (no UIApplicationSceneManifest): universal links / CallKit redial.
     applicationContinueUserActivityRestorationHandler(
       _app: UIApplication,
       userActivity: NSUserActivity,
       _restorationHandler: (restorableObjects: NSArray<any>) => void
     ): boolean {
-      if (userActivity.activityType === NSUserActivityTypeBrowsingWeb && userActivity.webpageURL) {
-        console.log('AppWrap: universalLink', userActivity.webpageURL.absoluteString);
-        onDeepLink(userActivity.webpageURL.absoluteString);
-        return true;
-      }
-      // Any other activity (a CallKit Recents redial: INStartCallIntent) goes to a module pack (setUserActivityHandler).
-      console.log('AppWrap: userActivity', userActivity.activityType);
-      return onUserActivity(userActivity);
+      return activityFired(userActivity);
     }
     // Drives `kit.screen.orientation.lock` — UIKit reads this on every rotation.
     applicationSupportedInterfaceOrientationsForWindow(_app: UIApplication, _window: UIWindow): UIInterfaceOrientationMask {
