@@ -2757,6 +2757,15 @@ function runNs(outDir: string, args: string[]): void {
   if (args.includes('android')) assertSbgParsedCleanly(outDir);
 }
 
+/** "Error processing '<file>:' <err>" lines = files SBG abandoned mid-AST. (Distinct from the parser's benign per-node
+ * "JSParser Error: Node type is not a call expression" chatter, which is not fatal.) The web app's own files
+ * (assets/app/www/: loaded by the WebView — ES modules among them) carry no Java bindings: never counted. */
+export function sbgAbandoned(log: string): { file: string; err: string }[] {
+  return [...log.matchAll(/Error processing '([^']+):?'\s*(.*)/g)]
+    .filter((m) => !/[\\/]assets[\\/]app[\\/]www[\\/]/.test(m[1]))
+    .map((m) => ({ file: basename(m[1].replace(/:$/, '')), err: (m[2] || '').split('\n')[0].trim() }));
+}
+
 /** Fail an Android build when SBG's js_parser ABANDONED a bundled file.
  *
  * This is the root check; assertJavaProxyBindings() below is the outcome check. The parser catches errors
@@ -2792,12 +2801,7 @@ function assertSbgParsedCleanly(outDir: string): void {
   if (run.error || run.status !== 0) return assertJavaProxyBindings(outDir);
   const log = `${run.stdout ?? ''}\n${run.stderr ?? ''}`;
 
-  // "Error processing '<file>:' <err>" = that file was abandoned mid-AST. (Distinct from the parser's
-  // benign per-node "JSParser Error: Node type is not a call expression" chatter, which is not fatal.)
-  const abandoned = [...log.matchAll(/Error processing '([^']+):?'\s*(.*)/g)].map((m) => ({
-    file: basename(m[1].replace(/:$/, '')),
-    err: (m[2] || '').split('\n')[0].trim(),
-  }));
+  const abandoned = sbgAbandoned(log);
   if (abandoned.length) {
     console.error(
       `\n✖ Android build is BROKEN: NativeScript's static-binding-generator ABANDONED ${abandoned.length} bundled\n` +
