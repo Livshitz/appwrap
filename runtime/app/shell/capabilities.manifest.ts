@@ -53,6 +53,12 @@ export interface ModuleManifest {
     permissions?: string[];
     /** app.gradle dependency coordinates, e.g. 'androidx.health.connect:connect-client:1.1.0-rc01'. */
     gradleDeps?: string[];
+    /** Raw app.gradle Groovy appended with the deps — what a coordinate can't say: a vendor maven repo
+     * (`repositories { maven { url '…' } }`), `android { packaging { … } }` pickFirsts, a `configurations` exclude. */
+    gradle?: string;
+    /** `<application>` attributes a library's own manifest also sets (e.g. `android:label`): the app's value wins
+     * (`tools:replace`), instead of a manifest-merger failure. */
+    manifestReplace?: string[];
     /** Module ships Kotlin native source → the CLI enables Kotlin in the NS Android build. */
     kotlin?: boolean;
     /** Raw XML injected inside the AndroidManifest `<application>` (activities, providers,

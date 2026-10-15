@@ -256,6 +256,8 @@ interface NativeReqs {
   iosBackgroundModes: string[];  // UIBackgroundModes active modules declare (ios.backgroundModes)
   androidPerms: string[];
   androidGradleDeps: string[];
+  androidGradleSnippets: string[];  // raw app.gradle Groovy from active modules (android.gradle)
+  androidManifestReplace: string[];  // <application> attributes the app's value wins (android.manifestReplace)
   androidKotlin: boolean;        // any active module ships Kotlin native source
   androidManifestApp: string[];  // raw XML injected inside AndroidManifest <application>
   androidManifestActivity: string[];  // raw XML injected inside the main <activity> (intent-filters)
@@ -286,6 +288,8 @@ function nativeReqs(cfg: AppwrapConfig): NativeReqs {
   const seenKeys = new Set<string>();
   const androidPerms = new Set<string>();
   const gradle = new Set<string>();
+  const gradleSnippets = new Set<string>();
+  const manifestReplace = new Set<string>();
   const iosEntitlements: Record<string, boolean | string | string[]> = {};
   const iosBackgroundModes = new Set<string>();
   const nativeSrc: string[] = [];
@@ -310,6 +314,8 @@ function nativeReqs(cfg: AppwrapConfig): NativeReqs {
       }
       for (const ap of m.android?.permissions ?? []) androidPerms.add(ap);
       for (const g of m.android?.gradleDeps ?? []) gradle.add(g);
+      if (m.android?.gradle) gradleSnippets.add(m.android.gradle.trim());
+      for (const a of m.android?.manifestReplace ?? []) manifestReplace.add(a);
       Object.assign(iosEntitlements, m.ios?.entitlements ?? {});
       for (const b of m.ios?.backgroundModes ?? []) iosBackgroundModes.add(b);
       if (m.android?.kotlin) androidKotlin = true;
@@ -389,6 +395,8 @@ function nativeReqs(cfg: AppwrapConfig): NativeReqs {
     iosBackgroundModes: [...iosBackgroundModes],
     androidPerms: [...androidPerms],
     androidGradleDeps: [...gradle],
+    androidGradleSnippets: [...gradleSnippets],
+    androidManifestReplace: [...manifestReplace],
     androidKotlin,
     androidManifestApp,
     androidManifestActivity,
@@ -690,17 +698,29 @@ export function regenerateMobilePlugins(cwd: string, cfg: AppwrapConfig, outDir:
   );
 }
 
-/** Stamp the active modules' gradle dependencies into Android app.gradle. Idempotent marker block. */
-function stampAndroidGradleDeps(outDir: string, deps: string[]): void {
+/** Stamp the active modules' gradle dependencies (+ their raw android.gradle) into Android app.gradle. Idempotent marker block. */
+function stampAndroidGradleDeps(outDir: string, deps: string[], snippets: string[] = []): void {
   const appGradle = join(outDir, 'App_Resources/Android/app.gradle');
   if (!existsSync(appGradle)) return;
+  writeFileSync(appGradle, androidGradleBlock(readFileSync(appGradle, 'utf8'), deps, snippets));
+}
+export function androidGradleBlock(src: string, deps: string[], snippets: string[] = []): string {
   const strip = (s: string) => s.replace(/\n*\/\/ appwrap-modules:begin[\s\S]*?\/\/ appwrap-modules:end\n*/g, '\n');
-  let s = strip(readFileSync(appGradle, 'utf8')).trimEnd() + '\n';
-  if (deps.length) {
+  let s = strip(src).trimEnd() + '\n';
+  if (deps.length || snippets.length) {
     const lines = deps.map((d) => `  implementation "${d}"`).join('\n');
-    s += `\n// appwrap-modules:begin (native deps from active modules)\ndependencies {\n${lines}\n}\n// appwrap-modules:end\n`;
+    s += `\n// appwrap-modules:begin (native deps from active modules)\n${deps.length ? `dependencies {\n${lines}\n}\n` : ''}${snippets.map((x) => x + '\n').join('')}// appwrap-modules:end\n`;
   }
-  writeFileSync(appGradle, s);
+  return s;
+}
+
+/** `tools:replace` on <application> for the attributes active modules list (android.manifestReplace) — idempotent:
+ * our attribute is rewritten each sync; xmlns:tools is added to <manifest> when missing. */
+export function stampAndroidManifestReplace(src: string, attrs: string[]): string {
+  src = src.replace(/(<application\b[^>]*?)\s+tools:replace="[^"]*"/, '$1');
+  if (!attrs.length) return src;
+  if (!/<manifest\b[^>]*xmlns:tools=/.test(src)) src = src.replace(/<manifest\b/, '<manifest xmlns:tools="http://schemas.android.com/tools"');
+  return src.replace(/<application\b/, `<application tools:replace="${attrs.join(',')}"`);
 }
 
 /** Module-owned native source lives here (mirroring App_Resources); copied into native/ when active. */
@@ -1785,6 +1805,7 @@ function stampAndroidAppName(outDir: string, cfg: AppwrapConfig, req: NativeReqs
       /<!-- appwrap:permissions -->[\s\S]*?<!-- \/appwrap:permissions -->/,
       `<!-- appwrap:permissions -->\n${perms.join('\n')}\n\t<!-- /appwrap:permissions -->`
     );
+    src = stampAndroidManifestReplace(src, req.androidManifestReplace);
     // <application> XML from active modules (activities/providers/intent-filters) — idempotent marker.
     src = src.replace(
       /<!-- appwrap:application -->[\s\S]*?<!-- \/appwrap:application -->/,
@@ -2434,7 +2455,7 @@ function regenerateCore(cwd: string, outDir: string, cfg: AppwrapConfig, opts: {
   stampDeviceFamily(outDir, cfg);
   stampAndroidAppName(outDir, cfg, req);
   stampAndroidVersion(outDir, cfg);
-  stampAndroidGradleDeps(outDir, req.androidGradleDeps);
+  stampAndroidGradleDeps(outDir, req.androidGradleDeps, req.androidGradleSnippets);
   stampKotlin(outDir, req.androidKotlin);
   generateModuleArtifacts(outDir, req);
   regenerateMobilePlugins(cwd, cfg, outDir); // config-gated TS plugins → bridge handlers (in-process)
