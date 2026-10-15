@@ -266,7 +266,8 @@ function mountNativeSplash(page: Page): (() => void) | null {
 }
 
 function wireLoadFallback(page: Page, webView: CustomWebView, hideSplash: (why: string) => void = () => {}): void {
-  if (SHELL_CONFIG.loader !== 'server') return; // bundled loaders can't fail on network
+  if (SHELL_CONFIG.loader === 'app') return wireAppLoadReturn(webView);
+  if (SHELL_CONFIG.loader !== 'server') return; // the file loader can't fail on network
   const fallback = page.getViewById<StackLayout>('loadFallback');
   const retryBtn = page.getViewById<Button>('loadRetryBtn');
   if (!fallback || !retryBtn) return;
@@ -321,6 +322,31 @@ function wireLoadFallback(page: Page, webView: CustomWebView, hideSplash: (why: 
     }
   });
   retryBtn.on(Button.tapEvent, retry);
+}
+
+/**
+ * loader:'app' whose page navigated the WebView to a remote URL (a launcher opening a server): when
+ * that main-frame load fails (server down, a reload during a restart) Android paints its own
+ * "Webpage not available" page and iOS keeps a dead view — both with no way back but killing the app.
+ * Return to the bundled entry instead, with `#appwrap-load-failed=<url>` so the page can say so and
+ * reconnect. Bundle loads (appwrap.local / app://) never take this path.
+ */
+function wireAppLoadReturn(webView: CustomWebView): void {
+  let pending: ReturnType<typeof setTimeout> | null = null;
+  webView.on(WebView.loadFinishedEvent, (args: LoadEventData) => {
+    const err = String(args.error ?? ''), url = String(args.url ?? '');
+    if (!err || /cancel/i.test(err) || !/^https?:/i.test(url) || /^https:\/\/appwrap\.local\//i.test(url) || pending) return;
+    appwrapNativeLog(`[native:fallback] remote load failed (${err}) — back to the bundle: ${url}`);
+    const entry = isIOS ? `app://localhost/${SHELL_CONFIG.entry}` : `https://appwrap.local/${SHELL_CONFIG.entry}`;
+    const target = `${entry}#appwrap-load-failed=${encodeURIComponent(url)}`;
+    // Android commits its error page AFTER onReceivedError, which would replace a load issued here — go on the next tick
+    pending = setTimeout(() => {
+      pending = null;
+      const droid = isAndroid ? (webView.android as android.webkit.WebView | null) : null;
+      if (droid) droid.loadUrl(target);
+      else (webView.ios as WKWebView | null)?.loadRequest(NSURLRequest.requestWithURL(NSURL.URLWithString(target)));
+    }, 300);
+  });
 }
 
 function loadBundle(webView: CustomWebView): void {
