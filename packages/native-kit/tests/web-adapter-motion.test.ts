@@ -33,9 +33,9 @@ function stubDom() {
     // Deterministic clock: the adapter throttles emits with performance.now() against a `last` that
     // starts at 0, so with the real clock the first sample is dropped or kept depending on how many
     // ms into the process we are — a flaky rig. Advance well past any emit interval per fire.
-    let t = 1e6;
-    setGlobal('performance', { now: () => (t += 1000) });
-    return { fire: (e: any) => handler?.(e) };
+    let t = 1e6, step = 1000;
+    setGlobal('performance', { now: () => (t += step) });
+    return { fire: (e: any) => handler?.(e), step: (ms: number) => { step = ms; } };
 }
 
 test('web motion.data honors the kit contract: rotation in rad/s about x/y/z (not raw DOM deg/s alpha/beta/gamma)', async () => {
@@ -77,4 +77,20 @@ test('web motion.data leaves rotation undefined when the device has no gyro (nev
     expect(samples[0].rx).toBeUndefined();
     expect(samples[0].ry).toBeUndefined();
     expect(samples[0].rz).toBeUndefined();
+});
+
+test('a 60Hz request keeps a jittery ~60Hz DOM stream whole (strict 16.67ms gating halved it to ~36Hz)', async () => {
+    const dom = stubDom();
+    const adapter = new WebAdapter();
+    let n = 0;
+    (adapter as any).on('motion.data', () => n++);
+    await (adapter as any).invoke('motion.start', { hz: 60 });
+    const ev = { accelerationIncludingGravity: { x: 0, y: 0, z: -9.81 }, rotationRate: null };
+    dom.fire(ev); n = 0;
+    for (let i = 0; i < 60; i++) { dom.step(i % 2 ? 16.9 : 16.4); dom.fire(ev); }   // real cadence: ±0.3ms around 16.67
+    expect(n).toBe(60);
+    n = 0;
+    for (let i = 0; i < 120; i++) { dom.step(8.33); dom.fire(ev); }                  // a 120Hz source is still capped
+    expect(n).toBeGreaterThanOrEqual(58);
+    expect(n).toBeLessThanOrEqual(62);
 });
