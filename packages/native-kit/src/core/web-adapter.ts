@@ -362,7 +362,9 @@ export class WebAdapter implements NativeKitAdapter {
           // Honor the requested rate (default 10 Hz, clamped 5–60 — mirrors the native cap);
           // a tilt game asks 60 and 10 Hz steering is unplayably laggy.
           const hz = Math.min(60, Math.max(5, Number(p.hz) || 10));
-          const minMs = 1000 / hz;
+          // ×0.75 slack: the DOM fires at its OWN ~60Hz with jitter, so a sample 16.4ms after the last
+          // one is the next frame, not an extra — a strict `< 1000/60` dropped every other one (~36Hz).
+          const minMs = (1000 / hz) * 0.75;
           let last = 0;
           this.motionHandler = (e) => {
             const now = performance.now();
@@ -402,7 +404,7 @@ export class WebAdapter implements NativeKitAdapter {
         }
         if (!this.headingHandler) {
           const hz = Math.min(60, Math.max(1, Number(p.hz) || 10));
-          const minMs = 1000 / hz;
+          const minMs = (1000 / hz) * 0.75; // same jitter slack as motion
           let last = 0;
           this.headingHandler = (e) => {
             const now = performance.now();
