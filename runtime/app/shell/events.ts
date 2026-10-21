@@ -1,5 +1,5 @@
 import { Application, Connectivity, isAndroid } from '@nativescript/core';
-import type { AndroidActivityNewIntentEventData, OrientationChangedEventData } from '@nativescript/core';
+import type { AndroidActivityBundleEventData, AndroidActivityNewIntentEventData, OrientationChangedEventData } from '@nativescript/core';
 import { bridge } from './bridge';
 import { connectivityStatus } from './handlers-extended';
 import { startThermalForwarding } from './thermal';
@@ -177,7 +177,16 @@ function wireAndroidDeepLinks(): void {
   Application.android.on(Application.android.activityNewIntentEvent, (args: AndroidActivityNewIntentEventData) =>
     emitFromIntent(args.intent)
   );
-  emitFromIntent(Application.android.startActivity?.getIntent?.());
+  const first = Application.android.startActivity;
+  emitFromIntent(first?.getIntent?.());
+  // A NEW activity in this live process (the task cleared: a static app shortcut, a widget, a CLEAR_TASK
+  // intent) brings a new WebView that handshakes again — its intent is a launch intent, not onNewIntent,
+  // so it is buffered for that handshake like a cold start (else the link is never read).
+  Application.android.on(Application.android.activityCreatedEvent, (args: AndroidActivityBundleEventData) => {
+    if (args.activity === first) return;
+    pwaReady = false;
+    emitFromIntent(args.activity?.getIntent?.());
+  });
 }
 
 /** A tapped FCM notification re-launches the activity with the message's data payload as string
