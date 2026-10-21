@@ -38,4 +38,11 @@ describe('iOS WKWebView exposes real safe-area insets to page CSS', () => {
     // SPA head managers rewrite the meta after load — the observer re-normalizes.
     expect(NATIVE_FEEL_JS).toContain('MutationObserver');
   });
+
+  test('resume heals a WebView that overflows the window bottom (status-bar-shifted, screen-tall)', () => {
+    const wake = iosSrc.slice(iosSrc.indexOf('wakeWebContent(): void'), iosSrc.indexOf('private healOverflowingFrame'));
+    expect(wake).toContain('this.healOverflowingFrame()');
+    // NS re-layout alone left the 47pt overflow in place (sim-verified) — the window pin is the fallback.
+    expect(iosSrc).toMatch(/wk\.frame = win\.convertRectToView\(win\.bounds, sv\)/);
+  });
 });
