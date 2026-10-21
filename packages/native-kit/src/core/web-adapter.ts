@@ -983,6 +983,7 @@ export class WebAdapter implements NativeKitAdapter {
     this.toastEl?.remove();
     const el = document.createElement('div');
     el.textContent = message;
+    el.dataset.appwrapToast = ''; // stable hook for host CSS (e.g. TV scaling)
     el.style.cssText =
       'position:fixed;bottom:48px;left:50%;transform:translateX(-50%);' +
       'background:rgba(20,20,24,.92);color:#fff;padding:10px 18px;border-radius:20px;' +
