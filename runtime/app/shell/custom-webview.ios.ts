@@ -242,6 +242,7 @@ export class CustomWebView extends WebView {
       wk.setNeedsLayout();
       wk.layoutIfNeeded();
     }
+    this.healOverflowingFrame();
     // (2) Re-emit visibility so the page's own visibilitychange/pageshow listeners (socket reconnect,
     // session refresh) run right away. document.hidden is already false on foreground — this just
     // un-blocks resume handlers that gate on the event rather than polling.
@@ -250,6 +251,33 @@ export class CustomWebView extends WebView {
       `window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true}));}catch(e){}`,
       () => { /* fire-and-forget; the eval itself is the wake */ }
     );
+  }
+
+  /**
+   * A full-bleed WebView must never reach past the window's bottom edge. Field bug (Blank, iPhone 13
+   * Pro Max, after a lock-screen round trip): the WebView came back status-bar-inset DOWN but still
+   * screen-TALL, so every bottom-anchored control in the page sat 47pt below the screen (a mini-app's
+   * now-playing bar half off-screen). NS's full-bleed math (`expandBeyondSafeArea`) only re-expands the
+   * top when `position.top` is non-zero, so a layout pass that runs while the lock screen hides the
+   * status bar can leave the origin shifted. Re-run NS layout (the single layout authority — see
+   * keyboard.ts) and, if the overflow survives it, pin the frame to the window. A keyboard-shrunk
+   * WebView is SHORTER than the window, never longer, so it is untouched.
+   */
+  private healOverflowingFrame(attempt = 0): void {
+    const wk = this.nativeViewProtected as WKWebView;
+    const win = wk?.window;
+    if (!wk || !win) return;
+    const r = wk.convertRectToView(wk.bounds, win);
+    const overflow = r.origin.y + r.size.height - win.bounds.size.height;
+    if (overflow <= 0.5) return;
+    appendWebLog(`[native:frame] webview overflows the window by ${Math.round(overflow)}pt (y=${Math.round(r.origin.y)} h=${Math.round(r.size.height)} win=${Math.round(win.bounds.size.height)}), attempt ${attempt}`);
+    if (attempt === 0) {
+      this.requestLayout();
+      setTimeout(() => this.healOverflowingFrame(1), 50);
+      return;
+    }
+    const sv = wk.superview;
+    if (sv) wk.frame = win.convertRectToView(win.bounds, sv);
   }
 
   /** Coalesce flag: at most one pending recovery pass at a time (see recoverAfterNativeSurface). */
