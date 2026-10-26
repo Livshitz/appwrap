@@ -28,6 +28,9 @@ export interface IosPermission {
   defaultUsage: string;
 }
 
+/** A JSON-shaped Info.plist value (boolean / integer / real / string / array / dict). */
+export type PlistValue = boolean | number | string | PlistValue[] | { [key: string]: PlistValue };
+
 export interface ModuleManifest {
   /** Capability name (also the handshake key + `kit.<name>` where 1:1). */
   name: string;
@@ -47,6 +50,12 @@ export interface ModuleManifest {
     entitlements?: Record<string, boolean | string | string[]>;
     /** Info.plist UIBackgroundModes the module needs (e.g. `voip` for CallKit), merged into the shared array. */
     backgroundModes?: string[];
+    /** CocoaPods the module's native code links, as the text after `pod ` (e.g. `"'FBSDKCoreKit', '18.0.0'"`).
+     * The CLI appends them (deduped, active modules only) to the generated Podfile. */
+    pods?: string[];
+    /** Info.plist keys the module needs (any plist value: nested dicts/arrays allowed). Stamped into the
+     * idempotent appwrap block; a key already set by the template, appwrap, the config or another module fails the sync. */
+    infoPlist?: Record<string, PlistValue>;
   };
   android?: {
     /** AndroidManifest <uses-permission> names. */
