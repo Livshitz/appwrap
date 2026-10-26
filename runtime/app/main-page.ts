@@ -14,7 +14,7 @@ import { registerAndroidHandlers } from './shell/handlers-android';
 import { registerOptionalHandlers } from './shell/optional-handlers.generated';
 import { registerPlugins } from './shell/plugins.generated';
 import './shell/fcm-bootstrap.generated'; // side-effect: registers the FCM service when push is wired
-import { startEventForwarding } from './shell/events';
+import { startEventForwarding, onShellLoaded } from './shell/events';
 import { startDevMenu } from './shell/devmenu';
 import { showEnvBannerIfActive } from './shell/env-banner';
 import { reassertEnvKeepAwake } from './shell/env-keepawake';
@@ -111,6 +111,7 @@ export function onPageLoaded(args: EventData): void {
   bridge.attach(webView);
   if (isAndroid) wireAndroidSafeArea(webView); // experimental edge-to-edge (no-op unless config on)
   wireLoadFallback(page, webView, hideSplash); // loader:'server' failure → branded retry view (no white screen)
+  webView.on(WebView.loadFinishedEvent, () => onShellLoaded()); // env deep links don't wait for a handshake a broken env never sends
   loadBundle(webView);
 }
 

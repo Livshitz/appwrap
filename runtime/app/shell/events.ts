@@ -20,6 +20,10 @@ let pendingShortcut: string | null = null;
 // a deeplink.open emitted then lands in a WebView with no listener and is lost
 // (the cold-start-from-notification bug). So we gate delivery on the handshake.
 let pwaReady = false;
+// True once the WebView finished ANY main-frame load (success or failure). Env-switch deep links are
+// shell commands (native confirm + reload), so they only need the WebView attached — gating them on
+// pwaReady buffered them forever on a broken env, exactly when the link is the only way out.
+let shellReady = false;
 
 /** A pending native-side consumer of an inbound deep link (e.g. the Android OAuth flow waiting for
  * the provider's `callbackScheme://…` redirect). Returns true if it CONSUMED the URL — then it's an
@@ -50,8 +54,8 @@ export function onDeepLink(url: string): void {
   // here — never forwarded to the PWA (it's a shell command, not an app route). The allowlist + confirm
   // gate lives in handleEnvDeepLink; disabled/absent switcher → isEnvDeepLink is false → normal path.
   if (isEnvDeepLink(url)) {
-    if (pwaReady) void handleEnvDeepLink(url);
-    else pendingEnvDeepLink = url; // cold launch — replay after the handshake, when the WebView is ready
+    if (pwaReady || shellReady) void handleEnvDeepLink(url);
+    else pendingEnvDeepLink = url; // cold launch — replay on the first page load (or handshake), whichever is first
     return;
   }
   if (pwaReady) bridge.emit('deeplink.open', { url });
@@ -133,12 +137,21 @@ export function onPwaHandshake(): void {
     pendingShortcut = null;
     setTimeout(() => bridge.emit('app.shortcut', { id }), 500);
   }
-  if (pendingEnvDeepLink) {
-    const link = pendingEnvDeepLink;
-    pendingEnvDeepLink = null;
-    // Small beat so the just-handshaked WebView is fully attached before the confirm/reload.
-    setTimeout(() => void handleEnvDeepLink(link), 500);
-  }
+  flushPendingEnvDeepLink();
+}
+
+/** The WebView finished a main-frame load — success OR failure (a broken env never handshakes). */
+export function onShellLoaded(): void {
+  shellReady = true;
+  flushPendingEnvDeepLink();
+}
+
+function flushPendingEnvDeepLink(): void {
+  if (!pendingEnvDeepLink) return;
+  const link = pendingEnvDeepLink;
+  pendingEnvDeepLink = null;
+  // Small beat so the WebView is fully attached before the confirm/reload.
+  setTimeout(() => void handleEnvDeepLink(link), 500);
 }
 
 /** Wire lifecycle + connectivity event forwarding (the PWA subscribes to these). */
@@ -185,6 +198,7 @@ function wireAndroidDeepLinks(): void {
   Application.android.on(Application.android.activityCreatedEvent, (args: AndroidActivityBundleEventData) => {
     if (args.activity === first) return;
     pwaReady = false;
+    shellReady = false;
     emitFromIntent(args.activity?.getIntent?.());
   });
 }
