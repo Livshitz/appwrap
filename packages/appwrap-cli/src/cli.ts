@@ -19,6 +19,7 @@ import { pathToFileURL } from 'url';
 // the VALUES are loaded dynamically below from the resolved runtime so the CLI works both in the
 // monorepo and from a published tarball (where runtime/ is bundled at the package root).
 import type * as CapManifest from '../../../runtime/app/shell/capabilities.manifest';
+type PlistValue = CapManifest.PlistValue;
 // Config shape lives in its own import-safe module so a `appwrap.config.ts` file can import the
 // type + `defineConfig` helper without pulling in (and running) the CLI dispatch.
 import type { AppwrapConfig } from './config';
@@ -254,6 +255,8 @@ interface NativeReqs {
   webCaps: { camera: boolean; microphone: boolean; geolocation: boolean };
   iosEntitlements: Record<string, boolean | string | string[]>;
   iosBackgroundModes: string[];  // UIBackgroundModes active modules declare (ios.backgroundModes)
+  iosPods: string[];  // `pod` lines active modules declare (ios.pods), deduped
+  iosInfoPlist: Record<string, { module: string; value: PlistValue }>;  // Info.plist keys active modules declare (ios.infoPlist)
   androidPerms: string[];
   androidGradleDeps: string[];
   androidGradleSnippets: string[];  // raw app.gradle Groovy from active modules (android.gradle)
@@ -292,6 +295,8 @@ function nativeReqs(cfg: AppwrapConfig): NativeReqs {
   const manifestReplace = new Set<string>();
   const iosEntitlements: Record<string, boolean | string | string[]> = {};
   const iosBackgroundModes = new Set<string>();
+  const iosPods = new Set<string>();
+  const iosInfoPlist: NativeReqs['iosInfoPlist'] = {};
   const nativeSrc: string[] = [];
   const packNativeSrc: NativeReqs['packNativeSrc'] = [];
   const packHandlers: NativeReqs['packHandlers'] = [];
@@ -318,6 +323,12 @@ function nativeReqs(cfg: AppwrapConfig): NativeReqs {
       for (const a of m.android?.manifestReplace ?? []) manifestReplace.add(a);
       Object.assign(iosEntitlements, m.ios?.entitlements ?? {});
       for (const b of m.ios?.backgroundModes ?? []) iosBackgroundModes.add(b);
+      for (const p of m.ios?.pods ?? []) iosPods.add(p.trim());
+      for (const [key, value] of Object.entries(m.ios?.infoPlist ?? {})) {
+        const prev = iosInfoPlist[key];
+        if (prev) throw new Error(`ios.infoPlist: "${key}" is declared by both module '${prev.module}' and '${m.name}' — a duplicate <key> is an invalid plist.`);
+        iosInfoPlist[key] = { module: m.name, value };
+      }
       if (m.android?.kotlin) androidKotlin = true;
       if (m.android?.manifestApplication) androidManifestApp.push(m.android.manifestApplication);
       if (m.android?.manifestActivity) androidManifestActivity.push(m.android.manifestActivity);
@@ -393,6 +404,8 @@ function nativeReqs(cfg: AppwrapConfig): NativeReqs {
     webCaps,
     iosEntitlements,
     iosBackgroundModes: [...iosBackgroundModes],
+    iosPods: [...iosPods],
+    iosInfoPlist,
     androidPerms: [...androidPerms],
     androidGradleDeps: [...gradle],
     androidGradleSnippets: [...gradleSnippets],
@@ -712,6 +725,32 @@ export function androidGradleBlock(src: string, deps: string[], snippets: string
     s += `\n// appwrap-modules:begin (native deps from active modules)\n${deps.length ? `dependencies {\n${lines}\n}\n` : ''}${snippets.map((x) => x + '\n').join('')}// appwrap-modules:end\n`;
   }
   return s;
+}
+
+/** Stamp the active modules' CocoaPods (ios.pods) into the generated Podfile. Idempotent marker block. */
+function stampIOSPods(outDir: string, pods: string[]): void {
+  const podfile = join(outDir, 'App_Resources/iOS/Podfile');
+  if (!existsSync(podfile)) return;
+  writeFileSync(podfile, iosPodfileBlock(readFileSync(podfile, 'utf8'), pods));
+}
+export function iosPodfileBlock(src: string, pods: string[]): string {
+  let s = src.replace(/\n*# appwrap-modules:begin[\s\S]*?# appwrap-modules:end\n*/g, '\n').trimEnd() + '\n';
+  if (pods.length) s += `\n# appwrap-modules:begin (pods from active modules)\n${pods.map((p) => `pod ${p}`).join('\n')}\n# appwrap-modules:end\n`;
+  return s;
+}
+
+/** Serialize a JSON-shaped value as plist XML at `indent` spaces (key/value already positioned by the caller). */
+export function plistXml(value: PlistValue, indent = 2): string {
+  const pad = ' '.repeat(indent);
+  const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  if (typeof value === 'boolean') return `${pad}<${value}/>`;
+  if (typeof value === 'number') return Number.isInteger(value) ? `${pad}<integer>${value}</integer>` : `${pad}<real>${value}</real>`;
+  if (typeof value === 'string') return `${pad}<string>${esc(value)}</string>`;
+  if (Array.isArray(value)) return value.length ? `${pad}<array>\n${value.map((v) => plistXml(v, indent + 2)).join('\n')}\n${pad}</array>` : `${pad}<array/>`;
+  const entries = Object.entries(value);
+  return entries.length
+    ? `${pad}<dict>\n${entries.map(([k, v]) => `${pad}  <key>${esc(k)}</key>\n${plistXml(v, indent + 2)}`).join('\n')}\n${pad}</dict>`
+    : `${pad}<dict/>`;
 }
 
 /** `tools:replace` on <application> for the attributes active modules list (android.manifestReplace) — idempotent:
@@ -1164,11 +1203,17 @@ function stampIOSDisplayName(outDir: string, cfg: AppwrapConfig, req: NativeReqs
     if (new RegExp(`<key>${key}</key>`).test(src)) {
       throw new Error(`iosInfoPlist: "${key}" is already declared in the app's Info.plist — remove it from the config (a duplicate <key> is an invalid plist).`);
     }
-    const body = typeof value === 'boolean' ? `  <${value}/>`
-      : typeof value === 'number' ? `  <integer>${value}</integer>`
-      : Array.isArray(value) ? `  <array>\n${value.map((v) => `    <string>${v}</string>`).join('\n')}\n  </array>`
-      : `  <string>${value}</string>`;
-    extras.push(`  <key>${key}</key>\n${body}`);
+    extras.push(`  <key>${key}</key>\n${plistXml(value)}`);
+  }
+  // Module-declared plist keys (ModuleManifest.ios.infoPlist) — same block, same both-ways contract. A key
+  // the template, appwrap's own stamps above or the config already set is refused (module-vs-module
+  // clashes already threw while collecting).
+  for (const [key, { module, value }] of Object.entries(req.iosInfoPlist ?? {})) {
+    const re = new RegExp(`<key>${key}</key>`);
+    if (re.test(src) || extras.some((e) => e.startsWith(`  <key>${key}</key>`))) {
+      throw new Error(`ios.infoPlist: "${key}" from module '${module}' is already declared in the app's Info.plist (template, appwrap or iosInfoPlist) — a duplicate <key> is an invalid plist.`);
+    }
+    extras.push(`  <key>${key}</key>\n${plistXml(value)}`);
   }
 
   if (extras.length) {
@@ -2500,6 +2545,7 @@ function regenerateCore(cwd: string, outDir: string, cfg: AppwrapConfig, opts: {
   generateModuleArtifacts(outDir, req);
   regenerateMobilePlugins(cwd, cfg, outDir); // config-gated TS plugins → bridge handlers (in-process)
   const moduleNativeFiles = copyModuleNativeSrc(outDir, req); // module-owned native source (e.g. health's Kotlin shim)
+  stampIOSPods(outDir, req.iosPods); // AFTER module native source: a module may ship its own Podfile copy
   // Prune a now-inactive module's native files (in the prior manifest, not re-copied this sync). Protect
   // base-template files so a module that overrode a template App_Resources file, once removed, reverts to
   // the template copy instead of being deleted outright.
