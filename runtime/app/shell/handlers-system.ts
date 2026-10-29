@@ -263,6 +263,12 @@ export function registerSystemHandlers(): void {
   bridge.register('browser.open', ({ url, toolbarColor }: { url: string; toolbarColor?: string }) => {
     const target = String(url ?? '');
     if (!target) throw err('NATIVE_ERROR', 'browser.open: empty url');
+    openInAppBrowser(target, toolbarColor);
+  });
+}
+
+/** The in-app browser layer over the app (SFSafariViewController / Chrome Custom Tabs): its own bar, Done + edge swipe close it. */
+export function openInAppBrowser(target: string, toolbarColor?: string): void {
     if (isIOS) {
       Utils.dispatchToMainThread(() => {
         const vc = SFSafariViewController.alloc().initWithURL(NSURL.URLWithString(target));
@@ -280,7 +286,6 @@ export function registerSystemHandlers(): void {
         tabs.launchUrl(activity, android.net.Uri.parse(target));
       });
     }
-  });
 }
 
 // ── privacy screen ────────────────────────────────────────────────────
