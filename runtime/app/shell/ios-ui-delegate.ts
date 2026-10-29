@@ -1,4 +1,7 @@
 import { Utils } from '@nativescript/core';
+import { openInAppBrowser } from './handlers-system';
+import { isOffsite } from './offsite';
+
 
 /**
  * WKUIDelegate for the shell WebView. Two jobs:
@@ -45,8 +48,9 @@ function appwrapUiDelegateClass(): any {
       decisionHandler(WKPermissionDecision.Grant);
     }
 
-    // Preserve the behavior NS's own UIDelegate gave us (we fully replace it):
-    // target=_blank / window.open has no new window in a shell → load it in place.
+    // target=_blank / window.open has no new window in a shell. Another site's page opens in the in-app browser
+    // layer over the app (loaded in place it replaced the app, with no bar and no way back); the app's own
+    // origin still loads in place (NS's own UIDelegate behaviour, which we fully replace).
     webViewCreateWebViewWithConfigurationForNavigationActionWindowFeatures(
       webView: WKWebView,
       _configuration: WKWebViewConfiguration,
@@ -54,7 +58,10 @@ function appwrapUiDelegateClass(): any {
       _windowFeatures: WKWindowFeatures
     ): WKWebView {
       const frame = navigationAction.targetFrame;
-      if (!frame || !frame.mainFrame) webView.loadRequest(navigationAction.request);
+      if (frame && frame.mainFrame) return null as unknown as WKWebView;
+      const url = navigationAction.request.URL;
+      if (isOffsite(url, webView.URL)) openInAppBrowser(url.absoluteString);
+      else webView.loadRequest(navigationAction.request);
       return null as unknown as WKWebView;
     }
 
