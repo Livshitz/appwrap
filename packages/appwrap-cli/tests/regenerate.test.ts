@@ -51,6 +51,27 @@ describe('buildFingerprint includes app + override sources', () => {
 // Regression: runtime/ is compiled straight into bundle.js, but was NOT fingerprinted — so editing it
 // printed "Skipping build — inputs unchanged" and shipped an artifact carrying the PREVIOUS runtime.
 // A silent stale build that reads as a pass. Both `deploy ios` and `deploy android` share this fn.
+describe('buildFingerprint includes modulePacks dirs', () => {
+  test('changes when a pack handler changes, and the --resume gate sees it', () => {
+    const cwd = scratch();
+    try {
+      writeFileSync(join(cwd, 'appwrap.config.ts'), 'export default {}');
+      const handler = join(cwd, 'packs', 'my-mod', 'handler.ts');
+      mkdirSync(join(cwd, 'packs', 'my-mod'), { recursive: true });
+      writeFileSync(handler, 'export const a = 1;');
+      const cfg = { modulePacks: ['./packs/my-mod'] };
+      const fp1 = buildFingerprint(cwd, cfg);
+      expect(buildFingerprint(cwd, cfg)).toBe(fp1); // stable when nothing changed
+      const t = new Date(Date.now() + 5000);
+      utimesSync(handler, t, t);
+      expect(buildFingerprint(cwd, cfg)).not.toBe(fp1);
+      expect(newestBuildInputMtime(cwd, cfg)).toBeGreaterThanOrEqual(t.getTime() - 1);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('buildFingerprint includes the appwrap runtime/ template', () => {
   const runtimeFile = resolve(import.meta.dir, '../../../runtime/app/shell/config.ts');
 

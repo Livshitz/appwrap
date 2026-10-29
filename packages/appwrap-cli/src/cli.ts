@@ -24,7 +24,7 @@ type PlistValue = CapManifest.PlistValue;
 // type + `defineConfig` helper without pulling in (and running) the CLI dispatch.
 import type { AppwrapConfig } from './config';
 import { encodeShareDirectSync, unknownConfigKeys } from './config';
-import { resolveModulePacks, type ResolvedModule, type SyncContext } from './packs';
+import { resolveModulePacks, defaultResolvePack, type ResolvedModule, type SyncContext } from './packs';
 import { createHash } from 'crypto';
 // Icon helpers re-exported via `@livx.cc/appwrap/cli` so a host-provided platform lane can reuse them.
 export { APPLE_ICON_GRID_SCALE, makeDockRuntimeIcon } from './icon';
@@ -3455,17 +3455,21 @@ function mtimeStats(p: string): { sum: number; newest: number } {
  * `parts` (per-input mtime SUMS) feed the fingerprint hash; `newest` (max mtime across every input)
  * feeds the `--resume` staleness gate. Keeping them on one walk means an input can never be in the
  * hash but out of the gate (or vice versa) — that divergence is exactly how stale builds ship. */
-function buildInputStats(cwd: string, cfg: { pwaDist?: string; overrides?: string }, flags: Record<string, string>): { parts: number[]; newest: number } {
+function buildInputStats(cwd: string, cfg: { pwaDist?: string; overrides?: string; modulePacks?: string[] }, flags: Record<string, string>): { parts: number[]; newest: number } {
   // Fingerprint EVERY app source the build actually consumes — not just dist. Missing the overrides dir
   // (native escape hatch) or a `.js`/`.json`/`--config` config file made edits there produce a stale
   // "inputs unchanged" skip. Resolve the real config path (ts→js→json / --config) instead of hardcoding.
   const distDir = cfg.pwaDist ? resolve(cwd, cfg.pwaDist) : join(cwd, 'dist');
   const overridesDir = resolve(cwd, cfg.overrides ?? 'appwrap.overrides');
   const stats = [mtimeStats(distDir), mtimeStats(overridesDir), mtimeStats(resolveConfigPath(cwd, flags))];
+  // Module packs (host-injected + config `modulePacks`) — their handler + native source are compiled
+  // into the build exactly like runtime/, so a pack edit must bust the cache too (else: stale
+  // "inputs unchanged" skip that reinstalls the previous binary). Same resolver + filter as the build.
+  const packRoots = [...(cliOptions.modulePacks ?? []), ...(cfg.modulePacks ?? [])].map((ref) => defaultResolvePack(ref, cwd));
   // The appwrap runtime template(s) — bundled into bundle.js, so a first-class build input. Every
   // overlay root counts, so editing a host-provided template file busts the cache.
   let runtime = 0, runtimeNewest = 0;
-  for (const root of TEMPLATE_ROOTS) {
+  for (const root of [...TEMPLATE_ROOTS, ...new Set(packRoots)]) {
    if (!existsSync(root)) continue;
    for (const rel of collectRelFiles(root, templateFingerprintFilterFor(root))) {
     const s = mtimeStats(join(root, rel));
@@ -3501,11 +3505,11 @@ function stringHash(s: string): number {
 
 /** Newest mtime across every build input — the evidence the `--resume` gate needs when no build cache
  * exists to compare a fingerprint against. Same input set as `buildFingerprint` by construction. */
-export function newestBuildInputMtime(cwd: string, cfg: { pwaDist?: string; overrides?: string }, flags: Record<string, string> = {}): number {
+export function newestBuildInputMtime(cwd: string, cfg: { pwaDist?: string; overrides?: string; modulePacks?: string[] }, flags: Record<string, string> = {}): number {
   return buildInputStats(cwd, cfg, flags).newest;
 }
 
-export function buildFingerprint(cwd: string, cfg: { pwaDist?: string; overrides?: string }, flags: Record<string, string> = {}): string {
+export function buildFingerprint(cwd: string, cfg: { pwaDist?: string; overrides?: string; modulePacks?: string[] }, flags: Record<string, string> = {}): string {
   const { parts } = buildInputStats(cwd, cfg, flags);
   // Simple djb2-style hash — good enough for a build-skip check (not cryptographic).
   let h = 5381;
