@@ -348,3 +348,29 @@ export const NATIVE_FEEL_JS = `(function(){
   // Pinch-zoom on iOS fires gesture* even with user-scalable=no in some builds.
   document.addEventListener('gesturestart', function(e){ e.preventDefault(); }, { passive: false });
 })();`;
+
+/**
+ * WebKit builds Now Playing from the document that OWNS the audio. When that is a third-party iframe (a
+ * vendor player), the embedding page cannot name the track, so every subframe accepts
+ * `{ __appwrapNowPlaying: { title, artist, album, artwork } }` from its parent. Proven on an iPhone: Media
+ * Session metadata alone left the vendor's title up; with document.title set too, the lock screen showed
+ * title, artist and art. Its buttons come back as `{ __appwrapNowPlayingAction: 'nexttrack' }`.
+ * Once claimed, the vendor's own metadata writes are ignored.
+ */
+export const FRAME_NOW_PLAYING_JS = `(function () {
+  if (window === window.parent || !navigator.mediaSession || !window.MediaMetadata) return;
+  var ms = navigator.mediaSession, d = Object.getOwnPropertyDescriptor(MediaSession.prototype, 'metadata');
+  if (!d) return;
+  var claimed = false;
+  Object.defineProperty(ms, 'metadata', { configurable: true, get: function () { return d.get.call(ms); }, set: function (v) { if (!claimed) d.set.call(ms, v); } });
+  window.addEventListener('message', function (e) {
+    var m = e.source === window.parent && e.data && e.data.__appwrapNowPlaying;
+    if (!m) return;
+    if (!claimed) ['play', 'pause', 'previoustrack', 'nexttrack'].forEach(function (a) {
+      ms.setActionHandler(a, function () { window.parent.postMessage({ __appwrapNowPlayingAction: a }, '*'); });
+    });
+    claimed = true;
+    d.set.call(ms, new MediaMetadata(m));
+    document.title = m.title;
+  });
+})();`;

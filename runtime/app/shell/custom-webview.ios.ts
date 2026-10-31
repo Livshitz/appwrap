@@ -1,7 +1,7 @@
 import { WebView, knownFolders, path as nsPath, File } from '@nativescript/core';
 import { SHELL_CONFIG } from './config';
 import { mimeFor } from './mime';
-import { APPWRAP_GLOBALS_JS, NATIVE_FEEL_JS, capabilityGuardJs, serviceWorkerGuardJs, externalNavGuardJs } from './web-quirks';
+import { APPWRAP_GLOBALS_JS, NATIVE_FEEL_JS, capabilityGuardJs, serviceWorkerGuardJs, externalNavGuardJs, FRAME_NOW_PLAYING_JS } from './web-quirks';
 import { envGlobalsJs } from './env';
 import { createUiDelegate } from './ios-ui-delegate';
 import { appwrapNativeLog } from './native-log';
@@ -382,6 +382,9 @@ export class CustomWebView extends WebView {
       );
       config.userContentController.addUserScript(script);
     }
+
+    // Every frame, unlike the scripts above: the audio may live in a vendor's iframe.
+    config.userContentController.addUserScript(WKUserScript.alloc().initWithSourceInjectionTimeForMainFrameOnly(FRAME_NOW_PLAYING_JS, WKUserScriptInjectionTime.AtDocumentStart, false));
 
     const owner = new WeakRef<CustomWebView>(this);
     this._scriptHandler = AppwrapScriptHandler.new();
