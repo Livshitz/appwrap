@@ -4,6 +4,7 @@ import { pauseInBackground } from './background-pause';
 import { requestPermissions, startActivityForResult, uriToDataUrl, bitmapToDataUrl } from './android-helpers';
 import { notifIdentity, notifActions } from './notif-identity';
 import { photoAssetKind } from './share-outcome';
+import { configuredOrientation } from './orientation';
 
 // no NS types: android-32 typings omit ContactsContract/MediaStore column + ACTION_PICK_IMAGES constants this file reads
 declare const android: any, androidx: any;
@@ -649,6 +650,7 @@ export function registerAndroidHandlers(): void {
       case 'landscape': return SO.SCREEN_ORIENTATION_LANDSCAPE;
       case 'landscape-left': return SO.SCREEN_ORIENTATION_LANDSCAPE;
       case 'landscape-right': return SO.SCREEN_ORIENTATION_REVERSE_LANDSCAPE;
+      case 'current': return SO.SCREEN_ORIENTATION_LOCKED; // pin what's on screen now (API 18+)
       default: return SO.SCREEN_ORIENTATION_UNSPECIFIED;
     }
   };
@@ -656,6 +658,6 @@ export function registerAndroidHandlers(): void {
     activity()?.setRequestedOrientation(requestedOrientation(String(orientation)));
   });
   bridge.register('screen.orientation.unlock', () => {
-    activity()?.setRequestedOrientation(SO.SCREEN_ORIENTATION_UNSPECIFIED);
+    activity()?.setRequestedOrientation(requestedOrientation(configuredOrientation())); // back to config, not free
   });
 }

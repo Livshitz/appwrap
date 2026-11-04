@@ -9,7 +9,7 @@ import { resolveSoundName } from './notif-sound';
 import { resolveAttachment } from './notif-attachment';
 import { sha256Hex } from './sha256';
 import { thermalState } from './thermal';
-import { maskForLock, setIosOrientationMask } from './orientation';
+import { configuredOrientation, maskForInterfaceOrientation, maskForLock, setIosOrientationMask } from './orientation';
 
 interface GeoResult { lat: number; lng: number; accuracy: number; }
 
@@ -500,11 +500,20 @@ export function registerExtendedHandlers(): void {
     Application.orientation() === 'landscape' ? 'landscape' : 'portrait'
   );
   bridge.register('screen.orientation.lock', ({ orientation }: { orientation: string }) => {
-    if (isIOS) applyIosOrientation(maskForLock(String(orientation)));
+    if (!isIOS) return;
+    const o = String(orientation);
+    applyIosOrientation(o === 'current' ? maskForInterfaceOrientation(iosInterfaceOrientation()) : maskForLock(o));
   });
   bridge.register('screen.orientation.unlock', () => {
-    if (isIOS) applyIosOrientation(maskForLock('any'));
+    if (isIOS) applyIosOrientation(maskForLock(configuredOrientation()));
   });
+}
+
+/** The key window scene's UIInterfaceOrientation (0 unknown, 1 portrait, 2 upside-down, 3/4 landscape). */
+function iosInterfaceOrientation(): number {
+  // any: UIWindowScene.interfaceOrientation via the root VC's window — typed lazily across iOS SDKs.
+  const scene: any = Utils.ios.getRootViewController()?.view?.window?.windowScene;
+  return Number(scene?.interfaceOrientation ?? 0);
 }
 
 /** Set the supported-orientation mask and force UIKit to re-evaluate it now (iOS 16+ geometry update). */
