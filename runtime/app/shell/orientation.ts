@@ -19,7 +19,17 @@ export const ORIENTATION_MASK = {
 // AppDelegate's `supportedInterfaceOrientationsForWindow` returns this mask and OVERRIDES the static
 // Info.plist `UISupportedInterfaceOrientations` at runtime — so locking orientation requires setting
 // the mask here, not just stamping the plist. `kit.screen.orientation.lock()` still overrides at runtime.
-let iosMask = maskForLock((SHELL_CONFIG as { orientation?: string }).orientation || 'any');
+let iosMask = maskForLock(configuredOrientation());
+
+/** The app's configured orientation ('any' when unpinned) — what an unlock returns to. */
+export function configuredOrientation(): string {
+  return (SHELL_CONFIG as { orientation?: string }).orientation || 'any';
+}
+
+/** Mask pinning one UIInterfaceOrientation value (1..4); unknown (0) falls back to portrait. */
+export function maskForInterfaceOrientation(o: number): number {
+  return o >= 1 && o <= 4 ? 1 << o : ORIENTATION_MASK.portrait;
+}
 
 /** The mask the AppDelegate reports to UIKit. */
 export function iosOrientationMask(): number {

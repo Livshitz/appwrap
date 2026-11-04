@@ -228,7 +228,8 @@ export class WebAdapter implements NativeKitAdapter {
         const so = screen?.orientation;
         if (!so?.lock) throw new KitError('UNSUPPORTED', 'Screen orientation lock unavailable');
         // Most browsers require fullscreen before locking; surface the real reason.
-        await so.lock(toWebOrientation(String(p.orientation))).catch((e: Error) => {
+        const target = p.orientation === 'current' ? so.type || 'any' : toWebOrientation(String(p.orientation));
+        await so.lock(target).catch((e: Error) => {
           throw new KitError('UNSUPPORTED', e.message || 'Lock rejected (fullscreen may be required)');
         });
         return undefined as T;

@@ -2,8 +2,12 @@ import type { NativeKit } from '../core/NativeKit';
 import type { Unsubscribe } from '../core/types';
 
 export type Orientation = 'portrait' | 'landscape';
-/** What to lock to. 'any' releases the lock (same as {@link OrientationController.unlock}). */
+/**
+ * What to lock to. 'current' pins whatever the screen shows right now (e.g. a tilt-controlled view,
+ * where tilting must not rotate the app). 'any' releases the lock (same as {@link OrientationController.unlock}).
+ */
 export type OrientationLock =
+  | 'current'
   | 'portrait'
   | 'portrait-upside-down'
   | 'landscape'
@@ -56,7 +60,7 @@ export class OrientationController {
     return this.kit.invoke('screen.orientation.lock', { orientation });
   }
 
-  /** Release the lock (rotate freely again). */
+  /** Release the lock — back to the app's configured orientation (free rotation unless pinned in config). */
   unlock(): Promise<void> {
     return this.kit.invoke('screen.orientation.unlock');
   }
