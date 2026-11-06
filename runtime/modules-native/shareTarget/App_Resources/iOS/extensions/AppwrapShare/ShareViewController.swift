@@ -34,6 +34,15 @@ class ShareViewController: UIViewController {
     private var processed = false
     private var statusPill: UILabel?
 
+    /// Why a share took the mailbox instead of direct sync — App Group key `appwrap-share-diag` (the latest only), so
+    /// a failed direct sync can be read back from the device (`devicectl device copy from --domain-type appGroupDataContainer`).
+    private func noteFallback(_ reason: String) {
+        NSLog("[appwrap-share] mailbox: %@", reason)
+        guard let d = UserDefaults(suiteName: "__APP_GROUP__") else { return }
+        d.set("\(ISO8601DateFormatter().string(from: Date())) \(reason)", forKey: "appwrap-share-diag")
+        d.synchronize()
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         guard !processed else { return }
@@ -48,6 +57,7 @@ class ShareViewController: UIViewController {
                 self.showStatus("Syncing…")
                 self.runDirectSync(sync, texts: texts, files: files)
             } else {
+                self.noteFallback("no direct sync: \(files.count) image(s), context \(self.shareContext() == nil ? "missing" : "set")")
                 self.finishViaMailbox(texts: texts, files: files)
             }
         }
@@ -238,7 +248,7 @@ class ShareViewController: UIViewController {
     /// Execute the sync: (append mode) GET current → merge → write; else write as-is. Any failure
     /// falls back to the mailbox — the share is never lost.
     private func runDirectSync(_ plan: SyncPlan, texts: [String], files: [String]) {
-        let fallback: () -> Void = { [weak self] in self?.finishViaMailbox(texts: texts, files: files) }
+        let fallback: (String) -> Void = { [weak self] r in self?.noteFallback(r); self?.finishViaMailbox(texts: texts, files: files) }
         let newText = texts.joined(separator: "\n")
 
         let write: ([String: Any]) -> Void = { [weak self] existing in
@@ -255,9 +265,11 @@ class ShareViewController: UIViewController {
             req.httpMethod = plan.method
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-            URLSession.shared.dataTask(with: req) { _, resp, _ in
+            URLSession.shared.dataTask(with: req) { _, resp, err in
                 DispatchQueue.main.async {
-                    guard let code = (resp as? HTTPURLResponse)?.statusCode, (200..<300).contains(code) else { fallback(); return }
+                    guard let code = (resp as? HTTPURLResponse)?.statusCode, (200..<300).contains(code) else {
+                        fallback("\(plan.method) HTTP \((resp as? HTTPURLResponse)?.statusCode ?? 0), \(req.httpBody?.count ?? 0) bytes, \(err.map { String(describing: $0) } ?? "no error")"); return
+                    }
                     if let name = plan.imageFile, let u = self.groupFileURL(name) { try? FileManager.default.removeItem(at: u) }
                     self.finish(status: "✓ \(plan.successText)")
                 }
@@ -267,11 +279,11 @@ class ShareViewController: UIViewController {
         if plan.append {
             var req = URLRequest(url: plan.url, timeoutInterval: 15)
             req.httpMethod = "GET"
-            URLSession.shared.dataTask(with: req) { data, resp, _ in
+            URLSession.shared.dataTask(with: req) { data, resp, err in
                 DispatchQueue.main.async {
-                    guard let code = (resp as? HTTPURLResponse)?.statusCode else { fallback(); return } // offline
+                    guard let code = (resp as? HTTPURLResponse)?.statusCode else { fallback("GET failed: \(String(describing: err))"); return } // offline
                     if code == 404 { write([:]); return } // nothing there yet — first write
-                    guard (200..<300).contains(code) else { fallback(); return }
+                    guard (200..<300).contains(code) else { fallback("GET HTTP \(code)"); return }
                     let existing = data.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] } ?? [:]
                     write(existing)
                 }
