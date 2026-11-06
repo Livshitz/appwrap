@@ -2,7 +2,7 @@ import { Application, isIOS } from '@nativescript/core';
 import { onDeepLink, onShortcut, onUserActivity } from './shell/events';
 import { iosOrientationMask } from './shell/orientation';
 import { installForegroundNotificationDelegate } from './shell/handlers-extended';
-import { onApnsToken, onApnsError, onRemoteMessage } from './shell/handlers-push';
+import { onApnsToken, onApnsError, onRemoteMessage, dismissDelivered } from './shell/handlers-push';
 import { registerBackgroundLaunchHandlers } from './shell/background-bootstrap.generated';
 
 /** APNs device token (NSData) → lowercase hex string the push backend expects. */
@@ -158,7 +158,10 @@ if (isIOS) {
       completionHandler: (result: UIBackgroundFetchResult) => void
     ): void {
       onRemoteMessage(userInfo, false);
-      completionHandler(UIBackgroundFetchResult.NewData);
+      // A `dismiss: [ids]` push removes those delivered notifications (id = the apns-collapse-id they were sent with).
+      // The removal is async: hold the completion a moment so a suspended app isn't frozen before it lands.
+      if (dismissDelivered(userInfo)) setTimeout(() => completionHandler(UIBackgroundFetchResult.NewData), 1000);
+      else completionHandler(UIBackgroundFetchResult.NewData);
     }
   }
   Application.ios.delegate = AppWrapAppDelegate;
