@@ -356,7 +356,9 @@ export function registerAndroidHandlers(): void {
   const startMotion = () => {
     if (motionListener) return;
     const hz = motionHz;
-    const minMs = 1000 / hz;
+    // ×0.75 slack (as the web adapter): sensor events arrive at ~the period WITH jitter, so a strict
+    // `< 1000/hz` drops every sample that lands a hair early — halving the rate (60 asked → ~30 out).
+    const minMs = (1000 / hz) * 0.75;
     const sm = sensorManager();
     const accel = sm.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER);
     if (!accel) throw err('UNSUPPORTED', 'No accelerometer on this device');
