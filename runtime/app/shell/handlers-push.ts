@@ -88,6 +88,28 @@ export function onRemoteMessage(userInfo: any, tapped: boolean): void { // any: 
   else bridge.emit('push.message', payload);
 }
 
+/** A push carrying `dismiss: string[]` (usually a silent content-available one): remove those DELIVERED notifications
+ * from Notification Center. On iOS a remote notification's request identifier is the apns-collapse-id it was sent with
+ * (UNNotificationRequest.identifier docs), so a sender dismisses what it pushed under a collapse id. Returns whether any
+ * ids were found. iOS only (Android: no-op). */
+export function dismissDelivered(userInfo: any): boolean { // any: NSDictionary or marshalled JS object
+  if (!isIOS) return false;
+  let ids: string[] = [];
+  try {
+    const raw = userInfo && typeof userInfo.objectForKey === 'function' ? userInfo.objectForKey('dismiss') : userInfo?.dismiss;
+    if (raw?.count != null && typeof raw.objectAtIndex === 'function') for (let i = 0; i < raw.count; i++) ids.push(String(raw.objectAtIndex(i)));
+    else if (Array.isArray(raw)) ids = raw.map(String);
+    else if (typeof raw === 'string') ids = [raw];
+  } catch (e: any) { console.log('[push] dismiss parse failed: ' + (e?.message ?? e)); }
+  ids = ids.filter(Boolean);
+  if (!ids.length) return false;
+  const arr = NSMutableArray.new<string>();
+  for (const id of ids) arr.addObject(id);
+  UNUserNotificationCenter.currentNotificationCenter().removeDeliveredNotificationsWithIdentifiers(arr);
+  console.log('[push] dismissed delivered: ' + ids.join(', '));
+  return true;
+}
+
 /** Android FirebaseMessagingService (fcm-service.android.ts) → a message arrived while the app
  * process is alive. Forwarded as push.message (the foreground/data path; tray-notification taps come
  * via events.ts → push.tap). */
