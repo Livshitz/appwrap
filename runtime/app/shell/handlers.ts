@@ -4,7 +4,7 @@ import { SHELL_CONFIG } from './config';
 import { onPwaHandshake, consumePendingDeepLink } from './events';
 import { showToast } from './toast';
 import { showBanner, dismissBanner } from './banner';
-import { setStatusBarStyle } from './status-bar';
+import { setStatusBarHidden, setStatusBarStyle } from './status-bar';
 import { buildCapabilityMap } from './capabilities.manifest';
 import { ACTIVE_MODULE_NAMES, PACK_MODULES } from './active-modules.generated';
 import { consumePendingBackgroundTaskId } from './background-context';
@@ -245,6 +245,7 @@ export function registerHandlers(): void {
   bridge.register('ui.statusBar.setStyle', ({ style }: { style: 'light' | 'dark' }) =>
     setStatusBarStyle(style)
   );
+  bridge.register('ui.statusBar.setHidden', ({ hidden }: { hidden: boolean }) => setStatusBarHidden(!!hidden));
 }
 
 /** Reload the attached WebView from origin, bypassing the HTTP cache (iOS `reloadFromOrigin`,

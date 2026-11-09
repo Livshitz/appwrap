@@ -183,3 +183,49 @@ export function setStatusBarStyle(style: 'light' | 'dark'): void {
     }
   }
 }
+
+let statusBarHidden = false;
+
+/**
+ * Hide / show the system status bar (a full-bleed game, or a page that draws its own top bar).
+ * iOS: appearance is view-controller based and NS's page controller doesn't implement
+ * `prefersStatusBarHidden`, so the getter is installed on the live controllers' classes (the page's,
+ * and its navigation controller's, which forwards to the top child) and an appearance update is
+ * requested. Android: WindowInsetsController hides `statusBars()`; a top swipe reveals it briefly.
+ */
+export function setStatusBarHidden(hidden: boolean): void {
+  statusBarHidden = !!hidden;
+  if (isIOS) {
+    const vc = (currentPage as any)?.ios as UIViewController | undefined;
+    if (!vc) return;
+    const nav = vc.navigationController;
+    preferHidden(vc);
+    if (nav) preferHidden(nav, true);
+    nav?.setNeedsStatusBarAppearanceUpdate();
+    vc.setNeedsStatusBarAppearanceUpdate();
+  } else if (isAndroid) {
+    try {
+      const controller = Application.android?.startActivity?.getWindow()?.getInsetsController?.();
+      if (!controller) return;
+      const bars = android.view.WindowInsets.Type.statusBars();
+      if (statusBarHidden) {
+        controller.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+        controller.hide(bars);
+      } else controller.show(bars);
+    } catch (e) {
+      console.warn('AppWrap: status bar hide failed', e);
+    }
+  }
+}
+
+function preferHidden(vc: UIViewController, forwardToTop = false): void {
+  const proto = Object.getPrototypeOf(vc);
+  if (!proto || proto.__awStatusBarHidden) return;
+  Object.defineProperty(proto, 'prefersStatusBarHidden', { get: () => statusBarHidden, configurable: true });
+  if (forwardToTop)
+    Object.defineProperty(proto, 'childViewControllerForStatusBarHidden', {
+      get(this: UINavigationController) { return this.topViewController; },
+      configurable: true,
+    });
+  proto.__awStatusBarHidden = true;
+}
