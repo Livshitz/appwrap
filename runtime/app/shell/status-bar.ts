@@ -253,5 +253,14 @@ function installStatusBarRoot(page: UIViewController | undefined): UIViewControl
   page.view.autoresizingMask = UIViewAutoresizing.FlexibleWidth | UIViewAutoresizing.FlexibleHeight;
   root.view.addSubview(page.view);
   page.didMoveToParentViewController(root);
+  // Measured on device: after Control Center (resign → become active) iOS draws the bar again and does NOT re-ask
+  // prefersStatusBarHidden until told to, so the real bar sat over the app's own. Re-ask on every activation.
+  Application.on(Application.resumeEvent, () => {
+    const reask = () => root.setNeedsStatusBarAppearanceUpdate();
+    reask();
+    for (const ms of [150, 400, 800, 1500]) setTimeout(reask, ms); // the system re-draws it during its dismiss animation
+  });
+  // What remains is the system's own: for ~1s while Control Center animates away iOS draws the bar whatever the
+  // app prefers (a 200ms re-ask timer, tried on device, did not shorten it), then the re-ask above removes it.
   return root;
 }
