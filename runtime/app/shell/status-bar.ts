@@ -188,21 +188,15 @@ let statusBarHidden = false;
 
 /**
  * Hide / show the system status bar (a full-bleed game, or a page that draws its own top bar).
- * iOS: appearance is view-controller based and NS's page controller doesn't implement
- * `prefersStatusBarHidden`, so the getter is installed on the live controllers' classes (the page's,
- * and its navigation controller's, which forwards to the top child) and an appearance update is
- * requested. Android: WindowInsetsController hides `statusBars()`; a top swipe reveals it briefly.
+ * iOS: see StatusBarRoot. Android: WindowInsetsController hides `statusBars()`; a swipe from the top reveals
+ * it briefly.
  */
 export function setStatusBarHidden(hidden: boolean): void {
   statusBarHidden = !!hidden;
   if (isIOS) {
     const vc = (currentPage as any)?.ios as UIViewController | undefined;
-    if (!vc) return;
-    const nav = vc.navigationController;
-    preferHidden(vc);
-    if (nav) preferHidden(nav, true);
-    nav?.setNeedsStatusBarAppearanceUpdate();
-    vc.setNeedsStatusBarAppearanceUpdate();
+    const root = installStatusBarRoot(vc);
+    root?.setNeedsStatusBarAppearanceUpdate();
   } else if (isAndroid) {
     try {
       const controller = Application.android?.startActivity?.getWindow()?.getInsetsController?.();
@@ -218,14 +212,46 @@ export function setStatusBarHidden(hidden: boolean): void {
   }
 }
 
-function preferHidden(vc: UIViewController, forwardToTop = false): void {
-  const proto = Object.getPrototypeOf(vc);
-  if (!proto || proto.__awStatusBarHidden) return;
-  Object.defineProperty(proto, 'prefersStatusBarHidden', { get: () => statusBarHidden, configurable: true });
-  if (forwardToTop)
-    Object.defineProperty(proto, 'childViewControllerForStatusBarHidden', {
-      get(this: UINavigationController) { return this.topViewController; },
-      configurable: true,
-    });
-  proto.__awStatusBarHidden = true;
+/**
+ * iOS status-bar visibility is asked of the window's ROOT controller, which is NS's page controller — it has no
+ * `prefersStatusBarHidden`, and it can't be given one at runtime (measured on device: a prototype getter added
+ * after the class is built never reaches ObjC, a copied IMP answers NO, and NS refuses to subclass an already
+ * extended class). So on first use the page controller is wrapped in this container, which answers the
+ * hidden question itself and hands the STYLE question back to the page (so `statusBarStyle` keeps working).
+ * The page's view fills the container; presentation, safe areas and rotation pass through unchanged.
+ */
+let StatusBarRoot: any;
+function statusBarRootClass(): any {
+  if (StatusBarRoot) return StatusBarRoot;
+  @NativeClass()
+  class AWStatusBarRoot extends UIViewController {}
+  Object.defineProperty(AWStatusBarRoot.prototype, 'prefersStatusBarHidden', { get: () => statusBarHidden, enumerable: true, configurable: true });
+  Object.defineProperty(AWStatusBarRoot.prototype, 'childViewControllerForStatusBarStyle', {
+    get(this: UIViewController) { return this.childViewControllers.firstObject; },
+    enumerable: true,
+    configurable: true,
+  });
+  Object.defineProperty(AWStatusBarRoot.prototype, 'supportedInterfaceOrientations', {
+    get(this: UIViewController) { return this.childViewControllers.firstObject?.supportedInterfaceOrientations ?? UIInterfaceOrientationMask.All; },
+    enumerable: true,
+    configurable: true,
+  });
+  return (StatusBarRoot = AWStatusBarRoot);
+}
+
+function installStatusBarRoot(page: UIViewController | undefined): UIViewController | null {
+  const window = page?.view?.window;
+  const current = window?.rootViewController;
+  if (!window || !current) return null;
+  if (current instanceof statusBarRootClass()) return current;
+  if (current !== page) return current; // a root we don't own (a modal / custom root) — leave it alone
+  const root = statusBarRootClass().new() as UIViewController;
+  root.view.backgroundColor = page.view.backgroundColor;
+  window.rootViewController = root;
+  root.addChildViewController(page);
+  page.view.frame = root.view.bounds;
+  page.view.autoresizingMask = UIViewAutoresizing.FlexibleWidth | UIViewAutoresizing.FlexibleHeight;
+  root.view.addSubview(page.view);
+  page.didMoveToParentViewController(root);
+  return root;
 }
