@@ -25,7 +25,6 @@ export function registerAndroidHandlers(): void {
   // ── notifications (NotificationManager + channel) ──────────────────
   const notificationManager = () =>
     context().getSystemService(android.content.Context.NOTIFICATION_SERVICE);
-  const pendingTimers = new Map<number, any>();
 
   const ensureChannel = (channelId: string = CHANNEL_ID, name: string = 'Notifications') => {
     if (android.os.Build.VERSION.SDK_INT < 26) return;
@@ -39,124 +38,49 @@ export function registerAndroidHandlers(): void {
   // in Android's notification settings (real per-"app" mute/importance).
   const senderChannelId = (sender: string) => 'sender-' + sender.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 64);
 
-  /** Decode an icon (http(s) URL or data-URI) to a Bitmap for setLargeIcon; null on failure.
-   * Called on a background thread (URL fetch would throw NetworkOnMainThread otherwise). */
-  const loadBitmap = (icon: string): android.graphics.Bitmap | null => {
-    try {
-      if (icon.startsWith('data:')) {
-        const comma = icon.indexOf(',');
-        const b64 = comma >= 0 ? icon.slice(comma + 1) : '';
-        if (!b64) return null;
-        const bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT);
-        return android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
-      }
-      const conn = new java.net.URL(icon).openConnection();
-      conn.setConnectTimeout(5000);
-      conn.setReadTimeout(5000);
-      const stream = conn.getInputStream();
-      const bmp = android.graphics.BitmapFactory.decodeStream(stream);
-      stream.close();
-      return bmp;
-    } catch (e) {
-      console.warn('AppWrap: notification largeIcon load failed', e);
-      return null;
-    }
-  };
-
   bridge.register('notifications.requestPermission', async () => {
     if (android.os.Build.VERSION.SDK_INT < 33) return 'granted';
     const ok = await requestPermissions(['android.permission.POST_NOTIFICATIONS']);
     return ok ? 'granted' : 'denied';
   });
 
+  // Delivery lives in native NotifAlarms (AlarmManager + a plain-Java receiver) so a scheduled
+  // notification fires with the app process dead and survives reboot — iOS UNUserNotificationCenter
+  // parity. JS only resolves identity/channel and hands over a flat payload.
+  // Module-owned native source: present only when the `notifications` module is active.
+  const notifAlarms = () => {
+    const cls = (global as any).cc?.livx?.appwrap?.NotifAlarms;
+    if (!cls) throw err('unavailable', 'notifications module is not active in this build');
+    return cls;
+  };
+
   bridge.register('notifications.schedule', ({ id, title, body, delaySec, deepLink, sender, icon, silent, image, actions }: any) => {
     const ident = notifIdentity({ title, body, sender, icon });
-    const buttons = notifActions(actions);
     // Per-sender channel gives the mini-app its own identity + settings row; else the shared one.
-    const channelId = ident.useIdentity && ident.senderName ? senderChannelId(ident.senderName) : CHANNEL_ID;
-    ensureChannel(channelId, ident.useIdentity && ident.senderName ? ident.senderName : 'Notifications');
+    const perSender = ident.useIdentity && ident.senderName;
+    const channelId = perSender ? senderChannelId(ident.senderName) : CHANNEL_ID;
+    const channelName = perSender ? ident.senderName : 'Notifications';
+    ensureChannel(channelId, channelName);
     const nid = id ?? Math.floor(Math.random() * 100000);
-    const timer = setTimeout(() => {
-      pendingTimers.delete(nid);
-      const ctx = context();
-      const builder = android.os.Build.VERSION.SDK_INT >= 26
-        ? new android.app.Notification.Builder(ctx, channelId)
-        : new android.app.Notification.Builder(ctx);
-      builder
-        .setSmallIcon(ctx.getApplicationInfo().icon)
-        .setContentTitle(ident.title)
-        .setAutoCancel(true);
-      // The channel already carries the alert sound (IMPORTANCE_DEFAULT); `silent: true` is the
-      // per-notification opt-out that matches iOS's nil-sound path. API 29+ only — below that the
-      // channel's sound wins and there is nothing to suppress.
-      if (silent && android.os.Build.VERSION.SDK_INT >= 29) builder.setSilent(true);
-      if (ident.subtitle) builder.setSubText(ident.subtitle);
-      if (ident.body) builder.setContentText(ident.body);
-      // Tap → re-open the (singleTask) activity with a VIEW intent; onNewIntent
-      // routes it through the same deep-link path as an external open. Each action button gets its
-      // OWN PendingIntent — same shape, different target, and a distinct request code (a shared one
-      // would make FLAG_UPDATE_CURRENT overwrite every earlier button's target with the last).
-      let reqCode = nid * 8;
-      const openIntent = (link: string) => {
-        const viewIntent = new android.content.Intent(
-          android.content.Intent.ACTION_VIEW, android.net.Uri.parse(String(link))
-        );
-        viewIntent.setPackage(ctx.getPackageName());
-        viewIntent.addFlags(
-          android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP | android.content.Intent.FLAG_ACTIVITY_NEW_TASK
-        );
-        const piFlags = android.os.Build.VERSION.SDK_INT >= 23
-          ? android.app.PendingIntent.FLAG_IMMUTABLE | android.app.PendingIntent.FLAG_UPDATE_CURRENT
-          : android.app.PendingIntent.FLAG_UPDATE_CURRENT;
-        return android.app.PendingIntent.getActivity(ctx, reqCode++, viewIntent, piFlags);
-      };
-      if (deepLink) builder.setContentIntent(openIntent(String(deepLink)));
-      for (const b of buttons) {
-        if (!b.deepLink) continue;
-        // Icon 0 — modern Android draws action buttons as text only, and a bogus resource id crashes
-        // the builder. `Notification.Action.Builder` needs an Icon object on API 23+; the deprecated
-        // three-arg overload is the one that accepts 0 and is still honoured.
-        builder.addAction(0, b.title, openIntent(b.deepLink));
-      }
-      // Artwork and the sender icon are both network reads — do them on a background thread (a URL
-      // fetch on the main thread throws NetworkOnMainThread) and post once both have resolved.
-      if (ident.iconUrl || image) {
-        new java.lang.Thread(new java.lang.Runnable({
-          run: () => {
-            if (ident.iconUrl) {
-              const bmp = loadBitmap(ident.iconUrl);
-              if (bmp) builder.setLargeIcon(bmp);
-            }
-            if (image) {
-              const hero = loadBitmap(String(image));
-              // BigPictureStyle IS the rich card: collapsed it shows the large icon, expanded the
-              // hero. Keep the large icon on expand so the mini-app's identity survives the expand.
-              if (hero) {
-                const style = new android.app.Notification.BigPictureStyle().bigPicture(hero);
-                if (ident.body) style.setSummaryText(ident.body);
-                builder.setStyle(style);
-              }
-            }
-            notificationManager().notify(nid, builder.build());
-          },
-        })).start();
-      } else {
-        notificationManager().notify(nid, builder.build());
-      }
-    }, Math.max(1, delaySec ?? 1) * 1000);
-    pendingTimers.set(nid, timer);
+    const payload = {
+      channelId, channelName, title: ident.title, subtitle: ident.subtitle, body: ident.body,
+      deepLink: deepLink ? String(deepLink) : undefined, silent: !!silent,
+      iconUrl: ident.iconUrl, image: image ? String(image) : undefined,
+      actions: notifActions(actions).filter((b) => b.deepLink),
+    };
+    const at = Date.now() + Math.max(1, delaySec ?? 1) * 1000;
+    notifAlarms().schedule(context(), nid, JSON.stringify(payload), at);
     return { id: nid };
   });
 
-  bridge.register('notifications.pending', () => pendingTimers.size);
+  bridge.register('notifications.pending', () => notifAlarms().pendingCount(context()));
 
   bridge.register('notifications.setBadge', () => {
     // No portable badge API on Android — launchers own badges. Honest no-op.
   });
 
   bridge.register('notifications.clear', () => {
-    for (const timer of pendingTimers.values()) clearTimeout(timer);
-    pendingTimers.clear();
+    (global as any).cc?.livx?.appwrap?.NotifAlarms?.cancelAll(context());
     notificationManager().cancelAll();
   });
 

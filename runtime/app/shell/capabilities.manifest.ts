@@ -79,7 +79,7 @@ export interface ModuleManifest {
   };
   /** Module-owned native source: a dir under `runtime/modules-native/<nativeSrc>/` mirroring the
    * App_Resources layout, copied into `native/` ONLY when the module is active (stays strippable).
-   * Defaults to the module `name` when the convention dir exists. */
+   * Must be set explicitly - the CLI copies nothing without it. */
   nativeSrc?: string;
   /** Build-time registration wiring for a module contributed by an OUT-OF-REPO pack (see packs.ts).
    * Built-in modules leave this undefined — their handler barrel wiring comes from cli.ts's
@@ -126,7 +126,21 @@ export const MODULES: ModuleManifest[] = [
 
   // ── opt-in: permission / dependency / weight-bearing ───────────────────
   // POST_NOTIFICATIONS / VIBRATE / USE_BIOMETRIC etc. are in the template's baseline manifest already.
-  { name: 'notifications', group: 'extended', capabilities: { notifications: 'native' } },
+  // Android: scheduled notifications are delivered by module Java (cc.livx.appwrap.NotifAlarms —
+  // AlarmManager + receiver), so they fire with the app process dead and re-arm after reboot/update.
+  {
+    name: 'notifications', group: 'extended', nativeSrc: 'notifications', capabilities: { notifications: 'native' },
+    android: {
+      permissions: ['android.permission.RECEIVE_BOOT_COMPLETED'],
+      manifestApplication:
+        `<receiver android:name="cc.livx.appwrap.NotifAlarms" android:exported="false">\n` +
+        `\t\t\t<intent-filter>\n` +
+        `\t\t\t\t<action android:name="android.intent.action.BOOT_COMPLETED" />\n` +
+        `\t\t\t\t<action android:name="android.intent.action.MY_PACKAGE_REPLACED" />\n` +
+        `\t\t\t</intent-filter>\n` +
+        `\t\t</receiver>`,
+    },
+  },
   {
     name: 'biometrics', group: 'extended',
     capabilities: { biometrics: 'native' },
