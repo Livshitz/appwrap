@@ -1,6 +1,7 @@
 import { Utils, isIOS, isAndroid } from '@nativescript/core';
 import { bridge } from './bridge';
 import { MUTE_PROBE_WAV_B64 } from './mute-probe-sound';
+import { configureAudioSession, registerAudioSessionHandlers, type AudioSessionMode } from './handlers-audio-session';
 
 // AudioToolbox isn't in the bundled iOS typings (AVFoundation is), so declare the few SystemSound
 // symbols we use. They exist at runtime — NativeScript exposes every linked framework global.
@@ -229,6 +230,9 @@ export function registerMediaHandlers(): void {
   // honors a connected headset/Bluetooth route (only the built-in receiver is redirected).
   if (isIOS) observeAudioRouteForSpeaker();
 
+  // audio.route + audio.interruption / audio.routeChange events + the backgroundAudio boot session.
+  registerAudioSessionHandlers();
+
   // Establish the OS-level (TCC) mic/camera grant from the *app* process. WKWebView's
   // getUserMedia checks the same per-app TCC entry but doesn't persist a grant of its
   // own, so without this it re-prompts on every call. AVCaptureDevice.requestAccess
@@ -254,34 +258,10 @@ export function registerMediaHandlers(): void {
     return out;
   });
 
-  bridge.register('media.configureAudio', ({ mode }: { mode?: string }) => {
+  // Category logic lives with the rest of the session handling (interruption / route) in handlers-audio-session.
+  bridge.register('media.configureAudio', ({ mode, mixWithOthers }: { mode?: AudioSessionMode; mixWithOthers?: boolean } = {}) => {
     if (!isIOS) return; // Android: nothing to configure
-    const session = AVAudioSession.sharedInstance();
-    let category: string;
-    let options = 0;
-    // Default mode = the system's choice for the category; voiceChat swaps in the
-    // voice-processing I/O unit (hardware AEC) so TTS doesn't bleed into the mic.
-    let avMode = AVAudioSessionModeDefault;
-    if (mode === 'playAndRecord') {
-      category = AVAudioSessionCategoryPlayAndRecord;
-      // Loud speaker by default + allow Bluetooth headsets for calls.
-      options =
-        AVAudioSessionCategoryOptions.DefaultToSpeaker | AVAudioSessionCategoryOptions.AllowBluetooth;
-    } else if (mode === 'voiceChat') {
-      // Full-duplex voice agent: PlayAndRecord + VoiceChat engages iOS acoustic
-      // echo cancellation, so speaker TTS is removed from the mic feed (no STT bleed).
-      category = AVAudioSessionCategoryPlayAndRecord;
-      options =
-        AVAudioSessionCategoryOptions.DefaultToSpeaker | AVAudioSessionCategoryOptions.AllowBluetooth;
-      avMode = AVAudioSessionModeVoiceChat;
-    } else if (mode === 'default') {
-      category = AVAudioSessionCategoryAmbient;
-    } else {
-      category = AVAudioSessionCategoryPlayback; // ignores the silent switch
-    }
-    // options is an OR-combined flag mask; the bitwise result widens to number, so cast back to the enum.
-    session.setCategoryModeOptionsError(category, avMode, options as AVAudioSessionCategoryOptions);
-    session.setActiveError(true);
+    configureAudioSession(mode ?? 'playback', { mixWithOthers: !!mixWithOthers });
   });
 
   // Start streaming `media.audioState` { silent, volume } events. iOS: volume is event-driven (KVO),

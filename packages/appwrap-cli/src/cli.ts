@@ -431,6 +431,7 @@ const OPTIONAL_GROUP_HANDLERS: Record<string, { file: string; fn: string }> = {
   backgroundTask: { file: './handlers-background', fn: 'registerBackgroundTaskHandlers' },
   shareTarget: { file: './handlers-share-target', fn: 'registerShareTargetHandlers' },
   webview: { file: './handlers-webview', fn: 'registerWebViewHandlers' },
+  headphoneMotion: { file: './handlers-headphones', fn: 'registerHeadphoneMotionHandlers' },
   // billing/health/widget live in host-provided module packs — a consumer opts in via modulePacks.
 };
 
@@ -1091,6 +1092,7 @@ export const SHELL_CONFIG = {
   pushRegistrationUrl: ${JSON.stringify(cfg.push?.registrationUrl ?? '')},
   iosKeyboardExtraLift: ${JSON.stringify(cfg.iosKeyboardExtraLift ?? 82)},
   iosHideKeyboardAccessory: ${JSON.stringify(cfg.iosHideKeyboardAccessory ?? false)},
+  backgroundAudio: ${JSON.stringify(!!cfg.backgroundAudio)},
   splash: ${JSON.stringify(splash)} as { hold: boolean; timeoutMs: number; logo: boolean },
   envSwitcher: ${JSON.stringify(envSwitcher)} as { enabled: boolean; envs: { label: string; url: string }[]; allowPattern: string; params: { key: string; label: string; options: string[]; optionsUrl: string; optionsPath: string; defaultValue?: string }[] },
   webCaps: ${JSON.stringify(webCaps)} as { camera: boolean; microphone: boolean; geolocation: boolean },

@@ -278,6 +278,28 @@ async function main() {
     return;
   }
 
+  // Spatial audio: route (AirPods? spatial on?) + head tracking. Logged once at boot so a headless run
+  // (simulator, no taps) still proves the handlers answer.
+  const logSpatial = async () => {
+    log(`audio.route → ${JSON.stringify(await kit.media.route())}`);
+    log(`headphoneMotion.availability → ${JSON.stringify(await kit.headphoneMotion.availability())}`);
+  };
+  logSpatial().catch((e) => log(`spatial ✗ ${e?.code ?? ''} ${e?.message ?? e}`));
+  kit.media.onRouteChange((r) => log(`audio.routeChange → ${r.reason} ${r.type} spatial=${r.spatialAudioEnabled}`));
+  kit.media.onInterruption((e) => log(`audio.interruption → ${JSON.stringify(e)}`));
+  kit.headphoneMotion.onConnection((e) => log(`headphones ${e.connected ? 'connected' : 'disconnected'}`));
+  let stopHead: (() => void) | null = null;
+  tile('Spatial audio', kit.media.audioSessionCapability, [
+    ['Route', () => kit.media.route()],
+    ['Head avail', () => kit.headphoneMotion.availability()],
+    ['Head 5s', async () => {
+      stopHead?.();
+      let n = 0;
+      stopHead = await kit.headphoneMotion.watch((s) => { if (n++ % 25 === 0) log(`head yaw=${s.yaw.toFixed(2)} pitch=${s.pitch.toFixed(2)}`); });
+      setTimeout(() => { stopHead?.(); stopHead = null; log(`head stopped after ${n} samples`); }, 5000);
+    }],
+  ], 'mobile');
+
   tile('Haptics', kit.haptics.capability, [
     ['light', () => kit.haptics.impact('light')],
     ['medium', () => kit.haptics.impact('medium')],

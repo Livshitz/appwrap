@@ -31,8 +31,9 @@ export type { ScheduleOptions, NotificationAction } from './modules/notification
 export type { PushMessage, PushPlatform, PushToken } from './modules/push';
 export type { GeoPosition } from './modules/geo';
 export type { HeadingSample } from './modules/heading';
+export type { HeadphoneMotionSample, HeadphoneMotionAvailability } from './modules/headphoneMotion';
 export type { PickedPhoto, PickPhotoOptions } from './modules/photos';
-export type { AudioMode, MediaDeviceLite, AudioState } from './modules/media';
+export type { AudioMode, MediaDeviceLite, AudioState, AudioPortType, AudioOutput, AudioRoute, AudioRouteChange, AudioInterruption } from './modules/media';
 export type { NetworkStatus } from './modules/network';
 export type { ActionOptions, AlertOptions, ConfirmOptions, SafeAreaInsets } from './modules/ui';
 export type { MotionSample } from './modules/motion';

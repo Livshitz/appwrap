@@ -18,6 +18,46 @@ export interface AudioState {
   volume: number;
 }
 
+/** Output port kind (from AVAudioSessionPort*); 'other' for anything unmapped (raw value in `portType`). */
+export type AudioPortType =
+  | 'headphones' | 'bluetoothA2DP' | 'bluetoothLE' | 'bluetoothHFP' | 'builtInSpeaker' | 'builtInReceiver'
+  | 'airPlay' | 'hdmi' | 'usbAudio' | 'carAudio' | 'lineOut' | 'other';
+
+export interface AudioOutput {
+  type: AudioPortType;
+  /** Raw AVAudioSessionPort value, e.g. 'BluetoothA2DPOutput'. */
+  portType: string;
+  /** Device name, e.g. "Elya's AirPods Pro". */
+  name: string;
+  /** Wired/Bluetooth headphones-class (headphones, bluetoothA2DP/LE/HFP). */
+  headphones: boolean;
+  /** iOS 15+ isSpatialAudioEnabled: port supports spatial rendering AND it's on; null = API absent. */
+  spatialAudioEnabled: boolean | null;
+}
+
+export interface AudioRoute {
+  /** First output's kind / name ('none' when no output). */
+  type: AudioPortType | 'none';
+  name: string;
+  /** Any output is headphones-class. */
+  headphones: boolean;
+  spatialAudioEnabled: boolean | null;
+  outputs: AudioOutput[];
+  /** Raw AVAudioSession category, e.g. 'AVAudioSessionCategoryPlayback'. */
+  category: string;
+  otherAudioPlaying: boolean;
+}
+
+export interface AudioRouteChange extends AudioRoute {
+  reason:
+    | 'unknown' | 'newDeviceAvailable' | 'oldDeviceUnavailable' | 'categoryChange' | 'override' | 'wakeFromSleep'
+    | 'noSuitableRouteForCategory' | 'routeConfigurationChange' | 'spatialCapabilitiesChanged';
+}
+
+export type AudioInterruption =
+  | { type: 'began'; reason: 'default' | 'appWasSuspended' | 'builtInMicMuted' | 'sceneWasBackgrounded' | 'routeDisconnected' | 'unknown' | null }
+  | { type: 'ended'; shouldResume: boolean };
+
 export interface MediaDeviceLite {
   kind: MediaDeviceKind;
   label: string;
@@ -72,9 +112,34 @@ export class MediaModule {
    * this for live voice agents so TTS playback doesn't bleed into the mic / STT.
    * No-op where the platform needs no session config (Android, web).
    */
-  configureAudio(mode: AudioMode = 'playback'): Promise<void> {
-    if (this.capability !== 'native') return Promise.resolve();
-    return this.kit.invoke('media.configureAudio', { mode });
+  configureAudio(mode: AudioMode = 'playback', opts: { mixWithOthers?: boolean } = {}): Promise<void> {
+    // The session handler ships in every iOS shell (`audioSession`, core) — an app need not opt into the
+    // camera/mic-bearing `media` module just to play audio.
+    if (this.capability !== 'native' && this.audioSessionCapability !== 'native') return Promise.resolve();
+    return this.kit.invoke('media.configureAudio', { mode, mixWithOthers: !!opts.mixWithOthers });
+  }
+
+  /** 'native' where the shell exposes the audio session (iOS): route + interruption/route events. */
+  get audioSessionCapability() {
+    return this.kit.capability('audioSession');
+  }
+
+  /** Current output route (iOS). Resolves `null` where the platform has no session (Android, web). */
+  async route(): Promise<AudioRoute | null> {
+    if (this.audioSessionCapability !== 'native') return null;
+    return this.kit.invoke('audio.route');
+  }
+
+  /** Audio session interrupted (call, Siri, another app) / interruption ended. On `ended` with
+   * `shouldResume`, the shell has already re-activated the session — resume your AudioContext / element. */
+  onInterruption(cb: (e: AudioInterruption) => void): Unsubscribe {
+    return this.kit.on('audio.interruption', (p) => cb(p as AudioInterruption));
+  }
+
+  /** Output route changed (AirPods connected/removed, spatial audio toggled). `reason:'oldDeviceUnavailable'`
+   * = headphones gone: pause, like every iOS media app. */
+  onRouteChange(cb: (e: AudioRouteChange) => void): Unsubscribe {
+    return this.kit.on('audio.routeChange', (p) => cb(p as AudioRouteChange));
   }
 
   /**

@@ -187,6 +187,19 @@ export const MODULES: ModuleManifest[] = [
     capabilities: { motion: 'native' },
     ios: { permissions: [{ key: 'NSMotionUsageDescription', domain: 'motion', defaultUsage: 'Read device motion sensors.' }] },
   },
+  // audioSession: the native audio session for WEB playback — media.configureAudio (category, mixWithOthers),
+  // audio.route (output port / headphones / isSpatialAudioEnabled) + audio.interruption / audio.routeChange
+  // events. Permission-free and cheap → core (handlers ride the always-bundled media group,
+  // handlers-audio-session.ts). iOS-only: Android has no app-level session to tune.
+  { name: 'audioSession', core: true, group: 'media', capabilities: { audioSession: { ios: true, android: false } } },
+  // headphoneMotion: AirPods/Beats head tracking (CMHeadphoneMotionManager, iOS 14+). iOS kills the process on
+  // start without NSMotionUsageDescription → declared here (domain `motion`, deduped with the motion module;
+  // `permissions.motion` overrides the copy). Android: no public head-tracking API → 'none'. Strippable.
+  {
+    name: 'headphoneMotion', group: 'headphoneMotion',
+    capabilities: { headphoneMotion: { ios: true, android: false } },
+    ios: { permissions: [{ key: 'NSMotionUsageDescription', domain: 'motion', defaultUsage: 'Follow your head movement with your headphones for spatial audio.' }] },
+  },
   {
     name: 'contacts', group: 'parity',
     capabilities: { contacts: 'native' },
@@ -381,7 +394,7 @@ export const MODULES: ModuleManifest[] = [
 
 /** Opt-in registration groups that own their own NS handler file (strippable when inactive). Core
  * groups (core/extended/parity/system/media) are always bundled; only these are CLI-gated. */
-export const OPTIONAL_GROUPS = ['oauth', 'reviews', 'scanner', 'speech', 'tracking', 'appleSignIn', 'backgroundTask', 'shareTarget', 'webview'] as const;
+export const OPTIONAL_GROUPS = ['oauth', 'reviews', 'scanner', 'speech', 'tracking', 'appleSignIn', 'backgroundTask', 'shareTarget', 'webview', 'headphoneMotion'] as const;
 
 /** CLI-gated groups (strippable in explicit mode) that legacy mode (no `modules` key) STILL auto-bundles
  * for back-compat. Empty now that billing (its only member) moved to a host-provided pack — kept as the

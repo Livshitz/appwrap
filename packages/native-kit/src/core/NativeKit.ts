@@ -17,6 +17,7 @@ import { DeviceModule } from '../modules/device';
 import { FsModule } from '../modules/fs';
 import { GeoModule } from '../modules/geo';
 import { HeadingModule } from '../modules/heading';
+import { HeadphoneMotionModule } from '../modules/headphoneMotion';
 import { HapticsModule } from '../modules/haptics';
 import { KeyboardModule } from '../modules/keyboard';
 import { LifecycleModule } from '../modules/lifecycle';
@@ -92,6 +93,7 @@ export class NativeKit {
   public readonly biometrics = new BiometricsModule(this);
   public readonly geo = new GeoModule(this);
   public readonly heading = new HeadingModule(this);
+  public readonly headphoneMotion = new HeadphoneMotionModule(this);
   public readonly photos = new PhotosModule(this);
   public readonly network = new NetworkModule(this);
   public readonly lifecycle = new LifecycleModule(this);
@@ -150,7 +152,7 @@ export class NativeKit {
       haptics: this.haptics, share: this.share, screen: this.screen, keyboard: this.keyboard,
       storage: this.storage, fs: this.fs, toast: this.toast, ui: this.ui, device: this.device,
       clipboard: this.clipboard, notifications: this.notifications, push: this.push,
-      biometrics: this.biometrics, geo: this.geo, heading: this.heading, photos: this.photos,
+      biometrics: this.biometrics, geo: this.geo, heading: this.heading, headphoneMotion: this.headphoneMotion, photos: this.photos,
       network: this.network, lifecycle: this.lifecycle, reviews: this.reviews, motion: this.motion,
       media: this.media, contacts: this.contacts, scanner: this.scanner,
       speech: this.speech, calendar: this.calendar, app: this.app, browser: this.browser, webview: this.webview,
@@ -159,6 +161,8 @@ export class NativeKit {
       shareTarget: this.shareTarget,
     };
     for (const [name, inst] of Object.entries(eager)) this.modules.registerModule(name, inst);
+    // Head tracking has no web equivalent: surface the shell's real error, never a WebAdapter "Unknown method".
+    this.excludeWebFallback('headphoneMotion.');
   }
 
   /** Typed, string-keyed module lookup — delegates to {@link ModuleRegistry.getModule}.
@@ -366,6 +370,7 @@ declare module './module-registry' {
     biometrics: BiometricsModule;
     geo: GeoModule;
     heading: HeadingModule;
+    headphoneMotion: HeadphoneMotionModule;
     photos: PhotosModule;
     network: NetworkModule;
     lifecycle: LifecycleModule;

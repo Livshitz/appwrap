@@ -388,7 +388,9 @@ export interface AppwrapConfig {
   /** Opt in to the `audio` UIBackgroundMode — ONLY for apps that genuinely keep playing audio while
    * backgrounded/screen-locked (music/streaming/podcast players). Off by default: declaring `audio`
    * without a real background-audio feature is an App Store 2.5.4 rejection. Stamps `audio` into
-   * Info.plist UIBackgroundModes when true; no-op/stripped when absent. */
+   * Info.plist UIBackgroundModes when true; no-op/stripped when absent. The iOS shell also activates a
+   * `.playback` AVAudioSession at boot (the mode alone doesn't keep a WKWebView's audio alive on lock), and
+   * `headphoneMotion` keeps streaming while backgrounded. */
   backgroundAudio?: boolean;
   /** Remote push (APNs/FCM). Off unless set — gating matters: an `aps-environment` entitlement on a
    * team that can't hold the Push capability (e.g. a personal team) BREAKS code signing, and the

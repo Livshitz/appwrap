@@ -12,7 +12,7 @@ export default defineConfig({
   modules: [
     'notifications', 'biometrics', 'geo', 'photos', 'camera', 'media',
     'motion', 'contacts', 'calendar', 'reviews', 'scanner', 'speech', 'oauth',
-    'tracking', 'appleSignIn', 'backgroundTask', 'shareTarget',
+    'tracking', 'appleSignIn', 'backgroundTask', 'shareTarget', 'headphoneMotion',
   ],
   // App Group (group.<appId>) is now derived + stamped by the CLI onto BOTH the app and the widget
   // extension when the `widget` module is active — no per-app entitlement config needed.

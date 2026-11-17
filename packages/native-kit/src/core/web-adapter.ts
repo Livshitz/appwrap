@@ -96,6 +96,8 @@ export class WebAdapter implements NativeKitAdapter {
       themeColor: 'web', // the browser honors <meta name="theme-color"> itself
       motion: typeof DeviceMotionEvent !== 'undefined' ? 'web' : 'none',
       heading: typeof DeviceOrientationEvent !== 'undefined' ? 'web' : 'none',
+      headphoneMotion: 'none', // no head-tracking API in browsers
+      audioSession: 'none', // the browser owns its audio session
       contacts: n.contacts?.select ? 'web' : 'none',
       calendar: 'none',
       camera: 'web', // <input capture> — mobile browsers open the camera

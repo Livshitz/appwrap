@@ -229,8 +229,16 @@ await kit.notifications.schedule({
 // shell unlocks it (grants the WebView capture permission) and tunes the native audio session.
 kit.media.available;                              // secure-context + mediaDevices present?
 const stream = await kit.media.getUserMedia({ audio: true, video: true });
-await kit.media.configureAudio('playback');        // iOS: play over the silent switch / background
+await kit.media.configureAudio('playback');        // iOS: play over the silent switch / background; { mixWithOthers: true } to duck nobody
 await kit.media.devices();                         // enumerate input/output devices
+// Audio session (`audioSession`, core, iOS): `backgroundAudio: true` also activates .playback at boot.
+await kit.media.route();                           // { type:'bluetoothA2DP'|'headphones'|'builtInSpeaker'|…, name, headphones, spatialAudioEnabled, outputs, category } | null
+kit.media.onInterruption((e) => {});               // { type:'began', reason } | { type:'ended', shouldResume } — session already re-activated: resume your AudioContext
+kit.media.onRouteChange((r) => {});                // route + reason ('oldDeviceUnavailable' = headphones gone → pause; 'spatialCapabilitiesChanged')
+// Head tracking (opt-in `headphoneMotion` module, iOS 14+, AirPods Pro/Max/3 & Beats): stamps NSMotionUsageDescription (`permissions.motion` overrides).
+await kit.headphoneMotion.availability();          // { available, connected, authorization, configured } | null (Android/web)
+const stopHead = await kit.headphoneMotion.watch((s) => {}, { hz: 50 }); // { qx,qy,qz,qw, yaw,pitch,roll (rad), rx,ry,rz (rad/s), t }
+kit.headphoneMotion.onConnection(({ connected }) => {});
 
 // In-app purchases / subscriptions — ONE API across web and native. The kit owns the
 // native store flow (iOS StoreKit 1, Android Play Billing); on the web it dispatches to

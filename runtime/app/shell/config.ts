@@ -76,6 +76,10 @@ export const SHELL_CONFIG = {
   /** iOS only. Remove WKWebView's ▲▼✓ keyboard accessory bar (native: App_Resources/iOS/src/AppwrapKeyboardAccessory.m, gated on Info.plist AppwrapHideKeyboardAccessory). With the bar
    * gone the extra lift above is not applied — it only compensates the bar's phantom reservation. */
   iosHideKeyboardAccessory: false,
+  /** `backgroundAudio` config (also stamps the `audio` UIBackgroundMode): iOS activates a `.playback` audio
+   * session at boot so web playback keeps running on the lock screen; head tracking keeps streaming while
+   * backgrounded. See handlers-audio-session.ts. */
+  backgroundAudio: false,
   /** `splashHold` config: hold the launch splash over the WebView until the page calls
    * `ui.splash.hide` (or `timeoutMs` passes / the load fails). `logo` = a `splashIcon` was stamped
    * (iOS `LaunchScreen.Center` imageset, Android `splash_logo` drawable). See wireSplashHold. */
