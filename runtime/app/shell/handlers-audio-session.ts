@@ -7,7 +7,7 @@ import { SHELL_CONFIG } from './config';
  *
  * Long Web Audio / <audio> sessions need three things the page cannot do itself:
  *  1. the app's AVAudioSession in a playback category, active — `media.configureAudio` (below), and AT BOOT
- *     when the app declares `backgroundAudio: true` (the `audio` UIBackgroundMode is useless without it);
+ *     when the app declares `backgroundAudio: true` (category only at boot — activation happens when audio starts);
  *  2. interruption + route signals so the page can resume its AudioContext / pause on unplug:
  *     events `audio.interruption` and `audio.routeChange`;
  *  3. the current output route (AirPods? spatial audio on?) — `audio.route`.
@@ -26,8 +26,9 @@ export interface AudioSessionOptions {
 /** The last configuration this shell applied — re-applied after an interruption / media-services reset. */
 let current: { mode: AudioSessionMode; opts: AudioSessionOptions } | null = null;
 
-/** Apply a category/mode to the shared AVAudioSession and activate it. Throws on an AVAudioSession error. */
-export function configureAudioSession(mode: AudioSessionMode = 'playback', opts: AudioSessionOptions = {}): void {
+/** Apply a category/mode to the shared AVAudioSession and (unless `activate` is false) activate it. Activating a
+ * non-mixing category interrupts other apps' audio, so the boot path only sets the category. Throws on error. */
+export function configureAudioSession(mode: AudioSessionMode = 'playback', opts: AudioSessionOptions = {}, activate = true): void {
   const session = AVAudioSession.sharedInstance();
   let category: string;
   let options = 0;
@@ -52,7 +53,7 @@ export function configureAudioSession(mode: AudioSessionMode = 'playback', opts:
   if (opts.mixWithOthers) options |= AVAudioSessionCategoryOptions.MixWithOthers;
   // options is an OR-combined flag mask; the bitwise result widens to number, so cast back to the enum.
   session.setCategoryModeOptionsError(category, avMode, options as AVAudioSessionCategoryOptions);
-  session.setActiveError(true);
+  if (activate) session.setActiveError(true);
   current = { mode, opts };
 }
 
@@ -138,7 +139,7 @@ export function registerAudioSessionHandlers(): void {
     const type = num(info, AVAudioSessionInterruptionTypeKey);
     if (type === AVAudioSessionInterruptionType.Began) {
       const reason = num(info, AVAudioSessionInterruptionReasonKey);
-      bridge.emit('audio.interruption', { type: 'began', reason: reason == null ? null : (['default', 'appWasSuspended', 'builtInMicMuted', 'sceneWasBackgrounded', 'routeDisconnected'][reason] ?? 'unknown') });
+      bridge.emit('audio.interruption', { type: 'began', reason: reason == null ? null : (['default', 'appWasSuspended', 'builtInMicMuted', null, 'routeDisconnected'][reason] ?? 'unknown') });
       return;
     }
     const shouldResume = ((num(info, AVAudioSessionInterruptionOptionKey) ?? 0) & AVAudioSessionInterruptionOptions.ShouldResume) !== 0;
@@ -164,11 +165,11 @@ export function registerAudioSessionHandlers(): void {
 
   bridge.register('audio.route', () => audioRoute());
 
-  // `backgroundAudio: true` only stamps the `audio` UIBackgroundMode; without an ACTIVE playback category the
-  // OS still suspends the app on lock. Establish it at boot so web playback survives the lock screen.
+  // `backgroundAudio: true` only stamps the `audio` UIBackgroundMode. Set the PLAYBACK CATEGORY at boot (so web audio
+  // plays under it and survives the lock), but do NOT activate: that would stop the user's music at launch.
   if (SHELL_CONFIG.backgroundAudio) {
     try {
-      configureAudioSession('playback');
+      configureAudioSession('playback', {}, false);
     } catch (e) {
       console.warn('[appwrap] backgroundAudio: playback session failed', e);
     }

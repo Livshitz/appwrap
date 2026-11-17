@@ -49,6 +49,15 @@ describe('headphoneMotion', () => {
     expect(usage(g.plist, 'NSMotionUsageDescription')).toBe('Spatial audio follows your head.');
   });
 
+  test('motion + headphoneMotion together → ONE NSMotionUsageDescription, both handlers live', () => {
+    const g = generate({ modules: ['motion', 'headphoneMotion'], permissions: { motion: 'Shake and head tracking.' } });
+    expect(g.plist.match(/<key>NSMotionUsageDescription<\/key>/g)?.length).toBe(1);
+    expect(usage(g.plist, 'NSMotionUsageDescription')).toBe('Shake and head tracking.');
+    expect(g.optional).toContain('registerHeadphoneMotionHandlers');
+    expect(g.modules).toContain('"motion"');
+    expect(g.modules).toContain('"headphoneMotion"');
+  });
+
   test('not enabled → no NSMotionUsageDescription, handler stripped', () => {
     const g = generate({ modules: ['share'] });
     expect(usage(g.plist, 'NSMotionUsageDescription')).toBeNull();

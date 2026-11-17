@@ -21,6 +21,7 @@ interface RequestEnvelope {
  */
 export class Bridge {
   private handlers = new Map<string, HandlerFn>();
+  private newDocumentListeners = new Set<() => void>();
   private webView: CustomWebView | null = null;
 
   register(method: string, handler: HandlerFn): void {
@@ -40,7 +41,7 @@ export class Bridge {
    */
   attach(webView: CustomWebView): void {
     this.webView = webView;
-    webView.onAppwrapMessage = (json, origin) => this.onMessage(json, origin);
+    webView.onAppwrapMessage = (json, origin, mainFrame) => this.onMessage(json, origin, mainFrame);
   }
 
   detach(): void {
@@ -70,7 +71,15 @@ export class Bridge {
   static responseAttemptTimeoutMs = 3_000;
 
   /** `origin` = the calling frame's origin, from the transport (never from the page's own payload). */
-  private async onMessage(json: string, origin: string): Promise<void> {
+  /** A NEW TOP-LEVEL DOCUMENT is live: the main frame sent `app.handshake` (each page load does, via kit.ready).
+   * Native streams owned by the previous document (whose listeners are gone) stop here. Iframe handshakes do not
+   * count; `mainFrame` undefined (a transport that cannot tell — Android's prompt tunnel) counts as main. */
+  onNewDocument(cb: () => void): void {
+    this.newDocumentListeners.add(cb);
+  }
+
+  /** `mainFrame` = the transport saw the call come from the top frame (iOS WKFrameInfo.mainFrame). */
+  private async onMessage(json: string, origin: string, mainFrame?: boolean): Promise<void> {
     let req: RequestEnvelope;
     try {
       req = JSON.parse(json);
@@ -79,6 +88,11 @@ export class Bridge {
       return;
     }
     if (req.kind !== 'request' || !req.id || !req.method) return;
+    if (req.method === 'app.handshake' && mainFrame !== false) {
+      for (const cb of this.newDocumentListeners) {
+        try { cb(); } catch (e) { console.warn('Bridge: new-document listener failed', e); }
+      }
+    }
 
     if (!bridgeAllows(origin, req.method)) {
       console.warn(`Bridge: ${req.method} denied for foreign origin ${origin || '(unknown)'}`);

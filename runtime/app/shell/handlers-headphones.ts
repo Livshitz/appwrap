@@ -1,7 +1,8 @@
-import { WebView, isIOS } from '@nativescript/core';
+import { isIOS } from '@nativescript/core';
 import { bridge } from './bridge';
 import { pauseInBackground } from './background-pause';
 import { SHELL_CONFIG } from './config';
+import { headphoneStartBlocker } from './headphone-gate';
 
 /**
  * Headphone head-tracking (`headphoneMotion` module) — opt-in, strippable, iOS only.
@@ -19,7 +20,7 @@ import { SHELL_CONFIG } from './config';
  * fragile under NativeScript). A sample is emitted only when its timestamp moved, so asking 50 Hz from
  * headphones that report slower never re-sends the same sample.
  *
- * Lifetime: stopped when the WebView that started it reloads or is replaced (the listener that wanted it
+ * Lifetime: stopped when a new top-level document handshakes (reload or navigation; iframes do not count) or the WebView is replaced (the listener that wanted it
  * is gone), and paused while backgrounded UNLESS the app plays background audio
  * (`backgroundAudio: true`), where head-tracked panning must keep following the head.
  */
@@ -66,7 +67,6 @@ export function registerHeadphoneMotionHandlers(): void {
   let hz = 0; // > 0 while the page holds the stream (survives a background pause)
   let connected: boolean | null = null; // null = unknown until the delegate reports
   let lastT = -1;
-  const watchedViews = new WeakSet<object>();
   let startedFor: unknown = null; // the WebView whose page asked for the stream
 
   const setConnected = (c: boolean) => {
@@ -130,9 +130,8 @@ export function registerHeadphoneMotionHandlers(): void {
   });
 
   bridge.register('headphoneMotion.start', (p: { hz?: number } = {}) => {
-    if (!usageKeyPresent()) {
-      throw err('NOT_CONFIGURED', 'NSMotionUsageDescription missing — enable the `headphoneMotion` module in appwrap.config');
-    }
+    const blocked = headphoneStartBlocker(usageKeyPresent(), authorizationName());
+    if (blocked) throw err(blocked.code, blocked.message);
     const want = Math.max(5, Math.min(100, p.hz || 50));
     if (hz === want && manager) return;
     halt(); // a new rate restarts the timer
@@ -143,17 +142,13 @@ export function registerHeadphoneMotionHandlers(): void {
       hz = 0;
       throw e;
     }
-    // The page that asked is the only consumer: a RELOAD drops its listener, so stop. Only navType
-    // 'reload' — NativeScript's loadStarted also fires for iframe + same-document navigations, which must
-    // not kill a mini-app's stream. (A swapped WebView is caught by the timer's identity check.)
-    const wv = bridge.getWebView();
-    startedFor = wv;
-    if (wv && !watchedViews.has(wv)) {
-      watchedViews.add(wv);
-      // any: NS LoadEventData — navigationType is on the event, not in the base EventData type
-      wv.on(WebView.loadStartedEvent, (e: any) => { if (hz && e?.navigationType === 'reload') stopAll(); });
-    }
+    startedFor = bridge.getWebView(); // a swapped WebView is caught by the timer's identity check
   });
+
+  // The document that asked is the only consumer: a new top-level document (main-frame handshake) stops it.
+  // NOT NativeScript's loadStarted — in @nativescript/core 9.0.x it fires for every navigation action incl.
+  // iframes (no mainFrame check), which would kill the stream whenever a mini-app iframe navigates.
+  bridge.onNewDocument(() => { if (hz) stopAll(); });
 
   bridge.register('headphoneMotion.stop', () => stopAll());
 }

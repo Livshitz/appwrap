@@ -55,7 +55,7 @@ export interface AudioRouteChange extends AudioRoute {
 }
 
 export type AudioInterruption =
-  | { type: 'began'; reason: 'default' | 'appWasSuspended' | 'builtInMicMuted' | 'sceneWasBackgrounded' | 'routeDisconnected' | 'unknown' | null }
+  | { type: 'began'; reason: 'default' | 'appWasSuspended' | 'builtInMicMuted' | 'routeDisconnected' | 'unknown' | null }
   | { type: 'ended'; shouldResume: boolean };
 
 export interface MediaDeviceLite {

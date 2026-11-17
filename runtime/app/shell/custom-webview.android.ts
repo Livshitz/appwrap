@@ -88,7 +88,7 @@ function getChromeClientClass(): any {
  */
 export class CustomWebView extends WebView {
   /** Set by the bridge before load; receives raw envelope JSON. */
-  onAppwrapMessage: ((json: string, origin: string) => void) | null = null;
+  onAppwrapMessage: ((json: string, origin: string, mainFrame?: boolean) => void) | null = null;
 
   /**
    * A TLS handshake this view REFUSED (onReceivedSslError → handler.cancel()), pending attribution to the
