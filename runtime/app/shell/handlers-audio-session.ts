@@ -1,6 +1,7 @@
 import { Utils, isIOS } from '@nativescript/core';
 import { bridge } from './bridge';
 import { SHELL_CONFIG } from './config';
+import { AudioSessionPolicy, type Decision } from './audio-session-policy';
 
 /**
  * Native audio session for WEB playback (`audioSession` capability, core, iOS).
@@ -23,12 +24,22 @@ export interface AudioSessionOptions {
   mixWithOthers?: boolean;
 }
 
-/** The last configuration this shell applied — re-applied after an interruption / media-services reset. */
-let current: { mode: AudioSessionMode; opts: AudioSessionOptions } | null = null;
+/** Boot default vs explicit page claim — decides what may be re-applied / activated (audio-session-policy.ts). */
+const policy = new AudioSessionPolicy();
+/** The AVAudioSession category the live claim set (to detect WebKit having switched it, e.g. to playAndRecord). */
+let claimCategory: string | null = null;
+
+/** A page EXPLICITLY asked for this session (`media.configureAudio`): apply + activate, and remember it as the claim
+ * the shell may restore after an interruption, until the next top-level document. */
+export function claimAudioSession(mode: AudioSessionMode = 'playback', opts: AudioSessionOptions = {}): void {
+  claimCategory = configureAudioSession(mode, opts, true);
+  policy.setClaim({ mode, mixWithOthers: !!opts.mixWithOthers });
+}
 
 /** Apply a category/mode to the shared AVAudioSession and (unless `activate` is false) activate it. Activating a
- * non-mixing category interrupts other apps' audio, so the boot path only sets the category. Throws on error. */
-export function configureAudioSession(mode: AudioSessionMode = 'playback', opts: AudioSessionOptions = {}, activate = true): void {
+ * non-mixing category interrupts other apps' audio, so the boot path only sets the category. Returns the category
+ * set. Throws on error. */
+function configureAudioSession(mode: AudioSessionMode = 'playback', opts: AudioSessionOptions = {}, activate = true): string {
   const session = AVAudioSession.sharedInstance();
   let category: string;
   let options = 0;
@@ -54,7 +65,7 @@ export function configureAudioSession(mode: AudioSessionMode = 'playback', opts:
   // options is an OR-combined flag mask; the bitwise result widens to number, so cast back to the enum.
   session.setCategoryModeOptionsError(category, avMode, options as AVAudioSessionCategoryOptions);
   if (activate) session.setActiveError(true);
-  current = { mode, opts };
+  return category;
 }
 
 // ── route ────────────────────────────────────────────────────────────────────
@@ -111,12 +122,12 @@ export function audioRoute(): { type: string; name: string; headphones: boolean;
   };
 }
 
-function reactivate(): void {
-  if (!current) return;
+function applyDecision(d: Decision, why: string): void {
+  if (!d.apply) return;
   try {
-    configureAudioSession(current.mode, current.opts);
+    configureAudioSession(d.apply.mode, { mixWithOthers: d.apply.mixWithOthers }, d.activate);
   } catch (e) {
-    console.warn('[appwrap] audio session reactivate failed', e);
+    console.warn(`[appwrap] audio session restore (${why}) failed`, e);
   }
 }
 
@@ -143,8 +154,10 @@ export function registerAudioSessionHandlers(): void {
       return;
     }
     const shouldResume = ((num(info, AVAudioSessionInterruptionOptionKey) ?? 0) & AVAudioSessionInterruptionOptions.ShouldResume) !== 0;
-    // Apple: reactivate the session BEFORE resuming playback. Do it here so the page only has to resume.
-    if (shouldResume) reactivate();
+    // Apple: reactivate BEFORE resuming — but only a session a page explicitly claimed, and only if WebKit hasn't
+    // since moved it (getUserMedia → playAndRecord). Otherwise the session stays WebKit's; the page just gets the event.
+    const live = String(AVAudioSession.sharedInstance().category);
+    applyDecision(policy.onInterruptionEnded(shouldResume, claimCategory != null && live === claimCategory), 'interruption');
     bridge.emit('audio.interruption', { type: 'ended', shouldResume });
   });
 
@@ -161,7 +174,11 @@ export function registerAudioSessionHandlers(): void {
   }
 
   // mediaserverd restarted: every session object is invalid — Apple says re-create the configuration.
-  observe(AVAudioSessionMediaServicesWereResetNotification, () => reactivate());
+  // Restore the category; activate only for a live claim (never stop the user's music on a daemon restart).
+  observe(AVAudioSessionMediaServicesWereResetNotification, () => applyDecision(policy.onMediaServicesReset(), 'mediaServicesReset'));
+
+  // A new top-level document never asked: its predecessor's claim ends here.
+  bridge.onNewDocument(() => { policy.clearClaim(); claimCategory = null; });
 
   bridge.register('audio.route', () => audioRoute());
 
@@ -170,6 +187,7 @@ export function registerAudioSessionHandlers(): void {
   if (SHELL_CONFIG.backgroundAudio) {
     try {
       configureAudioSession('playback', {}, false);
+      policy.setBootDefault({ mode: 'playback', mixWithOthers: false });
     } catch (e) {
       console.warn('[appwrap] backgroundAudio: playback session failed', e);
     }

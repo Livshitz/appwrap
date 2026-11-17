@@ -239,6 +239,10 @@ kit.media.onRouteChange((r) => {});                // route + reason ('oldDevice
 await kit.headphoneMotion.availability();          // { available, connected, authorization, configured } | null (Android/web)
 const stopHead = await kit.headphoneMotion.watch((s) => {}, { hz: 50 }); // { qx,qy,qz,qw, yaw,pitch,roll (rad), rx,ry,rz (rad/s), t }
 kit.headphoneMotion.onConnection(({ connected }) => {});
+// Limits: the shell re-activates a session after an interruption ONLY if the page called configureAudio (and never
+// over a category WebKit switched, e.g. getUserMedia → playAndRecord). The head stream stops when a top-level
+// document handshakes; a SECOND main-frame app.handshake in the same document (a second NativeKit instance) also
+// stops it — keep one kit per page (the shell cannot cheaply tell a re-handshake from a new document).
 
 // In-app purchases / subscriptions — ONE API across web and native. The kit owns the
 // native store flow (iOS StoreKit 1, Android Play Billing); on the web it dispatches to
