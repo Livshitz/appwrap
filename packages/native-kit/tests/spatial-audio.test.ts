@@ -37,6 +37,15 @@ test('configureAudio is a no-op on web / Android (neither capability native)', a
   expect(f.calls).toEqual([]);
 });
 
+test('releaseAudio reaches the shell where the session exists, no-op elsewhere', async () => {
+  const f = fakeKit({ audioSession: 'native' });
+  await new MediaModule(f.kit).releaseAudio();
+  expect(f.calls).toEqual([['media.releaseAudio', undefined]]);
+  const w = fakeKit({ audioSession: 'none', media: 'web' });
+  await new MediaModule(w.kit).releaseAudio();
+  expect(w.calls).toEqual([]);
+});
+
 test('route() asks the shell only where the session exists', async () => {
   expect(await new MediaModule(fakeKit({ audioSession: 'none' }).kit).route()).toBeNull();
   const f = fakeKit({ audioSession: 'native' });

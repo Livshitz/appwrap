@@ -27,6 +27,15 @@ export class AudioSessionPolicy {
     return { apply: this.claim, activate: true };
   }
 
+  /** The page drops its claim (`media.releaseAudio`). No claim → no-op. With one: forget it, put the category back to
+   * the boot default (`apply`; null = the system default, SoloAmbient) and deactivate so the user's music can resume
+   * — the shell deactivates best-effort (iOS refuses while web audio I/O still runs; then it stays active). */
+  onRelease(): { noop: boolean; apply: SessionConfig | null; deactivate: boolean } {
+    if (!this.claim) return { noop: true, apply: null, deactivate: false };
+    this.claim = null;
+    return { noop: false, apply: this.bootDefault, deactivate: true };
+  }
+
   /** mediaserverd reset: every session setting is gone. Restore the category; activate only for a live claim. */
   onMediaServicesReset(): Decision {
     if (this.claim) return { apply: this.claim, activate: true };

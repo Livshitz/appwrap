@@ -505,6 +505,7 @@ export class WebAdapter implements NativeKitAdapter {
         return this.pickDocuments(p.types, !!p.multiple) as Promise<T>;
 
       case 'media.configureAudio':
+      case 'media.releaseAudio':
         return undefined as T; // browser owns the audio session — nothing to tune
 
       case 'network.status': {

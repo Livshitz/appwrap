@@ -36,6 +36,29 @@ export function claimAudioSession(mode: AudioSessionMode = 'playback', opts: Aud
   policy.setClaim({ mode, mixWithOthers: !!opts.mixWithOthers });
 }
 
+/** The page drops its claim (`media.releaseAudio`). No claim → no-op. Otherwise: restore the boot default category
+ * (playback with backgroundAudio, else the system default SoloAmbient) WITHOUT activating, then deactivate with
+ * NotifyOthersOnDeactivation so the user's music can resume. iOS refuses setActive(false) while audio I/O is still
+ * running in the web view (AVAudioSessionErrorCodeIsBusy) — then the session simply stays active: logged, never
+ * thrown to the page. Never rejects. */
+export function releaseAudioSession(): void {
+  const d = policy.onRelease();
+  if (d.noop) return;
+  claimCategory = null;
+  const session = AVAudioSession.sharedInstance();
+  try {
+    if (d.apply) configureAudioSession(d.apply.mode, { mixWithOthers: d.apply.mixWithOthers }, false);
+    else session.setCategoryError(AVAudioSessionCategorySoloAmbient);
+  } catch (e) {
+    console.warn('[appwrap] releaseAudio: category restore failed', e);
+  }
+  try {
+    session.setActiveWithOptionsError(false, AVAudioSessionSetActiveOptions.NotifyOthersOnDeactivation);
+  } catch (e) {
+    console.warn('[appwrap] releaseAudio: left active (audio still running in the web view)', e);
+  }
+}
+
 /** Apply a category/mode to the shared AVAudioSession and (unless `activate` is false) activate it. Activating a
  * non-mixing category interrupts other apps' audio, so the boot path only sets the category. Returns the category
  * set. Throws on error. */

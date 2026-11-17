@@ -1,7 +1,7 @@
 import { Utils, isIOS, isAndroid } from '@nativescript/core';
 import { bridge } from './bridge';
 import { MUTE_PROBE_WAV_B64 } from './mute-probe-sound';
-import { claimAudioSession, registerAudioSessionHandlers, type AudioSessionMode } from './handlers-audio-session';
+import { claimAudioSession, releaseAudioSession, registerAudioSessionHandlers, type AudioSessionMode } from './handlers-audio-session';
 
 // AudioToolbox isn't in the bundled iOS typings (AVFoundation is), so declare the few SystemSound
 // symbols we use. They exist at runtime — NativeScript exposes every linked framework global.
@@ -262,6 +262,11 @@ export function registerMediaHandlers(): void {
   bridge.register('media.configureAudio', ({ mode, mixWithOthers }: { mode?: AudioSessionMode; mixWithOthers?: boolean } = {}) => {
     if (!isIOS) return; // Android: nothing to configure
     claimAudioSession(mode ?? 'playback', { mixWithOthers: !!mixWithOthers });
+  });
+  // Drop the configureAudio claim: boot-default category back, session deactivated when nothing still plays.
+  bridge.register('media.releaseAudio', () => {
+    if (!isIOS) return;
+    releaseAudioSession();
   });
 
   // Start streaming `media.audioState` { silent, volume } events. iOS: volume is event-driven (KVO),

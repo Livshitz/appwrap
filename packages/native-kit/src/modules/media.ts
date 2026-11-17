@@ -119,6 +119,17 @@ export class MediaModule {
     return this.kit.invoke('media.configureAudio', { mode, mixWithOthers: !!opts.mixWithOthers });
   }
 
+  /**
+   * Drop the claim made by {@link configureAudio}: the shell forgets it (no re-activation after interruptions), puts
+   * the category back to the boot default (playback with `backgroundAudio`, else the system default) and deactivates
+   * the session so the user's music can resume — unless audio is still running in the web view (then it stays active).
+   * Never rejects; no claim → no-op. No-op on Android / web.
+   */
+  releaseAudio(): Promise<void> {
+    if (this.capability !== 'native' && this.audioSessionCapability !== 'native') return Promise.resolve();
+    return this.kit.invoke('media.releaseAudio');
+  }
+
   /** 'native' where the shell exposes the audio session (iOS): route + interruption/route events. */
   get audioSessionCapability() {
     return this.kit.capability('audioSession');

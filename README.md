@@ -231,6 +231,7 @@ kit.media.available;                              // secure-context + mediaDevic
 const stream = await kit.media.getUserMedia({ audio: true, video: true });
 await kit.media.configureAudio('playback');        // iOS: play over the silent switch / background; { mixWithOthers: true } to duck nobody
 await kit.media.devices();                         // enumerate input/output devices
+await kit.media.releaseAudio();                     // drop a configureAudio claim: boot-default category back, session deactivated so other apps resume (stays active while web audio still runs)
 // Audio session (`audioSession`, core, iOS): `backgroundAudio: true` also sets the .playback category at boot (not activated — other apps keep playing until yours does).
 await kit.media.route();                           // { type:'bluetoothA2DP'|'headphones'|'builtInSpeaker'|…, name, headphones, spatialAudioEnabled, outputs, category } | null
 kit.media.onInterruption((e) => {});               // { type:'began', reason } | { type:'ended', shouldResume } — session already re-activated: resume your AudioContext
