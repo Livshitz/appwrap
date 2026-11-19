@@ -27,8 +27,7 @@ app (kit.push.register) ──POST /register {token,platform,topic}──▶ rel
 | `RELAY_API_KEY` | optional bearer for `/broadcast` |
 
 ## Deploy
-```
-bod deploy --upload    # from this directory (reads secrets-broker.yaml)
-```
+Run `src/server.ts` on any host that runs Bun (`bun src/server.ts`) with the env vars above, behind HTTPS.
+Then build the demo app with `PUSH_RELAY_URL=https://<your-relay-host>`.
 APNs is HTTP/2-only — handled here via `node:http2` (no curl/library needed). The app wires it with one
 line in `kit.push.register().then(t => fetch(RELAY+'/register', {method:'POST', body: JSON.stringify({token:t.token, platform: t.platform, topic: appBundleId})}))`.

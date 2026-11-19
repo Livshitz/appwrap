@@ -39,7 +39,7 @@ export default defineConfig({
   // Remote push (APNs). Gated here (NOT the modules list). iOS stamps the `aps-environment`
   // entitlement → requires a PAID Apple team that can hold the Push capability (a free personal
   // team would break signing). 'development' = debug/TestFlight; the demo's own public relay
-  // (examples/push-relay, secrets-broker.example) sends the actual test push once
+  // (examples/push-relay, deployed at your PUSH_RELAY_URL) sends the actual test push once
   // register() returns a token, so the Push tile works end-to-end on a provisioned build.
   push: { enabled: true, apsEnvironment: 'development' },
   storekitConfig: 'Products.storekit',

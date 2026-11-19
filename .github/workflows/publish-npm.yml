@@ -8,7 +8,7 @@ name: Publish to npm
 # `workspace:*` deps — npm's workspace-tree resolution chokes on that (EUNSUPPORTEDPROTOCOL),
 # bun's doesn't. Publish stays on `npm publish` (proven working auth via NODE_AUTH_TOKEN) —
 # `npm publish` doesn't walk the workspace graph so it never hits the workspace:* issue.
-# Auth via NPM_TOKEN (an npm *automation* token — bypasses 2FA/OTP).
+# Auth: an npm *automation* token (bypasses 2FA/OTP), fetched from a secrets broker at publish time.
 # The CLI's prepack (node scripts/stage-assets.mjs) bundles runtime/ + templates/ into its tarball.
 
 on:
@@ -44,17 +44,17 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Pull NPM_TOKEN from secrets-broker secrets store
-        # The npm token is NOT a per-repo secret — a repo-scoped NPM_TOKEN goes stale silently and every
-        # publish then dies on a 404. Pull the canonical token from secrets-broker at publish time, so rotating it
-        # in ONE place fixes every repo. Only GitHub secret needed: BROKER_API_KEY.
+      - name: Fetch npm token from secrets broker
+        # The npm token is NOT a per-repo secret: a repo-scoped NPM_TOKEN goes stale silently and every
+        # publish then dies on a 404. It is fetched at publish time from a scoped, read-only secrets
+        # broker, so rotating it in ONE place fixes every repo. The endpoint URL and its credential
+        # live in GitHub secrets (NPM_TOKEN_URL, NPM_BROKER_SECRET), never in this file.
         env:
-          BROKER_API_KEY: ${{ secrets.BROKER_API_KEY }}
+          TOKEN_URL: ${{ secrets.NPM_TOKEN_URL }}
+          APP_SECRET: ${{ secrets.NPM_BROKER_SECRET }}
         run: |
-          TOKEN=$(curl -fsS -H "Authorization: Bearer $BROKER_API_KEY" \
-            "https://secrets-broker.example/api/apps/REDACTED-APP-ID/env/NPM_TOKEN?environment=prod" \
-            | jq -r '.value')
-          [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ] || { echo "::error::could not fetch NPM_TOKEN from secrets-broker"; exit 1; }
+          TOKEN=$(curl -fsS -H "x-app-secret: $APP_SECRET" "$TOKEN_URL" | jq -r '.value')
+          [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ] || { echo "::error::could not fetch npm token from secrets broker"; exit 1; }
           echo "::add-mask::$TOKEN"
           echo "NODE_AUTH_TOKEN=$TOKEN" >> "$GITHUB_ENV"
       - name: Bump if needed, then publish
@@ -100,17 +100,17 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Pull NPM_TOKEN from secrets-broker secrets store
-        # The npm token is NOT a per-repo secret — a repo-scoped NPM_TOKEN goes stale silently and every
-        # publish then dies on a 404. Pull the canonical token from secrets-broker at publish time, so rotating it
-        # in ONE place fixes every repo. Only GitHub secret needed: BROKER_API_KEY.
+      - name: Fetch npm token from secrets broker
+        # The npm token is NOT a per-repo secret: a repo-scoped NPM_TOKEN goes stale silently and every
+        # publish then dies on a 404. It is fetched at publish time from a scoped, read-only secrets
+        # broker, so rotating it in ONE place fixes every repo. The endpoint URL and its credential
+        # live in GitHub secrets (NPM_TOKEN_URL, NPM_BROKER_SECRET), never in this file.
         env:
-          BROKER_API_KEY: ${{ secrets.BROKER_API_KEY }}
+          TOKEN_URL: ${{ secrets.NPM_TOKEN_URL }}
+          APP_SECRET: ${{ secrets.NPM_BROKER_SECRET }}
         run: |
-          TOKEN=$(curl -fsS -H "Authorization: Bearer $BROKER_API_KEY" \
-            "https://secrets-broker.example/api/apps/REDACTED-APP-ID/env/NPM_TOKEN?environment=prod" \
-            | jq -r '.value')
-          [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ] || { echo "::error::could not fetch NPM_TOKEN from secrets-broker"; exit 1; }
+          TOKEN=$(curl -fsS -H "x-app-secret: $APP_SECRET" "$TOKEN_URL" | jq -r '.value')
+          [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ] || { echo "::error::could not fetch npm token from secrets broker"; exit 1; }
           echo "::add-mask::$TOKEN"
           echo "NODE_AUTH_TOKEN=$TOKEN" >> "$GITHUB_ENV"
       - name: Bump if needed, then publish

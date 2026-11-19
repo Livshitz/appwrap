@@ -8,9 +8,10 @@ function randomNonce(len = 32): string {
 
 const BUILD = 'loopbc-1'; // bump on each deploy so a stale bundle is obvious in the log
 
-// The demo's own public push relay (examples/push-relay). Not a secret — the relay only sends a test
-// push to a token YOU register; the "send" half lives in the app, not the kit. Safe to commit.
-const PUSH_RELAY_URL = 'https://secrets-broker.example';
+// Your deployment of the demo push relay (examples/push-relay). The relay only sends a test push to a
+// token YOU register; the "send" half lives in the app, not the kit. Set PUSH_RELAY_URL at build time
+// (shell env or examples/hello-pwa/.env); build.ts inlines it.
+const PUSH_RELAY_URL = process.env.PUSH_RELAY_URL || 'https://your-push-relay.example';
 
 const $ = (id: string) => document.getElementById(id)!;
 

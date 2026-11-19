@@ -14,6 +14,8 @@ const result = await Bun.build({
   outdir: dist,
   format: 'esm',
   minify: true,
+  // Inline the demo push-relay URL (see src/main.ts); Bun loads examples/hello-pwa/.env by itself.
+  define: { 'process.env.PUSH_RELAY_URL': JSON.stringify(process.env.PUSH_RELAY_URL ?? '') },
 });
 if (!result.success) {
   console.error(result.logs);

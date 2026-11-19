@@ -408,9 +408,9 @@ describe('stampAppBoundDomains — WKAppBoundDomains gate (operates on the REAL 
   });
 
   test('adds the key + array, single valid <dict>/<plist>', () => {
-    const out = stampAppBoundDomains(PLIST, ['secrets-broker.example']);
+    const out = stampAppBoundDomains(PLIST, ['app.example.com']);
     expect(out).toContain('<key>WKAppBoundDomains</key>');
-    expect(out).toContain('<string>secrets-broker.example</string>');
+    expect(out).toContain('<string>app.example.com</string>');
     expect(out.match(/<\/plist>/g)).toHaveLength(1);
     expect(out.match(/<key>WKAppBoundDomains<\/key>/g)).toHaveLength(1);
   });
