@@ -284,7 +284,7 @@ class ShareViewController: UIViewController {
         DispatchQueue.main.asyncAfter(deadline: .now() + plan.timeout) { handOff("no answer within \(plan.timeout) s") }
 
         let send: ([String: Any]) -> Void = { [weak self] existing in
-            guard let self = self else { return }
+            guard let self = self, !self.settled else { return } // a slow append GET after the deadline: already handed off
             let oldText = (existing[plan.textField] as? String) ?? ""
             let merged = plan.append && !oldText.isEmpty && !newText.isEmpty ? "\(oldText)\n\(newText)"
                 : (newText.isEmpty ? oldText : newText)
