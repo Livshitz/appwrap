@@ -33,6 +33,11 @@ describe('parseSharePayload', () => {
     expect(p).toEqual({ text: 'hello world', title: 'Note', files: ['appwrap-share/a.png', 'appwrap-share/b.jpg'] });
   });
 
+  test('carries the share id; an id alone is no share', () => {
+    expect(parseSharePayload('myapp://share?text=hi&id=abc-1')).toEqual({ text: 'hi', id: 'abc-1' });
+    expect(parseSharePayload('myapp://share?id=abc-1')).toBeNull();
+  });
+
   test('null for non-share URLs, empty shares, and garbage', () => {
     expect(parseSharePayload('copybin://send?text=x')).toBeNull(); // different host — the Shortcut legacy path is NOT a share delivery
     expect(parseSharePayload('https://share?text=x')).toBeNull(); // http(s) is never a share delivery

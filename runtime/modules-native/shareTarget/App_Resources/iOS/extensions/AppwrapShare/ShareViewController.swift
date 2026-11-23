@@ -14,7 +14,12 @@ import MobileCoreServices
 ///    the existing text field (newline-joined) and preserves the existing image unless a new one is
 ///    shared. Any failure — offline, non-2xx, missing/unresolvable context, >1 image, oversized
 ///    image — falls back to (2). Apple forbids a share extension launching its host app; direct sync
-///    makes launching unnecessary.
+///    makes launching unnecessary. The sheet waits `timeoutSeconds` (default 4) for the backend; when
+///    it doesn't answer, a write-only (`replace`) sync goes to an iOS BACKGROUND upload (a background
+///    URLSession sharing the App Group container): the system delivers it after the sheet closes,
+///    with the app closed, and the drawer says so (`pendingMessage`) — never "Synced". Each share has a
+///    unique id (`fields.id` in the body, `id=` in the mailbox link) so a backend applies it once
+///    however many paths deliver it.
 ///
 /// 2. MAILBOX (always available, the pre-direct-sync behavior): PERSIST the payload as a mailbox
 ///    entry in the shared App Group UserDefaults — the SAME deep-link contract Android uses:
@@ -33,6 +38,8 @@ import MobileCoreServices
 class ShareViewController: UIViewController {
     private var processed = false
     private var statusPill: UILabel?
+    /// This share's unique id — the same on every delivery path (direct, background upload, mailbox).
+    private let shareId = UUID().uuidString
 
     /// Why a share took the mailbox instead of direct sync — App Group key `appwrap-share-diag` (the latest only), so
     /// a failed direct sync can be read back from the device (`devicectl device copy from --domain-type appGroupDataContainer`).
@@ -155,6 +162,9 @@ class ShareViewController: UIViewController {
         let imageDataURL: String?  // nil = no image shared
         let imageFile: String?     // stashed name, deleted after a successful sync
         let successText: String
+        let pendingText: String    // the backend didn't answer in time; a background upload delivers it
+        let idField: String        // body field for the share id ("" = not sent)
+        let timeout: TimeInterval
     }
 
     /// Decide whether THIS share can direct-sync: config stamped, context published, url template
@@ -198,7 +208,10 @@ class ShareViewController: UIViewController {
             append: (cfg["merge"] as? String) == "append",
             imageDataURL: imageDataURL,
             imageFile: files.first,
-            successText: resolveTemplate(successTemplate, ctx) ?? "Synced"
+            successText: resolveTemplate(successTemplate, ctx) ?? "Synced",
+            pendingText: resolveTemplate((cfg["pendingMessage"] as? String) ?? "Sending when online", ctx) ?? "Sending when online",
+            idField: (fields?["id"] as? String) ?? "",
+            timeout: (cfg["timeoutSeconds"] as? Double) ?? 4
         )
     }
 
@@ -261,23 +274,33 @@ class ShareViewController: UIViewController {
             if let img = plan.imageDataURL { body[plan.imageField] = img }
             else if plan.append, let old = existing[plan.imageField] { body[plan.imageField] = old }
             else { body[plan.imageField] = NSNull() }
-            var req = URLRequest(url: plan.url, timeoutInterval: 15)
+            if !plan.idField.isEmpty { body[plan.idField] = self.shareId }
+            var req = URLRequest(url: plan.url, timeoutInterval: plan.timeout)
             req.httpMethod = plan.method
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+            let json = try? JSONSerialization.data(withJSONObject: body)
+            req.httpBody = json
+            let dropImage = { if let name = plan.imageFile, let u = self.groupFileURL(name) { try? FileManager.default.removeItem(at: u) } }
             URLSession.shared.dataTask(with: req) { _, resp, err in
                 DispatchQueue.main.async {
-                    guard let code = (resp as? HTTPURLResponse)?.statusCode, (200..<300).contains(code) else {
-                        fallback("\(plan.method) HTTP \((resp as? HTTPURLResponse)?.statusCode ?? 0), \(req.httpBody?.count ?? 0) bytes, \(err.map { String(describing: $0) } ?? "no error")"); return
+                    let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                    if (200..<300).contains(code) { dropImage(); self.finish(status: "✓ \(plan.successText)"); return }
+                    let why = "\(plan.method) HTTP \(code), \(json?.count ?? 0) bytes, \(err.map { String(describing: $0) } ?? "no error")"
+                    // No answer (timeout / unreachable): the system delivers it after the sheet closes. A real
+                    // answer (4xx/5xx) is final for that body — the mailbox lets the app try its own way.
+                    if code == 0, let json, self.backgroundUpload(req, json) {
+                        self.noteFallback("background upload: \(why)")
+                        dropImage()
+                        self.finish(status: plan.pendingText)
+                        return
                     }
-                    if let name = plan.imageFile, let u = self.groupFileURL(name) { try? FileManager.default.removeItem(at: u) }
-                    self.finish(status: "✓ \(plan.successText)")
+                    fallback(why)
                 }
             }.resume()
         }
 
         if plan.append {
-            var req = URLRequest(url: plan.url, timeoutInterval: 15)
+            var req = URLRequest(url: plan.url, timeoutInterval: plan.timeout)
             req.httpMethod = "GET"
             URLSession.shared.dataTask(with: req) { data, resp, err in
                 DispatchQueue.main.async {
@@ -293,6 +316,33 @@ class ShareViewController: UIViewController {
         }
     }
 
+    // MARK: background upload (the system delivers it after the sheet closes, app closed)
+
+    /// Hand the write to a background URLSession sharing the App Group container. The body goes to a
+    /// file there (background uploads only take files); files older than a day — past the session's
+    /// resource timeout, delivered or given up — are swept on the next share. false → mailbox.
+    private func backgroundUpload(_ req: URLRequest, _ body: Data) -> Bool {
+        guard let dir = groupFileURL("uploads") else { return false }
+        let fm = FileManager.default
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let dayAgo = Date().addingTimeInterval(-86_400)
+        for f in (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [] {
+            if let m = (try? f.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate, m < dayAgo { try? fm.removeItem(at: f) }
+        }
+        let file = dir.appendingPathComponent("\(shareId).json")
+        do { try body.write(to: file) } catch { return false }
+        let cfg = URLSessionConfiguration.background(withIdentifier: "appwrap.share.\(shareId)")
+        cfg.sharedContainerIdentifier = "__APP_GROUP__"
+        cfg.timeoutIntervalForResource = 86_400
+        var up = req
+        up.httpBody = nil
+        up.timeoutInterval = 60
+        let session = URLSession(configuration: cfg)
+        session.uploadTask(with: up, fromFile: file).resume()
+        session.finishTasksAndInvalidate()
+        return true
+    }
+
     // MARK: host-app hand-off (App-Group mailbox)
 
     private func finishViaMailbox(texts: [String], files: [String]) {
@@ -300,6 +350,7 @@ class ShareViewController: UIViewController {
         let enc = { (s: String) in s.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "" }
         if !texts.isEmpty { params.append("text=" + enc(texts.joined(separator: "\n"))) }
         for f in files { params.append("gfile=" + enc(f)) }
+        params.append("id=" + enc(shareId))
         enqueueMailbox("__URL_SCHEME__://share?" + params.joined(separator: "&"))
         finish(status: "Added to __APP_NAME__")
     }

@@ -50,12 +50,14 @@ describe('shareTarget.directSync — stamped extension config (encodeShareDirect
     expect(decoded).toEqual({
       urlTemplate: 'https://api.example.com/x/{id}',
       method: 'PUT',
-      fields: { text: 'content', image: 'image' },
+      fields: { text: 'content', image: 'image', id: '' },
       merge: 'replace',
       maxImageBytes: 4_000_000,
       maxImageEdge: 2000,
       jpegQuality: 0.85,
       successMessage: 'Synced',
+      timeoutSeconds: 4,
+      pendingMessage: 'Sending when online',
     });
   });
 
@@ -72,7 +74,7 @@ describe('shareTarget.directSync — stamped extension config (encodeShareDirect
     expect(decoded.merge).toBe('append');
     expect(decoded.maxImageBytes).toBe(123);
     expect(decoded.successMessage).toBe('Synced to {binId}');
-    expect(decoded.fields).toEqual({ text: 'content', image: 'image' });
+    expect(decoded.fields).toEqual({ text: 'content', image: 'image', id: '' });
   });
 
   test('shareTarget is a recognized top-level config key', () => {

@@ -10,6 +10,9 @@ export interface SharedPayload {
   /** Shared files (images), copied by the shell into the app cache — each entry is a path relative
    * to the cache root, readable via `kit.fs.read(p, { dir: 'cache', encoding: 'base64' })`. */
   files?: string[];
+  /** The share's unique id (stamped by the share extension / activity), so a backend can apply one
+   * share once however many paths deliver it (direct sync, background upload, this app hand-off). */
+  id?: string;
 }
 
 /**
@@ -27,6 +30,8 @@ export function parseSharePayload(url: string | null | undefined): SharedPayload
   if (title) payload.title = title;
   const files = q.getAll('file');
   if (files.length) payload.files = files;
+  const id = q.get('id');
+  if (id && Object.keys(payload).length) payload.id = id; // an id alone is no share
   return Object.keys(payload).length ? payload : null;
 }
 

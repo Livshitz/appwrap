@@ -75,8 +75,10 @@ export interface ShareDirectSyncConfig {
   /** HTTP method for the write (default `PUT`). Body is JSON. */
   method?: 'PUT' | 'POST';
   /** JSON body field names: shared text goes under `text` (default `content`), the shared image —
-   * as a base64 data URL — under `image` (default `image`). */
-  fields?: { text?: string; image?: string };
+   * as a base64 data URL — under `image` (default `image`), the share's unique id under `id` (default
+   * empty = not sent; the id also rides the app hand-off link as `id=`, so a backend can dedupe a share
+   * that reaches it twice: a timed-out request that still landed, the background upload, the app). */
+  fields?: { text?: string; image?: string; id?: string };
   /** `append` (default `replace`): GET the same URL first, append the shared text to the existing
    * `fields.text` value (newline-joined) and PRESERVE the existing image unless a new one is shared.
    * `replace` writes the payload as-is (no GET). */
@@ -92,19 +94,27 @@ export interface ShareDirectSyncConfig {
   jpegQuality?: number;
   /** Drawer success text template (default `Synced`), `{key}` from context — e.g. `Synced to {binId}`. */
   successMessage?: string;
+  /** Seconds the share sheet waits for the backend before the fallback (default 4). */
+  timeoutSeconds?: number;
+  /** Drawer text when the backend didn't answer in time and the share went to an iOS background
+   * upload (the system delivers it with the app closed), `{key}` from context (default
+   * `Sending when online`). Only `successMessage` claims delivery. */
+  pendingMessage?: string;
 }
 
 /** {@link ShareDirectSyncConfig} with defaults applied — the exact shape stamped into the extension. */
-export function resolveShareDirectSync(ds: ShareDirectSyncConfig): Required<Omit<ShareDirectSyncConfig, 'fields'>> & { fields: { text: string; image: string } } {
+export function resolveShareDirectSync(ds: ShareDirectSyncConfig): Required<Omit<ShareDirectSyncConfig, 'fields'>> & { fields: { text: string; image: string; id: string } } {
   return {
     urlTemplate: ds.urlTemplate,
     method: ds.method ?? 'PUT',
-    fields: { text: ds.fields?.text ?? 'content', image: ds.fields?.image ?? 'image' },
+    fields: { text: ds.fields?.text ?? 'content', image: ds.fields?.image ?? 'image', id: ds.fields?.id ?? '' },
     merge: ds.merge ?? 'replace',
     maxImageBytes: ds.maxImageBytes ?? 4_000_000,
     maxImageEdge: ds.maxImageEdge ?? 2000,
     jpegQuality: ds.jpegQuality ?? 0.85,
     successMessage: ds.successMessage ?? 'Synced',
+    timeoutSeconds: ds.timeoutSeconds ?? 4,
+    pendingMessage: ds.pendingMessage ?? 'Sending when online',
   };
 }
 

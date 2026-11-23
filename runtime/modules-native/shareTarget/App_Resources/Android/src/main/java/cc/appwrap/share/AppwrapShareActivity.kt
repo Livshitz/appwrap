@@ -39,6 +39,9 @@ import java.net.URL
 class AppwrapShareActivity : Activity() {
     private val syncB64 = "__SHARE_SYNC_B64__"
     private val urlScheme = "__URL_SCHEME__"
+    /** This share's unique id — the same on both paths (direct sync body `fields.id`, the app hand-off
+     * link `id=`), so a backend applies it once even when a timed-out request still landed. */
+    private val shareId = java.util.UUID.randomUUID().toString()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -96,6 +99,7 @@ class AppwrapShareActivity : Activity() {
     private class SyncPlan(
         val url: String, val method: String, val textField: String, val imageField: String,
         val append: Boolean, val text: String, val imageDataUrl: String?, val successText: String,
+        val idField: String, val timeoutMs: Int,
     )
 
     /** Decide whether THIS share can direct-sync: config stamped, context published, url template
@@ -128,6 +132,8 @@ class AppwrapShareActivity : Activity() {
             text = text,
             imageDataUrl = imageDataUrl,
             successText = resolveTemplate(cfg.optString("successMessage").ifEmpty { "Synced" }, ctx) ?: "Synced",
+            idField = fields?.optString("id") ?: "",
+            timeoutMs = (cfg.optDouble("timeoutSeconds", 4.0) * 1000).toInt(),
         )
     }
 
@@ -198,7 +204,7 @@ class AppwrapShareActivity : Activity() {
      * as-is. Mirrors ShareViewController.runDirectSync. Returns success. */
     private fun runDirectSync(plan: SyncPlan): Boolean = try {
         val existing: JSONObject = if (plan.append) {
-            val (code, body) = http("GET", plan.url, null)
+            val (code, body) = http("GET", plan.url, null, plan.timeoutMs)
             android.util.Log.i("AppwrapShare", "direct sync merge GET → HTTP $code")
             when {
                 code == 404 -> JSONObject() // nothing there yet — first write
@@ -217,7 +223,8 @@ class AppwrapShareActivity : Activity() {
             plan.append && existing.has(plan.imageField) -> body.put(plan.imageField, existing.get(plan.imageField))
             else -> body.put(plan.imageField, JSONObject.NULL)
         }
-        val (code, _) = http(plan.method, plan.url, body.toString())
+        if (plan.idField.isNotEmpty()) body.put(plan.idField, shareId)
+        val (code, _) = http(plan.method, plan.url, body.toString(), plan.timeoutMs)
         android.util.Log.i("AppwrapShare", "direct sync write → HTTP $code")
         code in 200..299
     } catch (e: Exception) {
@@ -225,12 +232,12 @@ class AppwrapShareActivity : Activity() {
         false
     }
 
-    private fun http(method: String, url: String, jsonBody: String?): Pair<Int, String> {
+    private fun http(method: String, url: String, jsonBody: String?, timeoutMs: Int): Pair<Int, String> {
         val conn = URL(url).openConnection() as HttpURLConnection
         try {
             conn.requestMethod = method
-            conn.connectTimeout = 15000
-            conn.readTimeout = 15000
+            conn.connectTimeout = timeoutMs
+            conn.readTimeout = timeoutMs
             if (jsonBody != null) {
                 conn.doOutput = true
                 conn.setRequestProperty("Content-Type", "application/json")
@@ -257,6 +264,7 @@ class AppwrapShareActivity : Activity() {
             if (title.isNotEmpty()) params.add("title=${Uri.encode(title)}")
             for (rel in copyStreamsToCache(uris)) params.add("file=${Uri.encode(rel)}")
             if (params.isNotEmpty() && urlScheme.isNotEmpty()) {
+                params.add("id=${Uri.encode(shareId)}")
                 val open = Intent(Intent.ACTION_VIEW, Uri.parse("$urlScheme://share?${params.joinToString("&")}"))
                 open.setPackage(packageName)
                 open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
