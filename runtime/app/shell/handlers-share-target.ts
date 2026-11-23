@@ -3,7 +3,7 @@ import type { AndroidActivityNewIntentEventData } from '@nativescript/core';
 import { SHELL_CONFIG } from './config';
 import { bridge } from './bridge';
 import { onDeepLink, setDeepLinkTransformer } from './events';
-import { MAILBOX_KEY, drainShareMailbox, type ShareMailboxStore } from './share-mailbox';
+import { MAILBOX_KEY, drainShareMailbox, shareIdOf, type ShareMailboxStore } from './share-mailbox';
 
 /** App Group UserDefaults key holding the app-published SHARE CONTEXT (JSON string KV). Written by
  * `shareTarget.setContext`, read by the AppwrapShare extension to resolve direct-sync `{key}`
@@ -63,7 +63,8 @@ export function registerShareTargetHandlers(): void {
     // links (no gfile) pass through untouched.
     setDeepLinkTransformer((url) => (url.includes('://share?') && url.includes('gfile=') ? iosRelocateGroupFiles(url) : url));
     const drain = () => {
-      try { drainShareMailbox(iosMailboxStore(), onDeepLink); }
+      // (a drained share no longer needs its background-upload body: the app delivers it now)
+      try { drainShareMailbox(iosMailboxStore(), (url) => { iosDropUpload(url); onDeepLink(url); }); }
       catch (e) { console.warn('AppWrap: share mailbox drain failed', e); }
     };
     drain(); // cold launch — a share made while the app was killed is waiting in the mailbox
@@ -93,6 +94,13 @@ function iosMailboxStore(): ShareMailboxStore {
     },
     clear: () => { defaults?.removeObjectForKey(MAILBOX_KEY); },
   };
+}
+
+/** iOS: remove the share extension's background-upload body for this share (`<AppGroup>/appwrap-share/uploads/<id>.json`). */
+function iosDropUpload(url: string): void {
+  const id = shareIdOf(url);
+  const root = id && NSFileManager.defaultManager.containerURLForSecurityApplicationGroupIdentifier(`group.${SHELL_CONFIG.appId}`);
+  if (root) NSFileManager.defaultManager.removeItemAtPathError(`${String(root.path)}/appwrap-share/uploads/${id}.json`, null); // (absent: fine)
 }
 
 /** iOS: move each `gfile=<name>` from `<AppGroup>/appwrap-share/` into `<Caches>/appwrap-share/` and

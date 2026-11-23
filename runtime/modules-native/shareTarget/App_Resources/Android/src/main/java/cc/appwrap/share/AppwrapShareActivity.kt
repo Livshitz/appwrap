@@ -68,9 +68,19 @@ class AppwrapShareActivity : Activity() {
         }
         android.util.Log.i("AppwrapShare", "direct sync → ${plan.method} ${plan.url} (append=${plan.append}, image=${plan.imageDataUrl != null})")
         Toast.makeText(applicationContext, "Syncing…", Toast.LENGTH_SHORT).show()
+        // One outcome: the reply, or — no reply within timeoutSeconds IN ALL (a merge GET + write each get the idle
+        // timeout) — the app hand-off. A reply that lands after the hand-off is harmless: the backend applies the id once.
+        val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+        android.os.Handler(mainLooper).postDelayed({
+            if (settled.compareAndSet(false, true)) {
+                android.util.Log.i("AppwrapShare", "direct sync: no answer within ${plan.timeoutMs} ms — handing off to the app")
+                fallbackToApp(text, title, uris)
+            }
+        }, plan.timeoutMs.toLong())
         Thread {
             val ok = runDirectSync(plan)
             runOnUiThread {
+                if (!settled.compareAndSet(false, true)) return@runOnUiThread
                 if (ok) {
                     Toast.makeText(applicationContext, "✓ ${plan.successText}", Toast.LENGTH_SHORT).show()
                     finish()

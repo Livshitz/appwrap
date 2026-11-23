@@ -38,3 +38,11 @@ export function drainShareMailbox(store: ShareMailboxStore, deliver: (url: strin
   }
   return delivered;
 }
+
+/** A share link's `id=` (the extension's UUID; it names that share's background-upload body
+ *  `uploads/<id>.json`), or null when absent / not a plain id (never a path). */
+export function shareIdOf(url: string): string | null {
+  const m = /[?&]id=([^&]*)/.exec(url);
+  const id = m ? decodeURIComponent(m[1]) : '';
+  return /^[\w-]{1,100}$/.test(id) ? id : null;
+}

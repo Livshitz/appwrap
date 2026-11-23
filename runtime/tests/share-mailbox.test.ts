@@ -5,7 +5,7 @@
  * crash-safety (nothing lost while no drain ran), cold→resume sequencing, and garbage filtering.
  */
 import { describe, expect, test } from 'bun:test';
-import { drainShareMailbox } from '../app/shell/share-mailbox';
+import { drainShareMailbox, shareIdOf } from '../app/shell/share-mailbox';
 
 /** In-memory stand-in for the App-Group UserDefaults mailbox the extension appends to. */
 function fakeStore(initial: string[] = []) {
@@ -75,4 +75,12 @@ describe('drainShareMailbox — exactly-once, crash-safe delivery', () => {
     expect(n).toBe(0);
     expect(cleared).toBe(false);
   });
+});
+
+// #1805: the app removes a drained share's background-upload body (<AppGroup>/appwrap-share/uploads/<id>.json).
+test('shareIdOf reads a safe share id from a mailbox link', () => {
+  expect(shareIdOf('x://share?text=a&id=3F2A-11B0')).toBe('3F2A-11B0');
+  expect(shareIdOf('x://share?id=ab&gfile=a.png')).toBe('ab');
+  expect(shareIdOf('x://share?text=a')).toBeNull();
+  expect(shareIdOf('x://share?id=..%2Fevil')).toBeNull();
 });
