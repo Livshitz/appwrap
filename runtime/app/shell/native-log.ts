@@ -1,4 +1,4 @@
-import { knownFolders, path as nsPath } from '@nativescript/core';
+import { isAndroid, knownFolders, path as nsPath } from '@nativescript/core';
 
 /**
  * Single debug log sink → Documents/appwrap-web.log. Both the forwarded WebView console
@@ -9,6 +9,10 @@ import { knownFolders, path as nsPath } from '@nativescript/core';
 let _log = '';
 
 export function appwrapNativeLog(line: string): void {
+  if (isAndroid) {
+    try { android.util.Log.i('appwrap', line); } catch { /* best-effort */ } // logcat -s appwrap (no file sink here)
+    return;
+  }
   try {
     _log += line + '\n';
     if (_log.length > 160000) _log = _log.slice(-120000);

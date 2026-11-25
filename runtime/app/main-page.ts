@@ -1,4 +1,4 @@
-import { Application, AndroidApplication, Button, EventData, LoadEventData, Page, StackLayout, WebView, isAndroid, isIOS, knownFolders, path } from '@nativescript/core';
+import { Application, AndroidApplication, Button, EventData, LoadEventData, Page, View, WebView, isAndroid, isIOS, knownFolders, path, Utils } from '@nativescript/core';
 import { bridge } from './shell/bridge';
 import { backgroundRunHeld, onBackgroundRunReleased } from './shell/background-hold';
 import { effectiveServerUrl } from './shell/server-url';
@@ -22,6 +22,7 @@ import { SHELL_CONFIG } from './shell/config';
 import { bindStatusBarPage, setStatusBarStyle, applyThemeColor, enableAndroidEdgeToEdge, wireAndroidSafeArea } from './shell/status-bar';
 import { CustomWebView } from './shell/custom-webview';
 import { appwrapNativeLog } from './shell/native-log';
+import { retryDelayMs } from './shell/load-retry';
 
 let initialized = false;
 /** The Page whose WebView is wired. Android can destroy the Activity while the process (and this module)
@@ -269,12 +270,13 @@ function mountNativeSplash(page: Page): (() => void) | null {
 function wireLoadFallback(page: Page, webView: CustomWebView, hideSplash: (why: string) => void = () => {}): void {
   if (SHELL_CONFIG.loader === 'app') return wireAppLoadReturn(webView);
   if (SHELL_CONFIG.loader !== 'server') return; // the file loader can't fail on network
-  const fallback = page.getViewById<StackLayout>('loadFallback');
+  const fallback = page.getViewById<View>('loadFallback');
   const retryBtn = page.getViewById<Button>('loadRetryBtn');
   if (!fallback || !retryBtn) return;
 
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
-  let backoffMs = 3000;
+  let attempt = 0; // auto-retries in this failure run (bounded — load-retry.ts)
+  let failing = false;
   let triedCache = false; // iOS: one cache-only replay per failure run (see below)
   const clearTimer = () => { if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; } };
   const retry = () => {
@@ -293,7 +295,8 @@ function wireLoadFallback(page: Page, webView: CustomWebView, hideSplash: (why: 
       // successful load → hide + reset (idempotent; covers the auto-retry that finally lands)
       triedCache = false;
       clearTimer();
-      backoffMs = 3000;
+      attempt = 0;
+      failing = false;
       if (fallback.visibility !== 'collapse') {
         appwrapNativeLog('[native:fallback] load recovered — hiding fallback');
         fallback.visibility = 'collapse';
@@ -318,11 +321,53 @@ function wireLoadFallback(page: Page, webView: CustomWebView, hideSplash: (why: 
     appwrapNativeLog(`[native:fallback] load failed: ${err}`);
     hideSplash('load-failed');
     fallback.visibility = 'visible';
+    failing = true;
     if (!retryTimer) {
-      retryTimer = setTimeout(() => { backoffMs = Math.min(backoffMs * 2, 30_000); retry(); }, backoffMs);
+      const delay = retryDelayMs(attempt++);
+      if (delay === null) appwrapNativeLog('[native:fallback] auto-retries exhausted — waiting for the network or a Retry tap');
+      else retryTimer = setTimeout(retry, delay);
     }
   });
-  retryBtn.on(Button.tapEvent, retry);
+  retryBtn.on(Button.tapEvent, () => { attempt = 0; retry(); });
+  // The network coming back (or Android lifting its background block on this app — the resume-from-
+  // notification case: netpolicy blocked=APP_BACKGROUND → DNS fails for the first load) retries NOW instead
+  // of waiting out the backoff. Push from ConnectivityManager, never a poll.
+  if (isAndroid) onNetworkUsable(() => {
+    if (!failing || bridge.getWebView() !== webView) return; // a recreated page's old view stays quiet
+    appwrapNativeLog('[native:fallback] network usable again — retrying now');
+    attempt = 0;
+    retry();
+  });
+}
+
+/**
+ * Android: call `cb` (main thread, debounced) whenever the default network becomes usable for THIS app —
+ * a network appears, or the OS unblocks it (API 29+ onBlockedStatusChanged: Doze / App Standby / data saver /
+ * the just-resumed app still flagged APP_BACKGROUND). Registered once per process; the Handler pins delivery
+ * to the main looper so JS never runs on ConnectivityManager's thread.
+ */
+let networkListeners: Array<() => void> | null = null;
+function onNetworkUsable(cb: () => void): void {
+  if (networkListeners) { networkListeners.push(cb); return; }
+  networkListeners = [cb];
+  try {
+    const ctx = Utils.android.getApplicationContext() as android.content.Context;
+    const cm = ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager;
+    let pending: ReturnType<typeof setTimeout> | null = null;
+    const fire = (why: string) => {
+      if (pending) clearTimeout(pending);
+      pending = setTimeout(() => { pending = null; appwrapNativeLog(`[native:net] usable (${why})`); networkListeners?.forEach((f) => f()); }, 500);
+    };
+    const Callback = (android.net.ConnectivityManager as any).NetworkCallback.extend({
+      onAvailable(_n: android.net.Network): void { fire('available'); },
+      onBlockedStatusChanged(_n: android.net.Network, blocked: boolean): void {
+        if (blocked) { if (pending) { clearTimeout(pending); pending = null; } } else fire('unblocked');
+      },
+    });
+    cm.registerDefaultNetworkCallback(new Callback(), new android.os.Handler(android.os.Looper.getMainLooper()));
+  } catch (e) {
+    appwrapNativeLog(`[native:net] network callback unavailable: ${e}`);
+  }
 }
 
 /**

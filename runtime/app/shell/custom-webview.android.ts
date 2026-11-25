@@ -100,6 +100,12 @@ export class CustomWebView extends WebView {
    * always outlives the failure it describes and never leaks onto the next page.
    */
   pendingSslError: { host: string; reason: string } | null = null;
+  // Main-frame URL whose load just FAILED (onReceivedError). Chromium then commits its own "Webpage not
+  // available" page and reports it through onPageFinished with the SAME url — which, forwarded as a success,
+  // hid the shell's load-failure view and cancelled its retry (device-seen: resume from a notification while
+  // netpolicy still blocks the app → ERR_NAME_NOT_RESOLVED → Chrome's error page, no retry). pageFinished
+  // swallows that one report.
+  pendingLoadError: string | null = null;
 
   // STRONG JS references to the native clients. Chromium holds the Java WebViewClient /
   // WebChromeClient, but NativeScript's mark-and-sweep does NOT treat that native hold as a
@@ -443,7 +449,7 @@ function createAssetServingClient(): android.webkit.WebViewClient {
       return true;
   };
 
-  const pageStarted = (view: android.webkit.WebView): void => {
+  const pageStarted = (view: android.webkit.WebView, url: string): void => {
       // A navigation COMMITTED, so any earlier TLS refusal is answered for — drop it (see pendingSslError).
       // A refused nav never reaches here (device-verified on WebView 138: no onPageStarted on an SSL cancel),
       // so this cannot clear the record before `pageFinished` reads it.
@@ -456,6 +462,8 @@ function createAssetServingClient(): android.webkit.WebViewClient {
       // recorded after — clear-before-write ordering holds regardless.
       const owner = CustomWebView.forNative(view);
       if (owner) owner.pendingSslError = null;
+      // A NEW navigation answers for an older failed one; the error page's own start (same url) must not.
+      if (owner && owner.pendingLoadError !== String(url ?? '')) owner.pendingLoadError = null;
       // Fallback injection — no-op when the document-start scripts already ran
       view.evaluateJavascript(buildBootstrapJs(), null as unknown as android.webkit.ValueCallback<string>);
   };
@@ -475,6 +483,8 @@ function createAssetServingClient(): android.webkit.WebViewClient {
     error: android.webkit.WebResourceError
   ): void => {
       if (!request?.isForMainFrame?.()) return;
+      const owner = CustomWebView.forNative(view);
+      if (owner) owner.pendingLoadError = String(request.getUrl?.() ?? '');
       // `_onLoadFinished` is NS's internal event-raiser (the `_` API index.android.js itself calls) — not
       // in the public typings, hence the cast.
       (CustomWebView.forNative(view) as any)?._onLoadFinished(
@@ -498,6 +508,10 @@ function createAssetServingClient(): android.webkit.WebViewClient {
   const pageFinished = (view: android.webkit.WebView, url: string): void => {
       const owner = CustomWebView.forNative(view);
       const finishedUrl = String(url ?? '');
+      if (owner && owner.pendingLoadError === finishedUrl) {
+        owner.pendingLoadError = null; // Chromium's error-page commit — the failure was already raised
+        return;
+      }
       const ssl = owner?.pendingSslError;
       if (ssl && ssl.host === hostOf(finishedUrl)) {
         owner!.pendingSslError = null;
@@ -579,8 +593,8 @@ function createAssetServingClient(): android.webkit.WebViewClient {
       shouldOverrideUrlLoading(view: android.webkit.WebView, request: android.webkit.WebResourceRequest | string): boolean {
         return overrideUrlLoading(view, request);
       },
-      onPageStarted(view: android.webkit.WebView, _url: string, _favicon: android.graphics.Bitmap): void {
-        pageStarted(view);
+      onPageStarted(view: android.webkit.WebView, url: string, _favicon: android.graphics.Bitmap): void {
+        pageStarted(view, url);
       },
       onPageFinished(view: android.webkit.WebView, url: string): void {
         pageFinished(view, url);
@@ -602,8 +616,8 @@ function createAssetServingClient(): android.webkit.WebViewClient {
       shouldOverrideUrlLoading(view: android.webkit.WebView, request: android.webkit.WebResourceRequest | string): boolean {
         return overrideUrlLoading(view, request);
       },
-      onPageStarted(view: android.webkit.WebView, _url: string, _favicon: android.graphics.Bitmap): void {
-        pageStarted(view);
+      onPageStarted(view: android.webkit.WebView, url: string, _favicon: android.graphics.Bitmap): void {
+        pageStarted(view, url);
       },
       onPageFinished(view: android.webkit.WebView, url: string): void {
         pageFinished(view, url);
